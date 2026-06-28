@@ -9,11 +9,14 @@ import * as questRemove from './commands/quest-remove.js';
 import * as questStatus from './commands/quest-status.js';
 import * as run from './commands/run.js';
 import * as stop from './commands/stop.js';
+import * as panel from './commands/panel.js';
 
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 client.commands = new Collection();
 
-const commands = [ping, help, questAdd, questList, questDone, questRemove, questStatus, run, stop];
+const commands = [
+  ping, help, questAdd, questList, questDone, questRemove, questStatus, run, stop, panel,
+];
 for (const cmd of commands) {
   client.commands.set(cmd.data.name, cmd);
 }
@@ -23,31 +26,37 @@ client.once('ready', () => {
 });
 
 client.on('interactionCreate', async (interaction) => {
-  if (interaction.isModalSubmit()) {
-    if (interaction.customId.startsWith('run_modal:')) {
-      try {
-        await run.handleModal(interaction);
-      } catch (err) {
-        console.error('❌ Modal error:', err);
-      }
-    }
-    return;
-  }
-
-  if (!interaction.isChatInputCommand()) return;
-
-  const command = client.commands.get(interaction.commandName);
-  if (!command) return;
-
   try {
+    if (interaction.isModalSubmit()) {
+      if (interaction.customId.startsWith('run_modal:')) {
+        return run.handleModal(interaction);
+      }
+      if (interaction.customId === 'panel_add_modal' || interaction.customId === 'panel_done_modal') {
+        return panel.handlePanelModal(interaction);
+      }
+      return;
+    }
+
+    if (interaction.isButton()) {
+      if (interaction.customId.startsWith('panel:')) {
+        return panel.handleButton(interaction);
+      }
+      return;
+    }
+
+    if (!interaction.isChatInputCommand()) return;
+
+    const command = client.commands.get(interaction.commandName);
+    if (!command) return;
+
     await command.execute(interaction);
   } catch (err) {
-    console.error(`❌ Error in /${interaction.commandName}:`, err);
+    console.error(`❌ Interaction error:`, err);
     const msg = { content: '❌ เกิดข้อผิดพลาด กรุณาลองใหม่', ephemeral: true };
     if (interaction.replied || interaction.deferred) {
-      await interaction.followUp(msg);
+      await interaction.followUp(msg).catch(() => {});
     } else {
-      await interaction.reply(msg);
+      await interaction.reply(msg).catch(() => {});
     }
   }
 });

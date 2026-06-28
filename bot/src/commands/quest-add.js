@@ -20,21 +20,22 @@ export async function execute(interaction) {
   const note = interaction.options.getString('note');
 
   if (deadline && !/^\d{4}-\d{2}-\d{2}$/.test(deadline)) {
-    await interaction.reply({ content: '❌ รูปแบบ deadline ต้องเป็น `YYYY-MM-DD` เช่น `2026-07-01`', ephemeral: true });
-    return;
+    return interaction.reply({ content: '❌ รูปแบบ deadline ต้องเป็น `YYYY-MM-DD` เช่น `2026-07-01`', ephemeral: true });
   }
 
-  const quest = addQuest({ name, deadline, note });
-
-  const embed = new EmbedBuilder()
-    .setTitle('✅ เพิ่มเควสสำเร็จ')
-    .setColor(0x57f287)
-    .addFields(
-      { name: 'ID', value: `#${quest.id}`, inline: true },
-      { name: 'ชื่อ', value: quest.name, inline: true },
-      { name: 'Deadline', value: quest.deadline ?? '-', inline: true },
-      { name: 'โน้ต', value: quest.note ?? '-' },
-    );
-
-  await interaction.reply({ embeds: [embed] });
+  try {
+    const quest = await addQuest({ name, deadline, note });
+    const embed = new EmbedBuilder()
+      .setTitle('✅ เพิ่มเควสสำเร็จ')
+      .setColor(0x57f287)
+      .addFields(
+        { name: 'ID', value: `#${quest.id}`, inline: true },
+        { name: 'ชื่อ', value: quest.name, inline: true },
+        { name: 'Deadline', value: quest.deadline ?? '-', inline: true },
+        { name: 'โน้ต', value: quest.note ?? '-' },
+      );
+    await interaction.reply({ embeds: [embed] });
+  } catch (err) {
+    await interaction.reply({ content: `❌ ${err.message}`, ephemeral: true });
+  }
 }

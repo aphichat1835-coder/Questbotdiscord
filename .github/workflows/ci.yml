@@ -11,7 +11,6 @@ jobs:
   frontend-checks:
     name: Frontend checks
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -41,3 +40,51 @@ jobs:
 
       - name: Build frontend
         run: pnpm build
+
+  bot-checks:
+    name: Bot checks
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: bot
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Check syntax
+        run: |
+          for f in src/commands/*.js src/*.js; do
+            node --check "$f" && echo "✅ $f"
+          done
+
+  api-checks:
+    name: API checks
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: api
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Check syntax
+        run: |
+          for f in src/routes/*.js src/*.js; do
+            node --check "$f" && echo "✅ $f"
+          done
