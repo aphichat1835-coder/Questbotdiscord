@@ -9,12 +9,30 @@ export async function execute(interaction) {
     .setTitle('📋 NeverDie Quest Bot — คำสั่งทั้งหมด')
     .setColor(0x5865f2)
     .addFields(
-      { name: '/ping', value: 'เช็กว่าบอทออนไลน์อยู่ไหม' },
-      { name: '/quest-add', value: 'เพิ่มเควสใหม่\n`name` (จำเป็น) · `deadline` · `note`' },
-      { name: '/quest-list', value: 'ดูรายการเควสทั้งหมด' },
-      { name: '/quest-done', value: 'มาร์คเควสว่าเสร็จแล้ว\n`id` (จำเป็น)' },
-      { name: '/quest-remove', value: 'ลบเควสออก\n`id` (จำเป็น)' },
-      { name: '/quest-status', value: 'ดูสรุปสถิติเควสทั้งหมด' },
+      {
+        name: '🤖 Quest Runner (อัตโนมัติ)',
+        value: [
+          '`/run` — เปิด popup กรอก token แล้วทำ quest อัตโนมัติทุกอัน',
+          '`/stop` — หยุด runner ที่กำลังทำงานอยู่',
+        ].join('\n'),
+      },
+      {
+        name: '📝 Quest Tracker (จัดการเอง)',
+        value: [
+          '`/quest-add name: ... deadline: ... note: ...` — เพิ่มเควส',
+          '`/quest-list` — ดูรายการเควสทั้งหมด',
+          '`/quest-done id: ...` — มาร์คว่าเสร็จแล้ว',
+          '`/quest-remove id: ...` — ลบเควส',
+          '`/quest-status` — ดูสรุปสถิติ',
+        ].join('\n'),
+      },
+      {
+        name: '🔧 ทั่วไป',
+        value: [
+          '`/ping` — เช็กว่าบอทออนไลน์',
+          '`/help` — แสดงหน้านี้',
+        ].join('\n'),
+      },
     )
     .setFooter({ text: 'NeverDie Quest Helper Bot' });
 
