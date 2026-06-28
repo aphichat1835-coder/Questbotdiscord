@@ -4,10 +4,13 @@ import path from 'path';
 import 'dotenv/config';
 
 const dbPath = process.env.DATABASE_PATH ?? './data/quests.db';
-const dir = path.dirname(dbPath);
+const dir    = path.dirname(dbPath);
 if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 
 export const db = new Database(dbPath);
+
+db.pragma('journal_mode = WAL');
+db.pragma('foreign_keys = ON');
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS quests (
@@ -40,21 +43,28 @@ db.exec(`
     details     TEXT,
     created_at  TEXT    NOT NULL DEFAULT (datetime('now'))
   );
+
+  CREATE INDEX IF NOT EXISTS idx_quests_guild    ON quests(guild_id);
+  CREATE INDEX IF NOT EXISTS idx_quests_done     ON quests(done);
+  CREATE INDEX IF NOT EXISTS idx_quest_logs_guild ON quest_logs(guild_id, created_at DESC);
 `);
 
 for (const col of ['guild_id TEXT', 'user_id TEXT']) {
   try { db.exec(`ALTER TABLE quests ADD COLUMN ${col}`); } catch {}
 }
 
+function todayBangkok() {
+  const tz = process.env.TIMEZONE ?? 'Asia/Bangkok';
+  return new Date().toLocaleDateString('sv-SE', { timeZone: tz });
+}
+
 export function getAll(filters = {}) {
-  let query = 'SELECT * FROM quests';
   const conditions = [];
-  const vals = [];
-  if (filters.guild_id) { conditions.push('guild_id = ?'); vals.push(filters.guild_id); }
-  if (filters.done !== undefined) { conditions.push('done = ?'); vals.push(filters.done ? 1 : 0); }
-  if (conditions.length) query += ' WHERE ' + conditions.join(' AND ');
-  query += ' ORDER BY id ASC';
-  return db.prepare(query).all(...vals).map(normalize);
+  const vals       = [];
+  if (filters.guild_id !== undefined) { conditions.push('guild_id = ?'); vals.push(filters.guild_id); }
+  if (filters.done     !== undefined) { conditions.push('done = ?');     vals.push(filters.done ? 1 : 0); }
+  const where = conditions.length ? ' WHERE ' + conditions.join(' AND ') : '';
+  return db.prepare(`SELECT * FROM quests${where} ORDER BY id ASC`).all(...vals).map(normalize);
 }
 
 export function getById(id) {
@@ -70,21 +80,21 @@ export function insert({ name, deadline, note, guild_id, user_id }) {
 }
 
 export function markDone(id) {
-  db.prepare(`UPDATE quests SET done = 1, done_at = datetime('now') WHERE id = ?`).run(id);
+  const changed = db.prepare(`UPDATE quests SET done = 1, done_at = datetime('now') WHERE id = ? AND done = 0`).run(id);
+  if (changed.changes === 0) return getById(id);
   return getById(id);
 }
 
 export function update(id, { name, deadline, note, done }) {
   const fields = [];
-  const vals = [];
-  if (name !== undefined)     { fields.push('name = ?');     vals.push(name); }
+  const vals   = [];
+  if (name     !== undefined) { fields.push('name = ?');     vals.push(name); }
   if (deadline !== undefined) { fields.push('deadline = ?'); vals.push(deadline); }
-  if (note !== undefined)     { fields.push('note = ?');     vals.push(note); }
-  if (done !== undefined) {
+  if (note     !== undefined) { fields.push('note = ?');     vals.push(note); }
+  if (done     !== undefined) {
     fields.push('done = ?');
     vals.push(done ? 1 : 0);
-    if (done) fields.push(`done_at = datetime('now')`);
-    else      fields.push('done_at = NULL');
+    fields.push(done ? `done_at = datetime('now')` : 'done_at = NULL');
   }
   if (!fields.length) return getById(id);
   vals.push(id);
@@ -100,14 +110,17 @@ export function remove(id) {
 }
 
 export function stats(guild_id) {
-  const cond = guild_id ? ' AND guild_id = ?' : '';
-  const args = guild_id ? [guild_id] : [];
-  const total   = db.prepare(`SELECT COUNT(*) as n FROM quests${guild_id ? ' WHERE guild_id = ?' : ''}`).get(...args).n;
+  const today   = todayBangkok();
+  const cond    = guild_id != null ? ' AND guild_id = ?' : '';
+  const args    = guild_id != null ? [guild_id]          : [];
+
+  const total   = db.prepare(`SELECT COUNT(*) as n FROM quests${guild_id != null ? ' WHERE guild_id = ?' : ''}`).get(...args).n;
   const done    = db.prepare(`SELECT COUNT(*) as n FROM quests WHERE done = 1${cond}`).get(...args).n;
   const pending = total - done;
   const overdue = db.prepare(
-    `SELECT COUNT(*) as n FROM quests WHERE done = 0 AND deadline IS NOT NULL AND deadline < date('now')${cond}`
-  ).get(...args).n;
+    `SELECT COUNT(*) as n FROM quests WHERE done = 0 AND deadline IS NOT NULL AND deadline < ?${cond}`
+  ).get(today, ...args).n;
+
   return { total, done, pending, overdue };
 }
 
@@ -115,11 +128,11 @@ export function getGuildSettings(guildId) {
   return db.prepare('SELECT * FROM guild_settings WHERE guild_id = ?').get(guildId) ?? null;
 }
 
-export function upsertGuildSettings(guildId, { log_channel_id, panel_channel_id, manager_role_id, timezone }) {
+export function upsertGuildSettings(guildId, { log_channel_id, panel_channel_id, manager_role_id, timezone } = {}) {
   const existing = getGuildSettings(guildId);
   if (existing) {
     const fields = [`updated_at = datetime('now')`];
-    const vals = [];
+    const vals   = [];
     if (log_channel_id   !== undefined) { fields.push('log_channel_id = ?');   vals.push(log_channel_id); }
     if (panel_channel_id !== undefined) { fields.push('panel_channel_id = ?'); vals.push(panel_channel_id); }
     if (manager_role_id  !== undefined) { fields.push('manager_role_id = ?');  vals.push(manager_role_id); }
@@ -151,12 +164,12 @@ function normalize(row) {
   return {
     id:        row.id,
     name:      row.name,
-    deadline:  row.deadline ?? null,
-    note:      row.note ?? null,
-    guildId:   row.guild_id ?? null,
-    userId:    row.user_id ?? null,
+    deadline:  row.deadline  ?? null,
+    note:      row.note      ?? null,
+    guildId:   row.guild_id  ?? null,
+    userId:    row.user_id   ?? null,
     done:      row.done === 1,
-    doneAt:    row.done_at ?? null,
+    doneAt:    row.done_at   ?? null,
     createdAt: row.created_at,
   };
 }

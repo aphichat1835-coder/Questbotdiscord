@@ -1,98 +1,125 @@
 import { config } from './config.js';
 
-let client = null;
-let workerInterval = null;
+let client        = null;
+let checkInterval = null;
+let summaryTimeout = null;
 
 export function startWorker(discordClient) {
   client = discordClient;
-
-  const INTERVAL_MS = 60 * 60 * 1000;
   console.log('⏰ Worker เริ่มแล้ว — เช็ก deadline ทุก 1 ชั่วโมง');
 
-  workerInterval = setInterval(checkDeadlines, INTERVAL_MS);
+  checkInterval = setInterval(checkDeadlines, 60 * 60 * 1000);
   checkDeadlines();
+
+  scheduleDailySummary();
 }
 
 export function stopWorker() {
-  if (workerInterval) {
-    clearInterval(workerInterval);
-    workerInterval = null;
-    console.log('⏰ Worker หยุดแล้ว');
-  }
+  if (checkInterval)  { clearInterval(checkInterval);  checkInterval  = null; }
+  if (summaryTimeout) { clearTimeout(summaryTimeout);  summaryTimeout = null; }
+  console.log('⏰ Worker หยุดแล้ว');
+}
+
+function scheduleDailySummary() {
+  const tz        = config.timezone ?? 'Asia/Bangkok';
+  const now       = new Date();
+  const tomorrow  = new Date(now.toLocaleDateString('sv-SE', { timeZone: tz }) + 'T08:00:00');
+
+  const localOffset = -now.getTimezoneOffset() * 60 * 1000;
+  const tzOffset    = getTzOffsetMs(tz);
+  const targetUtc   = tomorrow.getTime() - tzOffset + localOffset;
+  let msUntil8am    = targetUtc - now.getTime();
+
+  if (msUntil8am <= 0) msUntil8am += 24 * 60 * 60 * 1000;
+
+  summaryTimeout = setTimeout(async () => {
+    await sendDailySummary();
+    summaryTimeout = setInterval(sendDailySummary, 24 * 60 * 60 * 1000);
+  }, msUntil8am);
+
+  const hrs = Math.floor(msUntil8am / 3600000);
+  const min = Math.floor((msUntil8am % 3600000) / 60000);
+  console.log(`📅 Daily summary จะส่งในอีก ${hrs}h ${min}m`);
+}
+
+function getTzOffsetMs(tz) {
+  const date = new Date();
+  const utcStr = date.toLocaleString('en-US', { timeZone: 'UTC' });
+  const tzStr  = date.toLocaleString('en-US', { timeZone: tz });
+  return new Date(tzStr).getTime() - new Date(utcStr).getTime();
+}
+
+async function fetchQuests() {
+  const res = await fetch(`${config.apiUrl}/quests`, {
+    headers: config.apiSecret ? { 'x-api-secret': config.apiSecret } : {},
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!res.ok) throw new Error(`API ${res.status}`);
+  return res.json();
+}
+
+async function fetchStats() {
+  const res = await fetch(`${config.apiUrl}/quests/stats`, {
+    headers: config.apiSecret ? { 'x-api-secret': config.apiSecret } : {},
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!res.ok) throw new Error(`API ${res.status}`);
+  return res.json();
+}
+
+async function sendToLogChannel(content) {
+  if (!config.logChannelId) return;
+  const channel = await client.channels.fetch(config.logChannelId).catch(() => null);
+  if (!channel?.isTextBased?.()) return;
+  await channel.send({ content });
 }
 
 async function checkDeadlines() {
   if (!config.logChannelId) return;
 
   try {
-    const res = await fetch(`${config.apiUrl}/quests`, {
-      headers: config.apiSecret ? { 'x-api-secret': config.apiSecret } : {},
-    });
-    if (!res.ok) return;
+    const quests = await fetchQuests();
+    const tz     = config.timezone ?? 'Asia/Bangkok';
+    const today  = new Date().toLocaleDateString('sv-SE', { timeZone: tz });
 
-    const quests = await res.json();
-    const now = new Date();
-    const todayStr = now.toISOString().split('T')[0];
-
-    const tomorrow = new Date(now);
+    const tomorrow = new Date();
     tomorrow.setDate(tomorrow.getDate() + 1);
-    const tomorrowStr = tomorrow.toISOString().split('T')[0];
+    const tomorrowStr = tomorrow.toLocaleDateString('sv-SE', { timeZone: tz });
 
-    const overdue = quests.filter((q) => !q.done && q.deadline && q.deadline < todayStr);
-    const dueToday = quests.filter((q) => !q.done && q.deadline === todayStr);
+    const overdue    = quests.filter((q) => !q.done && q.deadline && q.deadline < today);
+    const dueToday   = quests.filter((q) => !q.done && q.deadline === today);
     const dueTomorrow = quests.filter((q) => !q.done && q.deadline === tomorrowStr);
 
-    const alerts = [];
+    if (!overdue.length && !dueToday.length && !dueTomorrow.length) return;
 
-    if (overdue.length > 0) {
-      alerts.push(`🔴 **เกิน Deadline แล้ว (${overdue.length}):**\n` +
-        overdue.map((q) => `• \`#${q.id}\` **${q.name}** — หมดเมื่อ ${q.deadline}`).join('\n'));
-    }
+    const fmt = (q) => `• \`#${q.id}\` **${q.name}**${q.deadline ? ` — ${q.deadline}` : ''}`;
+    const parts = [];
 
-    if (dueToday.length > 0) {
-      alerts.push(`⚠️ **หมด Deadline วันนี้ (${dueToday.length}):**\n` +
-        dueToday.map((q) => `• \`#${q.id}\` **${q.name}**`).join('\n'));
-    }
+    if (overdue.length)    parts.push(`🔴 **เกิน Deadline แล้ว (${overdue.length}):**\n${overdue.map(fmt).join('\n')}`);
+    if (dueToday.length)   parts.push(`⚠️ **หมดวันนี้ (${dueToday.length}):**\n${dueToday.map(fmt).join('\n')}`);
+    if (dueTomorrow.length) parts.push(`📅 **หมดพรุ่งนี้ (${dueTomorrow.length}):**\n${dueTomorrow.map(fmt).join('\n')}`);
 
-    if (dueTomorrow.length > 0) {
-      alerts.push(`📅 **หมด Deadline พรุ่งนี้ (${dueTomorrow.length}):**\n` +
-        dueTomorrow.map((q) => `• \`#${q.id}\` **${q.name}**`).join('\n'));
-    }
-
-    if (alerts.length === 0) return;
-
-    const channel = await client.channels.fetch(config.logChannelId).catch(() => null);
-    if (!channel) return;
-
-    await channel.send({
-      content: `⏰ **Quest Deadline Alert**\n\n${alerts.join('\n\n')}`,
-    });
+    await sendToLogChannel(`⏰ **Quest Deadline Alert** · ${today}\n\n${parts.join('\n\n')}`);
   } catch (err) {
-    console.error('Worker error:', err.message);
+    console.error('[Worker] checkDeadlines error:', err.message);
   }
 }
 
 export async function sendDailySummary() {
   if (!config.logChannelId) return;
+  const tz    = config.timezone ?? 'Asia/Bangkok';
+  const today = new Date().toLocaleDateString('sv-SE', { timeZone: tz });
 
   try {
-    const res = await fetch(`${config.apiUrl}/quests/stats`, {
-      headers: config.apiSecret ? { 'x-api-secret': config.apiSecret } : {},
-    });
-    if (!res.ok) return;
-
-    const { total, done, pending, overdue } = await res.json();
-    const channel = await client.channels.fetch(config.logChannelId).catch(() => null);
-    if (!channel) return;
-
-    await channel.send({
-      content: [
-        '📊 **Daily Quest Summary**',
-        `📦 ทั้งหมด: **${total}**`,
-        `✅ เสร็จแล้ว: **${done}**`,
-        `🔴 ค้างอยู่: **${pending}**`,
-        `⚠️ เกิน deadline: **${overdue}**`,
-      ].join('\n'),
-    });
-  } catch {}
+    const { total, done, pending, overdue } = await fetchStats();
+    await sendToLogChannel([
+      `📊 **Daily Quest Summary** · ${today}`,
+      `📦 ทั้งหมด: **${total}**`,
+      `✅ เสร็จแล้ว: **${done}**`,
+      `🔴 ค้างอยู่: **${pending}**`,
+      overdue > 0 ? `⚠️ เกิน deadline: **${overdue}**` : `✅ ไม่มีที่เกิน deadline`,
+    ].join('\n'));
+  } catch (err) {
+    console.error('[Worker] sendDailySummary error:', err.message);
+  }
 }

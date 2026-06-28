@@ -6,35 +6,42 @@ const router = Router();
 router.post('/start', async (req, res) => {
   const { userToken, userId, channelId, speedMultiplier, heartbeatInterval } = req.body;
 
-  if (!userToken || !userId || !channelId) {
-    return res.status(400).json({ error: '`userToken`, `userId`, `channelId` จำเป็น' });
+  if (!userToken || typeof userToken !== 'string' || userToken.length < 30) {
+    return res.status(400).json({ error: '`userToken` ไม่ถูกต้อง' });
   }
+  if (!userId)    return res.status(400).json({ error: '`userId` จำเป็น' });
+  if (!channelId) return res.status(400).json({ error: '`channelId` จำเป็น' });
 
   try {
     const me = await fetchMe(userToken);
-    if (!me?.id) return res.status(401).json({ error: 'Token ไม่ถูกต้อง' });
+    if (!me?.id) return res.status(401).json({ error: 'Token ไม่ถูกต้องหรือหมดอายุ' });
 
-    const quests = await fetchQuests(userToken);
-    const active = quests.filter((q) => !q.completed);
+    const allQuests = await fetchQuests(userToken);
+    const active    = allQuests.filter((q) => !q.completed);
 
-    const botToken = process.env.DISCORD_BOT_TOKEN;
-
-    startRunner({ userId, userToken, channelId, botToken, speedMultiplier, heartbeatInterval });
+    await startRunner({
+      userId,
+      userToken,
+      channelId,
+      botToken:          process.env.DISCORD_BOT_TOKEN,
+      speedMultiplier:   Number(speedMultiplier)   || 5,
+      heartbeatInterval: Number(heartbeatInterval) || 30,
+    });
 
     return res.json({
-      user: { id: me.id, username: me.username },
+      user:       { id: me.id, username: me.username ?? me.global_name },
       questCount: active.length,
-      quests: active.map((q) => ({ id: q.id, name: q.name, progress: q.progress })),
+      quests:     active.map((q) => ({ id: q.id, name: q.name, progress: q.progress })),
     });
   } catch (err) {
-    return res.status(500).json({ error: err.message });
+    const status = err.message.includes('กำลังรันอยู่') ? 409 : 500;
+    return res.status(status).json({ error: err.message });
   }
 });
 
 router.post('/stop', (req, res) => {
   const { userId } = req.body;
   if (!userId) return res.status(400).json({ error: '`userId` จำเป็น' });
-
   const stopped = stopRunner(userId);
   res.json({ stopped });
 });

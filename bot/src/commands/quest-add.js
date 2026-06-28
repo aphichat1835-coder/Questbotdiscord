@@ -1,5 +1,6 @@
 import { SlashCommandBuilder, EmbedBuilder } from 'discord.js';
 import { addQuest } from '../storage.js';
+import { requireManager } from '../permissions.js';
 
 export const data = new SlashCommandBuilder()
   .setName('quest-add')
@@ -15,13 +16,20 @@ export const data = new SlashCommandBuilder()
   );
 
 export async function execute(interaction) {
-  const name = interaction.options.getString('name');
-  const deadline = interaction.options.getString('deadline');
-  const note = interaction.options.getString('note');
+  if (!await requireManager(interaction)) return;
 
+  const name     = interaction.options.getString('name')?.trim();
+  const deadline = interaction.options.getString('deadline')?.trim() || null;
+  const note     = interaction.options.getString('note')?.trim()     || null;
+
+  if (!name) {
+    return interaction.reply({ content: '❌ ชื่อเควสต้องไม่ว่างเปล่า', ephemeral: true });
+  }
   if (deadline && !/^\d{4}-\d{2}-\d{2}$/.test(deadline)) {
     return interaction.reply({ content: '❌ รูปแบบ deadline ต้องเป็น `YYYY-MM-DD` เช่น `2026-07-01`', ephemeral: true });
   }
+
+  await interaction.deferReply();
 
   try {
     const quest = await addQuest({ name, deadline, note });
@@ -29,13 +37,15 @@ export async function execute(interaction) {
       .setTitle('✅ เพิ่มเควสสำเร็จ')
       .setColor(0x57f287)
       .addFields(
-        { name: 'ID', value: `#${quest.id}`, inline: true },
-        { name: 'ชื่อ', value: quest.name, inline: true },
-        { name: 'Deadline', value: quest.deadline ?? '-', inline: true },
-        { name: 'โน้ต', value: quest.note ?? '-' },
-      );
-    await interaction.reply({ embeds: [embed] });
+        { name: 'ID',       value: `#${quest.id}`,          inline: true },
+        { name: 'ชื่อ',     value: quest.name,                inline: true },
+        { name: 'Deadline', value: quest.deadline ?? '—',     inline: true },
+        { name: 'โน้ต',     value: quest.note     ?? '—' },
+      )
+      .setFooter({ text: `เพิ่มโดย ${interaction.user.username}` })
+      .setTimestamp();
+    await interaction.editReply({ embeds: [embed] });
   } catch (err) {
-    await interaction.reply({ content: `❌ ${err.message}`, ephemeral: true });
+    await interaction.editReply({ content: `❌ ${err.message}` });
   }
 }

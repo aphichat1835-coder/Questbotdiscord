@@ -1,17 +1,16 @@
-import { config as dotenv } from 'dotenv';
-dotenv();
+import 'dotenv/config';
 
-const DISCORD_API = 'https://discord.com/api/v9';
-const CLIENT_VERSION = '1.0.9243';
-const CHROME_VERSION = '138.0.7204.251';
-const ELECTRON_VERSION = '37.6.0';
+const DISCORD_API         = 'https://discord.com/api/v9';
+const CLIENT_VERSION      = '1.0.9243';
+const CHROME_VERSION      = '138.0.7204.251';
+const ELECTRON_VERSION    = '37.6.0';
 const CLIENT_BUILD_NUMBER = 569817;
 const NATIVE_BUILD_NUMBER = 84934;
 
 const USER_AGENT = `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) discord/${CLIENT_VERSION} Chrome/${CHROME_VERSION} Electron/${ELECTRON_VERSION} Safari/537.36`;
 
 function buildSuperProperties() {
-  const obj = {
+  return Buffer.from(JSON.stringify({
     os: 'Windows',
     browser: 'Discord Client',
     release_channel: 'stable',
@@ -25,8 +24,7 @@ function buildSuperProperties() {
     client_build_number: CLIENT_BUILD_NUMBER,
     native_build_number: NATIVE_BUILD_NUMBER,
     client_event_source: null,
-  };
-  return Buffer.from(JSON.stringify(obj)).toString('base64');
+  })).toString('base64');
 }
 
 function userHeaders(token) {
@@ -36,8 +34,8 @@ function userHeaders(token) {
     'User-Agent': USER_AGENT,
     'X-Super-Properties': buildSuperProperties(),
     'X-Debug-Options': 'bugReporterEnabled',
-    'Accept': '*/*',
-    'Referer': 'https://discord.com/quest-home',
+    Accept: '*/*',
+    Referer: 'https://discord.com/quest-home',
   };
 }
 
@@ -46,7 +44,7 @@ async function discordFetch(token, path, options = {}) {
     headers: userHeaders(token),
     ...options,
   });
-  if (res.status === 204) return null;
+  if (res.status === 204) return { ok: true, status: 204 };
   const text = await res.text();
   let data;
   try { data = JSON.parse(text); } catch { data = text; }
@@ -69,63 +67,78 @@ async function enrollQuest(token, questId) {
 }
 
 async function sendVideoProgress(token, questId, timestamp) {
-  const jitter = Math.random() * 0.5;
-  const ts = Math.round(timestamp + jitter);
-  const res = await discordFetch(token, `/quests/${questId}/video-progress`, {
+  const ts = Math.round(timestamp + Math.random() * 0.5);
+  return discordFetch(token, `/quests/${questId}/video-progress`, {
     method: 'POST',
     body: JSON.stringify({ timestamp: ts }),
   });
-  return res;
+}
+
+async function sendStreamHeartbeat(token, questId) {
+  return discordFetch(token, `/quests/${questId}/heartbeat`, {
+    method: 'POST',
+    body: JSON.stringify({ stream_key: `${questId}:stream` }),
+  });
 }
 
 function normalizeQuest(raw) {
-  const config = raw.config ?? {};
+  const cfg        = raw.config ?? {};
   const userStatus = raw.user_status ?? {};
-  const task = config.messages?.task_incomplete?.[0] ?? '';
-  const secondsNeeded = config.stream_duration_requirement
-    ?? config.video_stream_duration_requirement
-    ?? config.minutes_requirement * 60
-    ?? 0;
-  const progressSecs = (parseFloat(userStatus.progress ?? '0') / 100) * secondsNeeded;
+  const secondsNeeded =
+    cfg.stream_duration_requirement ??
+    cfg.video_stream_duration_requirement ??
+    (cfg.minutes_requirement != null ? cfg.minutes_requirement * 60 : 0);
+  const progress    = parseFloat(userStatus.progress ?? '0');
+  const progressSecs = (progress / 100) * secondsNeeded;
 
   return {
-    id: raw.id,
-    name: config.messages?.quest_name ?? raw.id,
-    description: task,
-    progress: parseFloat(userStatus.progress ?? '0'),
+    id:           raw.id,
+    name:         cfg.messages?.quest_name ?? raw.id,
+    description:  cfg.messages?.task_incomplete?.[0] ?? '',
+    progress,
     secondsNeeded,
-    taskType: config.task_config?.type ?? 'video',
-    enrolled: !!userStatus.enrolled_at,
-    completed: !!userStatus.completed_at,
+    taskType:     cfg.task_config?.type ?? 'video',
+    enrolled:     !!userStatus.enrolled_at,
+    completed:    !!userStatus.completed_at,
     progressSecs,
   };
 }
 
 const jobs = new Map();
 
-export function getJob(userId) {
-  return jobs.get(userId) ?? null;
-}
+export function getJob(userId)  { return jobs.get(userId) ?? null; }
+export function listJobs()      { return [...jobs.entries()].map(([userId, j]) => ({ userId, ...j.summary() })); }
 
-export function listJobs() {
-  return [...jobs.entries()].map(([userId, job]) => ({ userId, ...job.summary() }));
-}
-
-export async function startRunner({ userId, userToken, channelId, botToken, speedMultiplier = 5, heartbeatInterval = 30 }) {
-  if (jobs.has(userId)) throw new Error('มี job ที่กำลังรันอยู่แล้ว ใช้ /stop ก่อน');
+export async function startRunner({
+  userId,
+  userToken,
+  channelId,
+  botToken,
+  speedMultiplier   = 5,
+  heartbeatInterval = 30,
+}) {
+  if (jobs.has(userId)) {
+    throw new Error('มี job ที่กำลังรันอยู่แล้ว ใช้ /stop ก่อน');
+  }
 
   const controller = new AbortController();
   const { signal } = controller;
 
-  let status = 'starting';
-  let questList = [];
+  let status          = 'starting';
   let currentQuestName = '';
+  let questList        = [];
+  let startedAt        = Date.now();
 
-  const summary = () => ({ status, currentQuestName, questCount: questList.length });
+  const summary = () => ({
+    status,
+    currentQuestName,
+    questCount: questList.length,
+    elapsedMs: Date.now() - startedAt,
+  });
 
   jobs.set(userId, { controller, summary });
 
-  async function notify(msg) {
+  async function notify(content) {
     if (!botToken || !channelId) return;
     try {
       await fetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
@@ -134,7 +147,7 @@ export async function startRunner({ userId, userToken, channelId, botToken, spee
           Authorization: `Bot ${botToken}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ content: msg }),
+        body: JSON.stringify({ content }),
       });
     } catch {}
   }
@@ -146,55 +159,43 @@ export async function startRunner({ userId, userToken, channelId, botToken, spee
 
       while (!signal.aborted) {
         round++;
-
         await notify(`🔍 กำลังเช็ค quest${round > 1 ? ` (รอบที่ ${round})` : ''}...`);
 
         const allQuests = await fetchQuests(userToken);
-        const active = allQuests.filter((q) => !q.completed);
-        questList = active;
+        const active    = allQuests.filter((q) => !q.completed);
+        questList       = active;
 
         if (active.length === 0) {
-          await notify('✅ ไม่มี quest ที่ต้องทำแล้ว ทุกอันเสร็จหมดแล้ว! 🎉');
+          await notify('✅ ทุก quest เสร็จหมดแล้ว! 🎉');
           status = 'done';
           break;
         }
 
         const planLines = active.map((q, i) =>
-          `\`${i + 1}.\` **${q.name}** ${q.enrolled ? '' : '*(ยังไม่ได้ enroll)*'} — ${q.progress.toFixed(1)}%`
+          `\`${i + 1}.\` **${q.name}** ${q.enrolled ? '' : '_(ยังไม่ได้ enroll)_'} — ${q.progress.toFixed(1)}%`
         ).join('\n');
-
-        await notify(
-          `📋 **แผนการทำ quest รอบที่ ${round}** (${active.length} รายการ)\n${planLines}\n\n⚡ เริ่มทำเลย...`
-        );
+        await notify(`📋 **แผนรอบที่ ${round}** (${active.length} รายการ)\n${planLines}\n\n⚡ เริ่มทำเลย...`);
 
         for (const quest of active) {
           if (signal.aborted) break;
 
           if (!quest.enrolled) {
             await notify(`📥 กำลัง enroll **${quest.name}**...`);
-            await enrollQuest(userToken, quest.id).catch((e) => {
-              notify(`⚠️ Enroll ไม่ได้: ${e.message}`);
-            });
+            await enrollQuest(userToken, quest.id).catch((e) => notify(`⚠️ Enroll ล้มเหลว: ${e.message}`));
           }
 
           currentQuestName = quest.name;
+          const isStream = quest.taskType.includes('stream');
+          await notify(`${isStream ? '🎮' : '▶️'} กำลังทำ **${quest.name}** (${isStream ? 'stream' : 'video'})...`);
 
-          if (quest.taskType.includes('stream')) {
-            await notify(`🎮 กำลังทำ **${quest.name}** (stream)...`);
-            await runStreamQuest(userToken, quest, signal, notify, heartbeatInterval).catch((e) => {
-              if (e.message !== 'aborted') notify(`⚠️ **${quest.name}** error: ${e.message}`);
-            });
-          } else {
-            await notify(`▶️ กำลังทำ **${quest.name}** (video)...`);
-            await runVideoQuest(userToken, quest, signal, notify, speedMultiplier, heartbeatInterval).catch((e) => {
-              if (e.message !== 'aborted') notify(`⚠️ **${quest.name}** error: ${e.message}`);
-            });
-          }
+          const runner = isStream ? runStreamQuest : runVideoQuest;
+          await runner(userToken, quest, signal, notify, speedMultiplier, heartbeatInterval).catch((e) => {
+            if (e.message !== 'aborted') notify(`⚠️ **${quest.name}** error: ${e.message}`);
+          });
         }
 
         if (signal.aborted) break;
-
-        await notify(`✔️ รอบที่ ${round} เสร็จแล้ว — กำลังเช็คว่ามี quest ใหม่ไหม...`);
+        await notify(`✔️ รอบที่ ${round} เสร็จ — เช็ครอบใหม่...`);
         await sleep(3000, signal);
       }
 
@@ -211,29 +212,31 @@ export async function startRunner({ userId, userToken, channelId, botToken, spee
       jobs.delete(userId);
     }
   })();
-
-  return { questCount: 0, message: 'กำลังเริ่ม...' };
 }
 
 async function runVideoQuest(token, quest, signal, notify, speedMultiplier, heartbeatSecs) {
-  let current = quest.progressSecs;
-  const target = quest.secondsNeeded;
+  let current       = quest.progressSecs;
+  const target      = quest.secondsNeeded;
   let lastNotifyPct = Math.floor((current / target) * 100);
 
   while (current < target) {
-    if (signal.aborted) return;
+    if (signal.aborted) throw new Error('aborted');
 
     const res = await sendVideoProgress(token, quest.id, current).catch(() => null);
-    current += speedMultiplier * heartbeatSecs;
 
-    const pct = Math.min(Math.floor((current / target) * 100), 100);
+    if (res === null) {
+      throw new Error('Video progress API ไม่ตอบสนอง');
+    }
+
+    current = Math.min(current + speedMultiplier * heartbeatSecs, target);
+    const pct = Math.floor((current / target) * 100);
+
     if (pct >= lastNotifyPct + 25 || pct >= 100) {
       await notify(`⏳ **${quest.name}**: ${pct}%`);
       lastNotifyPct = pct;
     }
 
-    if (res === null || current >= target) break;
-
+    if (current >= target) break;
     await sleep(heartbeatSecs * 1000, signal);
   }
 
@@ -241,24 +244,23 @@ async function runVideoQuest(token, quest, signal, notify, speedMultiplier, hear
   await notify(`✅ **${quest.name}** เสร็จแล้ว!`);
 }
 
-async function runStreamQuest(token, quest, signal, notify, heartbeatSecs) {
-  const total = quest.secondsNeeded;
-  const interval = heartbeatSecs;
-  const ticks = Math.ceil(total / interval);
+async function runStreamQuest(token, quest, signal, notify, _speedMultiplier, heartbeatSecs) {
+  const total    = quest.secondsNeeded;
+  const ticks    = Math.ceil(total / heartbeatSecs);
   const startTick = Math.floor((quest.progressSecs / total) * ticks);
 
   for (let i = startTick; i < ticks; i++) {
-    if (signal.aborted) return;
-    await discordFetch(token, `/quests/${quest.id}/heartbeat`, {
-      method: 'POST',
-      body: JSON.stringify({ stream_key: `${quest.id}:stream` }),
-    }).catch(() => {});
+    if (signal.aborted) throw new Error('aborted');
+
+    await sendStreamHeartbeat(token, quest.id).catch(() => {});
+
     const pct = Math.round(((i + 1) / ticks) * 100);
     if (pct % 25 === 0 || pct >= 100) {
       await notify(`⏳ **${quest.name}**: ${pct}%`);
     }
-    await sleep(interval * 1000, signal);
+    await sleep(heartbeatSecs * 1000, signal);
   }
+
   await notify(`✅ **${quest.name}** เสร็จแล้ว!`);
 }
 
@@ -273,6 +275,9 @@ export function stopRunner(userId) {
 function sleep(ms, signal) {
   return new Promise((resolve, reject) => {
     const t = setTimeout(resolve, ms);
-    signal?.addEventListener('abort', () => { clearTimeout(t); reject(new Error('aborted')); }, { once: true });
+    signal?.addEventListener('abort', () => {
+      clearTimeout(t);
+      reject(new Error('aborted'));
+    }, { once: true });
   });
 }
