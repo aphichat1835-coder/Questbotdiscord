@@ -1,156 +1,317 @@
 <div align="center">
 
-# Discord Quest Helper
+# ✨ NeverDie Quest Helper
 
 <p align="center">
-  <img src="src-tauri/icons/icon.png" alt="Discord Quest Helper Logo" width="150">
+  <img src="src-tauri/icons/icon.png" alt="NeverDie Quest Helper Logo" width="150">
 </p>
 
-**🎮 Automate your Discord Quests with one click**
+**ระบบจัดการ Discord Quest อัตโนมัติ — ครบทั้ง Desktop App และ Discord Bot**
 
-Complete Discord video, stream, and game quests automatically while you focus on what matters.
+ดูแล Quest ทุกรายการให้คุณโดยอัตโนมัติ ไม่ว่าจะเป็น Video, Stream หรือ Game Quest  
+พร้อมแผงควบคุมใน Discord Server ของคุณเอง
 
-⭐ **If you find this helpful, please give it a star!** ⭐
+⭐ **ถ้าโปรเจกนี้มีประโยชน์ กด Star ให้ด้วยนะครับ!** ⭐
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Platform](https://img.shields.io/badge/platform-Windows%20|%20macOS-blue.svg)](https://github.com/Masterain98/discord-quest-helper/releases)
+[![Node.js](https://img.shields.io/badge/node-22-green.svg)](https://nodejs.org/)
+[![discord.js](https://img.shields.io/badge/discord.js-14-5865f2.svg)](https://discord.js.org/)
+[![Express](https://img.shields.io/badge/express-4-black.svg)](https://expressjs.com/)
 [![Tauri](https://img.shields.io/badge/tauri-2-blue.svg)](https://tauri.app/)
 [![Vue](https://img.shields.io/badge/vue-3.5-green.svg)](https://vuejs.org/)
-[![Rust](https://img.shields.io/badge/rust-1.70+-orange.svg)](https://www.rust-lang.org/)
-[![GitHub Release](https://img.shields.io/github/v/release/Masterain98/discord-quest-helper?label=latest%20release&color=41b883)](https://github.com/Masterain98/discord-quest-helper/releases/latest)
 
 </div>
 
-## 🚀 Quick Start
+---
 
-> [!WARNING]
-> **This tool is for educational purposes only.** Using this tool may violate Discord's Terms of Service. The authors are not responsible for any consequences resulting from the use of this software. Use at your own risk.
+## 📖 ภาพรวมระบบ
 
-> [!IMPORTANT]
-> This project uses GitHub Actions CI/CD workflows to build and publish its binaries as immutable releases, meaning the software you download is built directly from the original publicly available source code rather than manually uploaded binaries.
-> You can use DeepWiki to ask questions about the project’s codebase. 
-> [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/Masterain98/discord-quest-helper)
-
-### Download & Run
-
-**Windows:**
-1. Go to [GitHub Releases](https://github.com/Masterain98/discord-quest-helper/releases) and download:
-   - **Portable**: `.zip` file — extract to any folder and run `discord-quest-helper.exe`
-   - **Installer**: `.msi` file — double-click to install
-
-**macOS (Apple Silicon):**
-1. Go to [GitHub Releases](https://github.com/Masterain98/discord-quest-helper/releases) and download the latest `.dmg` file
-2. Open the `.dmg` file and drag the app to your Applications folder
-3. Run the following command in Terminal to remove the quarantine attribute:
-   ```bash
-   xattr -cr /Applications/Discord\ Quest\ Helper.app
-   ```
-4. Run `Discord Quest Helper` from Applications
-
-### Login
-
-1. Click **Auto Detect Token** for automatic extraction, or
-2. Click **Manual Input** to enter your token directly
-
-> [!NOTE]
-> **Auto Detect Token** requires the Discord desktop client to be running in the background.
-
-### Complete Quests
-
-- **Video/Stream**: Click "Start Quest" on any incomplete quest
-- **Game**: Use Game Simulator tab → Select game → Create & Run simulated game
-
-## ✨ Features
-
-- ⚡ **One-Click Login** — Automatically detects your Discord token, no scripts or technical steps needed
-- 🎮 **Zero-Download Game Simulation** — Complete game quests without downloading or installing the actual game
-- 📺 **Video & Stream Automation** — Click once, progress submits automatically in the background
-- 🔍 **Advanced Quest Filter** — Filter by reward type, completion status, and more
-- 👥 **Multi-Account Support** — Manage multiple Discord accounts seamlessly
-- 🌏 **Multi-language** — 16 languages: English, Chinese (Simplified & Traditional), Japanese, Korean, Russian, Spanish, German, French, Indonesian, Polish, Portuguese (Brazil & Portugal), Thai, Turkish, Vietnamese
-
-## 📸 Screenshots
-
-| Login | Home |
-|:-----:|:----:|
-| ![Login](https://discord-quest-helper.dal.ao/images/login.png) | ![Home](https://discord-quest-helper.dal.ao/images/home1.png) |
-
-| Multi-Account | Game Simulator |
-|:-------------:|:--------------:|
-| ![Multi-Account](https://discord-quest-helper.dal.ao/images/multi-account.png) | ![Game Simulator](https://discord-quest-helper.dal.ao/images/game-simulator.png) |
-
-| Quest Progress | Settings |
-|:--------------:|:--------:|
-| ![Quest Progress](https://discord-quest-helper.dal.ao/images/home2.png) | ![Settings](https://discord-quest-helper.dal.ao/images/settings.png) |
-
-## 🏗️ Architecture
+โปรเจกนี้ประกอบด้วย **3 ส่วนหลัก** ที่ทำงานร่วมกัน:
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                      Discord Quest Helper                        │
-├─────────────────────────────────────────────────────────────────┤
-│  Vue.js Frontend (Vite dev server :1420)                         │
-│  ├─ Views: Home, GameSimulator, Settings, Debug                 │
-│  ├─ Stores: auth.ts, quests.ts, version.ts, toast.ts (Pinia)    │
-│  └─ API: tauri.ts (IPC bridge)                                   │
-├────────────────────────┬────────────────────────────────────────┤
-│     Tauri IPC          │                                         │
-├────────────────────────┴────────────────────────────────────────┤
-│  Rust Backend (Tauri 2)                                          │
-│  ├─ token_extractor.rs   - LevelDB + DPAPI + AES-GCM             │
-│  ├─ cdp_client.rs        - Chrome DevTools Protocol integration  │
-│  ├─ cdp_quest.rs         - CDP-based quest completion            │
-│  ├─ discord_api.rs       - HTTP client & endpoints               │
-│  ├─ discord_gateway.rs   - WebSocket gateway connection          │
-│  ├─ discord_cdp_launcher.rs - CDP launcher management            │
-│  ├─ quest_completer.rs   - Video/stream automation               │
-│  ├─ game_simulator.rs    - Process creation & management         │
-│  ├─ super_properties.rs  - Discord client fingerprinting         │
-│  ├─ stealth.rs           - Stealth mode for anti-detection       │
-│  ├─ rpc.rs               - Discord RPC client                    │
-│  ├─ runner.rs            - Activity runner parsing                │
-│  ├─ logger.rs            - Structured logging                    │
-│  └─ models.rs            - Data structures & types               │
-├─────────────────────────────────────────────────────────────────┤
-│  Game Runner (src-runner) - Minimal Windows exe (~140KB)         │
-│  CDP Launcher (src-cdp-launcher) - Discord CDP sidecar binary   │
-└─────────────────────────────────────────────────────────────────┘
-                              │ HTTPS
-                              ▼
-                    Discord API (discord.com/api/v9)
+Discord Server
+      ↓  /run /panel /quest-add ...
+  🤖 bot/          Discord Bot (discord.js)
+      ↓  HTTP REST
+  🔌 api/          API Server (Express + SQLite)
+      ↓  discord.com/api/v9
+  🎮 Quest Automation
+      ↑
+  🖥️  src-tauri/   Desktop App (Tauri + Vue + Rust)
 ```
 
-## 🔒 Security
+| ส่วน | เทคโนโลยี | หน้าที่ |
+|------|-----------|---------|
+| `bot/` | discord.js 14, Node.js | แผงควบคุมใน Discord, รับคำสั่ง slash |
+| `api/` | Express, SQLite, Node.js | API กลาง, ระบบ Quest Runner |
+| `src-tauri/` | Tauri 2, Vue 3, Rust | Desktop App สำหรับจัดการเต็มรูปแบบ |
 
-- **Tokens stored in memory only** — Never persisted to disk
-- **HTTPS for all requests** — Secure API communication
-- **Platform-native encryption** — Windows DPAPI / macOS Keychain
+---
 
-> [!CAUTION]
-> Using automation tools may violate Discord ToS and result in account suspension.
+## 🤖 Discord Bot
+
+### ติดตั้งและใช้งาน
+
+**1. ตั้งค่า Environment**
+
+```bash
+cd bot
+cp .env.example .env
+```
+
+แก้ไฟล์ `bot/.env`:
+
+| ตัวแปร | คำอธิบาย |
+|--------|---------|
+| `DISCORD_BOT_TOKEN` | Token ของบอทจาก [Discord Developer Portal](https://discord.com/developers) |
+| `DISCORD_CLIENT_ID` | Application ID ของบอท |
+| `DISCORD_GUILD_ID` | Server ID ที่จะใช้งาน |
+| `OWNER_ID` | Discord User ID ของเจ้าของ |
+| `API_URL` | URL ของ API Server เช่น `https://your-api.com` |
+| `API_SECRET` | Secret key สำหรับเชื่อมต่อ API |
+| `TIMEZONE` | Timezone (default: `Asia/Bangkok`) |
+
+**2. ติดตั้ง dependencies**
+
+```bash
+npm install
+```
+
+**3. Register Slash Commands** (ทำครั้งเดียว)
+
+```bash
+npm run register
+```
+
+**4. เริ่มใช้งาน**
+
+```bash
+npm start          # production
+npm run dev        # development (auto-restart)
+```
+
+---
+
+### 📋 คำสั่งทั้งหมด
+
+#### 🎮 Quest Runner — อัตโนมัติ
+
+| คำสั่ง | คำอธิบาย |
+|--------|---------|
+| `/run` | เปิดหน้าต่างกรอก token แล้วเริ่มทำ quest ทุกอันอัตโนมัติ |
+| `/stop` | หยุด Quest Runner ที่กำลังทำงานอยู่ |
+| `/panel` | เปิดแผงควบคุมพร้อมปุ่มกดครบชุด |
+
+#### 📝 Quest Tracker — จัดการเอง
+
+| คำสั่ง | คำอธิบาย |
+|--------|---------|
+| `/quest-add` | เพิ่ม quest ใหม่ พร้อม deadline และโน้ต |
+| `/quest-list` | ดูรายการ quest ทั้งหมด |
+| `/quest-done id:...` | มาร์ค quest ว่าเสร็จแล้ว |
+| `/quest-remove id:...` | ลบ quest ออกจากรายการ |
+| `/quest-status` | ดูสรุปสถิติทั้งหมด |
+
+#### 🔧 ทั่วไป
+
+| คำสั่ง | คำอธิบาย |
+|--------|---------|
+| `/ping` | เช็กว่าบอทออนไลน์อยู่ไหม |
+| `/help` | แสดงคำสั่งทั้งหมด |
+
+---
+
+### 🎛️ แผงควบคุม `/panel`
+
+พิมพ์ `/panel` ในห้อง Discord จะได้แผงควบคุมพร้อมปุ่มกด:
+
+```
+┌──────────────────────────────────────────┐
+│  🎮 NeverDie Quest — แผงควบคุม           │
+│  📦 ทั้งหมด: 5  ✅ เสร็จ: 3  🔴 ค้าง: 2  │
+├──────────────────────────────────────────┤
+│ [📋 ดูรายการ] [➕ เพิ่ม Quest]            │
+│ [✅ Mark Done] [📊 สถิติ]                 │
+│ [⚡ Start Runner] [🛑 Stop] [🔄 Refresh]  │
+└──────────────────────────────────────────┘
+```
+
+ทุกปุ่มทำงานได้ทันที ไม่ต้องพิมพ์คำสั่งใหม่
+
+---
+
+### ⚡ Quest Runner — Flow อัตโนมัติ
+
+เมื่อกด `/run` หรือปุ่ม **Start Runner** ในแผง:
+
+```
+1. 🔍 เช็ค quest ทั้งหมดในบัญชี
+2. 📋 แสดงแผนการทำ quest แต่ละรายการ
+3. 📥 Enroll quest ที่ยังไม่ได้รับ
+4. ▶️  ทำ quest ที่ 1 → อัปเดต 25% → 50% → 75% → ✅
+5. ▶️  ทำ quest ที่ 2, 3, ... จนครบ
+6. 🔍 เช็คใหม่ว่ามี quest เพิ่มเติมไหม
+7. 🎉 จบเมื่อทำ quest ทุกอันเสร็จ
+```
+
+อัปเดต progress แจ้งใน channel แบบ real-time ทุก 25%
+
+---
+
+## 🔌 API Server
+
+### ติดตั้งและใช้งาน
+
+```bash
+cd api
+cp .env.example .env
+npm install
+npm start
+```
+
+แก้ไฟล์ `api/.env`:
+
+| ตัวแปร | คำอธิบาย |
+|--------|---------|
+| `PORT` | Port ที่รัน (default: `3000`) |
+| `DATABASE_PATH` | Path ไฟล์ SQLite (default: `./data/quests.db`) |
+| `API_SECRET` | Secret key (ต้องตรงกับ bot) |
+| `DISCORD_BOT_TOKEN` | Bot token สำหรับส่งข้อความกลับ Discord |
+
+### Endpoints
+
+| Method | Path | คำอธิบาย |
+|--------|------|---------|
+| `GET` | `/health` | เช็ก status |
+| `GET` | `/quests` | ดู quest ทั้งหมด |
+| `GET` | `/quests/stats` | สถิติ |
+| `GET` | `/quests/:id` | ดู quest ตาม ID |
+| `POST` | `/quests` | เพิ่ม quest |
+| `PATCH` | `/quests/:id` | แก้ไข quest |
+| `PATCH` | `/quests/:id/done` | มาร์คว่าเสร็จ |
+| `DELETE` | `/quests/:id` | ลบ quest |
+| `POST` | `/runner/start` | เริ่ม Quest Runner |
+| `POST` | `/runner/stop` | หยุด Quest Runner |
+| `GET` | `/runner/status/:userId` | ดู status ของ Runner |
+
+ทุก request ต้องส่ง header:
+```
+x-api-secret: <API_SECRET>
+```
+
+---
+
+## 🖥️ Desktop App (Tauri)
+
+แอปเดสก์ท็อปสำหรับจัดการ Quest แบบ Offline บนเครื่อง
+
+### ความสามารถ
+
+- 🔑 **ดึง session อัตโนมัติ** จาก Discord client บนเครื่อง
+- 🎮 **Game Simulator** — จำลองการเล่นเกมสำหรับ Game Quest
+- 📺 **Video & Stream Automation** — กดครั้งเดียว ระบบทำงานเบื้องหลัง
+- 🔍 **Quest Filter** — กรองตามประเภท, รางวัล, สถานะ
+- 👥 **หลายบัญชี** — จัดการได้หลาย account
+- 🌏 **16 ภาษา** — ไทย, อังกฤษ, จีน, ญี่ปุ่น, เกาหลี และอื่น ๆ
+
+### Architecture (Desktop App)
+
+```
+┌───────────────────────────────────────────────────────┐
+│  Vue.js Frontend (Vite)                                │
+│  ├─ Views: Home, GameSimulator, Settings, Debug       │
+│  ├─ Stores: auth, quests, version, toast (Pinia)      │
+│  └─ API: tauri.ts (IPC bridge)                        │
+├───────────────────────────────────────────────────────┤
+│  Rust Backend (Tauri 2)                               │
+│  ├─ token_extractor.rs   — LevelDB + AES-GCM          │
+│  ├─ cdp_client.rs        — Chrome DevTools Protocol   │
+│  ├─ discord_api.rs       — HTTP client                │
+│  ├─ quest_completer.rs   — Video/stream automation    │
+│  ├─ game_simulator.rs    — Process management         │
+│  └─ super_properties.rs  — Client fingerprinting      │
+└───────────────────────────────────────────────────────┘
+                        ↓ HTTPS
+            Discord API (discord.com/api/v9)
+```
+
+---
+
+## 🏗️ โครงสร้าง Repository
+
+```
+neverdie-quest-helper/
+├── bot/                    Discord Bot
+│   ├── src/
+│   │   ├── commands/       slash commands ทั้งหมด
+│   │   ├── index.js        entry point + event handler
+│   │   ├── register-commands.js
+│   │   ├── storage.js      เรียก API
+│   │   └── config.js
+│   ├── package.json
+│   └── .env.example
+│
+├── api/                    API Server
+│   ├── src/
+│   │   ├── routes/         quests, runner
+│   │   ├── index.js        Express server
+│   │   ├── db.js           SQLite (better-sqlite3)
+│   │   └── discord-runner.js  Quest automation engine
+│   ├── package.json
+│   └── .env.example
+│
+├── src/                    Vue.js Frontend (Desktop)
+├── src-tauri/              Rust Backend (Desktop)
+├── src-runner/             Game Runner binary
+├── src-cdp-launcher/       CDP Launcher binary
+└── .github/workflows/      CI/CD (frontend + bot + api)
+```
+
+---
+
+## 🔒 ความปลอดภัย
+
+- **Token ไม่ถูกบันทึก** — ใช้เฉพาะใน memory ขณะทำงาน ไม่มีการเก็บลงดิสก์
+- **HTTPS ทุก request** — การสื่อสารกับ Discord เข้ารหัสตลอด
+- **API Secret** — bot และ api คุยกันด้วย secret key ที่กำหนดเอง
+- **Ephemeral replies** — ข้อมูล token แสดงเฉพาะผู้ใช้คนเดียวใน Discord
+
+> **หมายเหตุ:** โปรดศึกษา Terms of Service ของ Discord ก่อนใช้งาน และใช้ด้วยความรับผิดชอบ
+
+---
+
+## ⚙️ CI/CD
+
+GitHub Actions รัน 3 jobs อัตโนมัติทุก push:
+
+| Job | ตรวจสอบอะไร |
+|-----|------------|
+| `frontend-checks` | i18n, unit tests, build (pnpm) |
+| `bot-checks` | npm install, syntax check ทุกไฟล์ |
+| `api-checks` | npm install, syntax check ทุกไฟล์ |
+
+---
 
 ## 🤝 Contributing
 
-Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for:
+ยินดีรับ Pull Request ทุกรูปแบบ! ดูรายละเอียดได้ที่ [CONTRIBUTING.md](CONTRIBUTING.md)
 
-- Development setup
-- Project structure
-- Code conventions
-- Pull request guidelines
+---
 
 ## 📄 License
 
-MIT License — see [LICENSE](LICENSE) file.
+MIT License — ดูที่ [LICENSE](LICENSE)
 
+---
 
 ## 🙏 Credits
 
-**Inspiration & Resources**
+**แรงบันดาลใจและแหล่งอ้างอิง**
 - [markterence/discord-quest-completer](https://github.com/markterence/discord-quest-completer)
 - [power0matin/discord-quest-auto-completer](https://github.com/power0matin/discord-quest-auto-completer)
-- [taisrisk/Discord-Quest-Helper](https://github.com/taisrisk/Discord-Quest-Helper)
 - [aamiaa/CompleteDiscordQuest.md](https://gist.github.com/aamiaa/204cd9d42013ded9faf646fae7f89fbb)
 - [docs.discord.food](https://docs.discord.food/)
 
-**Technologies**
-- [Tauri](https://tauri.app/) • [Vue.js](https://vuejs.org/) • [Pinia](https://pinia.vuejs.org/) • [vue-i18n](https://vue-i18n.intlify.dev/) • [shadcn-vue](https://www.shadcn-vue.com/) • [TailwindCSS](https://tailwindcss.com/) • [Lucide Icons](https://lucide.dev/)
+**เทคโนโลยีที่ใช้**
+
+`discord.js` · `Express` · `SQLite` · `Tauri` · `Vue.js` · `Pinia` · `Rust` · `Node.js` · `TailwindCSS` · `shadcn-vue`
