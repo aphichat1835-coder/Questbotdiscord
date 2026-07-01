@@ -1,4 +1,5 @@
 import { config } from './config.js';
+import { getAllQuests, getStats } from './storage.js';
 
 let client        = null;
 let checkInterval = null;
@@ -50,21 +51,11 @@ function getTzOffsetMs(tz) {
 }
 
 async function fetchQuests() {
-  const res = await fetch(`${config.apiUrl}/quests`, {
-    headers: config.apiSecret ? { 'x-api-secret': config.apiSecret } : {},
-    signal: AbortSignal.timeout(8000),
-  });
-  if (!res.ok) throw new Error(`API ${res.status}`);
-  return res.json();
+  return getAllQuests();
 }
 
 async function fetchStats() {
-  const res = await fetch(`${config.apiUrl}/quests/stats`, {
-    headers: config.apiSecret ? { 'x-api-secret': config.apiSecret } : {},
-    signal: AbortSignal.timeout(8000),
-  });
-  if (!res.ok) throw new Error(`API ${res.status}`);
-  return res.json();
+  return getStats();
 }
 
 async function sendToLogChannel(content) {

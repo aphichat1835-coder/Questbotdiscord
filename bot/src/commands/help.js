@@ -33,7 +33,7 @@ export async function execute(interaction) {
       {
         name: '🔧 ระบบ',
         value: [
-          '`/api-status` — เช็กสถานะ API Server',
+          '`/api-status` — เช็กสถานะระบบ/ฐานข้อมูล',
           '`/ping` — เช็กว่าบอทออนไลน์',
           '`/help` — แสดงหน้านี้',
         ].join('\n'),

@@ -1,6 +1,8 @@
 import { Client, GatewayIntentBits, Collection } from 'discord.js';
 import { config } from './config.js';
 import { startWorker } from './worker.js';
+import './db.js'; // init database + tables ทันทีตอน import
+
 import * as ping from './commands/ping.js';
 import * as help from './commands/help.js';
 import * as apiStatus from './commands/api-status.js';

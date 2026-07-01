@@ -6,8 +6,7 @@ export const config = {
   guildId:        process.env.DISCORD_GUILD_ID,
   ownerId:        process.env.OWNER_ID,
   timezone:       process.env.TIMEZONE ?? 'Asia/Bangkok',
-  apiUrl:         process.env.API_URL ?? 'http://localhost:3000',
-  apiSecret:      process.env.API_SECRET ?? '',
   logChannelId:   process.env.LOG_CHANNEL_ID ?? '',
   managerRoleId:  process.env.MANAGER_ROLE_ID ?? '',
+  databasePath:   process.env.DATABASE_PATH ?? './data/quests.db',
 };

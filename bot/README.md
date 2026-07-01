@@ -1,69 +1,32 @@
-# NeverDie Quest Bot
+# NeverDie Quest Bot (Merged)
 
-Discord bot สำหรับจัดการ Quest Tracker ใน server
+บอท Discord + Quest Runner + Quest Tracker รวมเป็นโปรเซสเดียว ไม่ต้องรัน API แยกอีกต่อไป
 
-## Setup
-
-### 1. ติดตั้ง dependencies
-
+## ติดตั้ง
 ```bash
-cd bot
 npm install
+cp .env.example .env   # แล้วกรอกค่าให้ครบ
+npm run register       # ลง slash command ครั้งแรก (หรือทุกครั้งที่แก้คำสั่ง)
+npm start               # รันบอท
 ```
 
-### 2. ตั้งค่า environment variables
+## คำสั่งทั้งหมด
+- `/panel` — แผงควบคุมหลัก มีปุ่ม: รายการ / เพิ่ม / Done / แก้ไข / ลบ / สถิติ / 🪙 กรอก Token-Start Runner / 🛑 Stop Runner / Refresh
+- `/run` — เปิด modal กรอก Discord User Token แล้วเริ่มทำเควสอัตโนมัติทันที
+- `/stop` — หยุด Runner ที่กำลังทำงาน
+- `/quest-add /quest-list /quest-done /quest-remove /quest-status` — จัดการ quest tracker (คนละเรื่องกับ Runner อัตโนมัติ ไว้ track เควส/deadline เอง)
+- `/api-status` — เช็คสถานะฐานข้อมูลและจำนวน Runner job ที่กำลังทำงาน
+- `/ping /help`
 
-```bash
-cp .env.example .env
-```
+## ระหว่าง Runner ทำงาน
+บอทจะส่งข้อความ embed **1 ข้อความ** ในห้องที่สั่ง แล้ว **edit ข้อความเดิมต่อเนื่อง** (ไม่สแปมห้อง) แสดง:
+- จำนวนเควสที่พบทั้งหมด
+- เควสที่กำลังทำอยู่ + ลำดับ (เช่น 2/5)
+- % ความคืบหน้าของเควสปัจจุบัน (progress bar)
+- จำนวนเควสที่เหลือ
+- เวลาที่ทำงานมาแล้ว
 
-แก้ไฟล์ `.env`:
-
-| ตัวแปร | คำอธิบาย |
-|---|---|
-| `DISCORD_BOT_TOKEN` | Token จาก Discord Developer Portal |
-| `DISCORD_CLIENT_ID` | Application ID ของบอท |
-| `DISCORD_GUILD_ID` | Server ID ที่จะ register commands |
-| `OWNER_ID` | Discord User ID ของเจ้าของบอท |
-| `DATABASE_PATH` | path ไฟล์ JSON (default: `./data/quests.json`) |
-| `TIMEZONE` | timezone (default: `Asia/Bangkok`) |
-
-### 3. Register slash commands
-
-```bash
-npm run register
-```
-
-### 4. รันบอท
-
-```bash
-npm start
-```
-
-หรือ dev mode (restart อัตโนมัติ):
-
-```bash
-npm run dev
-```
-
-## คำสั่ง
-
-| คำสั่ง | คำอธิบาย |
-|---|---|
-| `/ping` | เช็กว่าบอทออนไลน์อยู่ไหม |
-| `/help` | แสดงคำสั่งทั้งหมด |
-| `/quest-add name: ... deadline: ... note: ...` | เพิ่มเควสใหม่ |
-| `/quest-list` | ดูรายการเควสทั้งหมด |
-| `/quest-done id: ...` | มาร์คเควสว่าเสร็จแล้ว |
-| `/quest-remove id: ...` | ลบเควสออก |
-| `/quest-status` | ดูสรุปสถิติ |
-
-## Bot Hosting
-
-ตั้ง start command เป็น:
-
-```
-npm start
-```
-
-ไฟล์ข้อมูลเก็บที่ `data/quests.json` (JSON file database)
+## หมายเหตุ
+- ใช้ `better-sqlite3` เก็บข้อมูล quest tracker ไว้ที่ `DATABASE_PATH` (default `./data/quests.db`) — ถ้า host เป็นแบบ ephemeral filesystem ต้อง mount persistent disk ไม่งั้นข้อมูลหายตอน redeploy
+- Discord User Token ที่กรอกผ่าน `/run` หรือปุ่มใน panel **ไม่ถูกบันทึกลง DB** อยู่ใน memory แค่ตอน job รันเท่านั้น
+- การใช้ user token อัตโนมัติแบบนี้ขัดกับ Discord ToS มีความเสี่ยงโดนแบนบัญชีได้ ใช้อย่างระมัดระวัง

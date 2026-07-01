@@ -4,7 +4,7 @@ import {
   ModalBuilder, TextInputBuilder, TextInputStyle,
 } from 'discord.js';
 import { getAllQuests, getStats, addQuest, editQuest, markDone, removeQuest } from '../storage.js';
-import { config } from '../config.js';
+import { stopRunner, getJob } from '../discord-runner.js';
 import { isAdmin, isManager } from '../permissions.js';
 
 export const data = new SlashCommandBuilder()
@@ -63,8 +63,8 @@ export async function sendPanel(interaction, isUpdate = false) {
 
   const row2 = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId('panel:status').setLabel('📊 สถิติ').setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId('panel:run').setLabel('⚡ Start Runner').setStyle(ButtonStyle.Danger),
-    new ButtonBuilder().setCustomId('panel:stop').setLabel('🛑 Stop').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId('panel:run').setLabel('🪙 กรอก Token / Start Runner').setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId('panel:stop').setLabel('🛑 Stop Runner').setStyle(ButtonStyle.Danger),
     new ButtonBuilder().setCustomId('panel:refresh').setLabel('🔄 Refresh').setStyle(ButtonStyle.Secondary),
   );
 
@@ -116,6 +116,16 @@ export async function handleButton(interaction) {
           { name: '📈 ความคืบหน้า',     value: `${bar} ${pct}%` },
         )
         .setTimestamp();
+
+      const job = getJob(interaction.user.id);
+      if (job) {
+        const s = job.summary();
+        embed.addFields({
+          name: '⚡ Quest Runner กำลังทำงาน',
+          value: `🎯 ${s.currentQuestName || '—'} (${s.currentIndex}/${s.totalFound}) — ${s.currentPct}%\n⏳ เหลืออีก ${s.remaining} รายการ`,
+        });
+      }
+
       return interaction.editReply({ embeds: [embed] });
     } catch (err) { return interaction.editReply(`❌ ${err.message}`); }
   }
@@ -189,6 +199,9 @@ export async function handleButton(interaction) {
   }
 
   if (action === 'run') {
+    if (getJob(interaction.user.id)) {
+      return interaction.reply({ content: '⚠️ คุณมี Runner ที่กำลังทำงานอยู่แล้ว ใช้ `/stop` ก่อน', ephemeral: true });
+    }
     return interaction.showModal(
       new ModalBuilder().setCustomId(`run_modal:${interaction.channelId}`).setTitle('⚡ Quest Runner')
         .addComponents(
@@ -201,18 +214,8 @@ export async function handleButton(interaction) {
 
   if (action === 'stop') {
     await interaction.deferReply({ ephemeral: true });
-    try {
-      const res = await fetch(`${config.apiUrl}/runner/stop`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(config.apiSecret ? { 'x-api-secret': config.apiSecret } : {}),
-        },
-        body: JSON.stringify({ userId: interaction.user.id }),
-      });
-      const body = await res.json();
-      return interaction.editReply(body.stopped ? '🛑 หยุด Runner แล้ว' : 'ℹ️ ไม่มี Runner กำลังทำงาน');
-    } catch (err) { return interaction.editReply(`❌ ${err.message}`); }
+    const stopped = stopRunner(interaction.user.id);
+    return interaction.editReply(stopped ? '🛑 หยุด Runner แล้ว' : 'ℹ️ ไม่มี Runner กำลังทำงาน');
   }
 }
 

@@ -6,7 +6,7 @@ import {
   ActionRowBuilder,
   EmbedBuilder,
 } from 'discord.js';
-import { config } from '../config.js';
+import { startRunner, fetchMe, fetchQuests } from '../discord-runner.js';
 
 export const data = new SlashCommandBuilder()
   .setName('run')
@@ -36,45 +36,37 @@ export async function handleModal(interaction) {
   await interaction.deferReply({ ephemeral: true });
 
   try {
-    const res = await fetch(`${config.apiUrl}/runner/start`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(config.apiSecret ? { 'x-api-secret': config.apiSecret } : {}),
-      },
-      body: JSON.stringify({
-        userToken,
-        userId: interaction.user.id,
-        channelId,
-      }),
+    const me = await fetchMe(userToken).catch(() => null);
+    if (!me?.id) return interaction.editReply('❌ Token ไม่ถูกต้องหรือหมดอายุ');
+
+    const allQuests = await fetchQuests(userToken);
+    const active     = allQuests.filter((q) => !q.completed);
+
+    await startRunner({
+      userId:    interaction.user.id,
+      userToken,
+      channelId,
+      client:    interaction.client,
     });
 
-    const data_res = await res.json();
-
-    if (!res.ok) {
-      return interaction.editReply(`❌ ${data_res.error ?? 'เกิดข้อผิดพลาด'}`);
+    if (active.length === 0) {
+      return interaction.editReply(`✅ ไม่มี quest ที่ต้องทำสำหรับ **${me.username}**`);
     }
 
-    const { user, questCount, quests } = data_res;
-
-    if (questCount === 0) {
-      return interaction.editReply(`✅ ไม่มี quest ที่ต้องทำสำหรับ **${user.username}**`);
-    }
-
-    const questLines = quests
+    const questLines = active
       .map((q) => `• **${q.name}** — ${q.progress.toFixed(1)}%`)
       .join('\n');
 
     const embed = new EmbedBuilder()
       .setTitle('⚡ Quest Runner เริ่มต้นแล้ว')
       .setColor(0x57f287)
-      .setDescription(`ล็อกอินเป็น **${user.username}** สำเร็จ`)
+      .setDescription(`ล็อกอินเป็น **${me.username}** สำเร็จ`)
       .addFields({
-        name: `📋 Quest ที่จะทำ (${questCount} รายการ)`,
+        name: `📋 Quest ที่จะทำ (${active.length} รายการ)`,
         value: questLines,
       })
       .addFields({
-        name: '📢 อัปเดตจะส่งมาที่',
+        name: '📢 ความคืบหน้าแบบสดจะโชว์ที่',
         value: `<#${channelId}>`,
         inline: true,
       })
@@ -82,6 +74,6 @@ export async function handleModal(interaction) {
 
     await interaction.editReply({ embeds: [embed] });
   } catch (err) {
-    await interaction.editReply(`❌ ไม่สามารถเชื่อมต่อ API ได้: ${err.message}`);
+    await interaction.editReply(`❌ ${err.message}`);
   }
 }
