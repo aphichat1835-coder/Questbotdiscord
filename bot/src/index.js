@@ -1,17 +1,8 @@
 import { Client, GatewayIntentBits, Collection } from 'discord.js';
-import { createServer } from 'http';
 import { config } from './config.js';
 import { startWorker } from './worker.js';
+import { startDashboard } from './dashboard.js';
 import './db.js'; // init database + tables ทันทีตอน import
-
-// Health check server สำหรับ Render Web Service
-const PORT = process.env.PORT || 3000;
-createServer((req, res) => {
-  res.writeHead(200, { 'Content-Type': 'text/plain' });
-  res.end('OK');
-}).listen(PORT, () => {
-  console.log(`🌐 Health check server listening on port ${PORT}`);
-});
 
 import * as ping from './commands/ping.js';
 import * as help from './commands/help.js';
@@ -40,6 +31,7 @@ for (const cmd of commands) {
 client.once('ready', () => {
   console.log(`✅ บอทพร้อมแล้ว — logged in as ${client.user.tag}`);
   startWorker(client);
+  startDashboard(client);
 });
 
 client.on('interactionCreate', async (interaction) => {
