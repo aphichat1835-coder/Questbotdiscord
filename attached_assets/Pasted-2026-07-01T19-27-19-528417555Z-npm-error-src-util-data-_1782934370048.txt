@@ -1,0 +1,150 @@
+2026-07-01T19:27:19.528417555Z npm error ./src/util/data.lzz:99:48: error: no matching function for call to ‘v8::Object::HasOwnProperty(v8::Local<v8::Context>&, v8::Local<v8::String>&)’
+2026-07-01T19:27:19.528420095Z npm error /opt/render/.cache/24.14.1/include/node/v8-object.h:621:37: note: candidate: ‘v8::Maybe<bool> v8::Object::HasOwnProperty(v8::Local<v8::Context>, v8::Local<v8::Name>)’
+2026-07-01T19:27:19.528422535Z npm error   621 |   V8_WARN_UNUSED_RESULT Maybe<bool> HasOwnProperty(Local<Context> context,
+2026-07-01T19:27:19.528425135Z npm error       |                                     ^~~~~~~~~~~~~~
+2026-07-01T19:27:19.528427725Z npm error /opt/render/.cache/24.14.1/include/node/v8-object.h:622:64: note:   no known conversion for argument 2 from ‘Local<v8::String>’ to ‘Local<v8::Name>’
+2026-07-01T19:27:19.528430245Z npm error   622 |                                                    Local<Name> key);
+2026-07-01T19:27:19.528432775Z npm error       |                                                    ~~~~~~~~~~~~^~~
+2026-07-01T19:27:19.528435315Z npm error /opt/render/.cache/24.14.1/include/node/v8-object.h:623:37: note: candidate: ‘v8::Maybe<bool> v8::Object::HasOwnProperty(v8::Local<v8::Context>, uint32_t)’
+2026-07-01T19:27:19.528438035Z npm error   623 |   V8_WARN_UNUSED_RESULT Maybe<bool> HasOwnProperty(Local<Context> context,
+2026-07-01T19:27:19.528440815Z npm error       |                                     ^~~~~~~~~~~~~~
+2026-07-01T19:27:19.528443525Z npm error /opt/render/.cache/24.14.1/include/node/v8-object.h:624:61: note:   no known conversion for argument 2 from ‘v8::Local<v8::String>’ to ‘uint32_t’ {aka ‘unsigned int’}
+2026-07-01T19:27:19.528446165Z npm error   624 |                                                    uint32_t index);
+2026-07-01T19:27:19.528448905Z npm error       |                                                    ~~~~~~~~~^~~~~
+2026-07-01T19:27:19.528451676Z npm error ./src/util/data.lzz:100:41: error: no matching function for call to ‘v8::Object::Get(v8::Local<v8::Context>&, v8::Local<v8::String>&)’
+2026-07-01T19:27:19.528454365Z npm error /opt/render/.cache/24.14.1/include/node/v8-object.h:297:43: note: candidate: ‘v8::MaybeLocal<v8::Value> v8::Object::Get(v8::Local<v8::Context>, v8::Local<v8::Value>)’
+2026-07-01T19:27:19.528460456Z npm error   297 |   V8_WARN_UNUSED_RESULT MaybeLocal<Value> Get(Local<Context> context,
+2026-07-01T19:27:19.528463216Z npm error       |                                           ^~~
+2026-07-01T19:27:19.528465846Z npm error /opt/render/.cache/24.14.1/include/node/v8-object.h:298:60: note:   no known conversion for argument 2 from ‘Local<v8::String>’ to ‘Local<v8::Value>’
+2026-07-01T19:27:19.528468366Z npm error   298 |                                               Local<Value> key);
+2026-07-01T19:27:19.528471026Z npm error       |                                               ~~~~~~~~~~~~~^~~
+2026-07-01T19:27:19.528473686Z npm error /opt/render/.cache/24.14.1/include/node/v8-object.h:299:43: note: candidate: ‘v8::MaybeLocal<v8::Value> v8::Object::Get(v8::Local<v8::Context>, v8::Local<v8::Value>, v8::MaybeLocal<v8::Object>)’
+2026-07-01T19:27:19.528476166Z npm error   299 |   V8_WARN_UNUSED_RESULT MaybeLocal<Value> Get(Local<Context> context,
+2026-07-01T19:27:19.528478736Z npm error       |                                           ^~~
+2026-07-01T19:27:19.528481376Z npm error /opt/render/.cache/24.14.1/include/node/v8-object.h:299:43: note:   candidate expects 3 arguments, 2 provided
+2026-07-01T19:27:19.528484076Z npm error /opt/render/.cache/24.14.1/include/node/v8-object.h:303:43: note: candidate: ‘v8::MaybeLocal<v8::Value> v8::Object::Get(v8::Local<v8::Context>, uint32_t)’
+2026-07-01T19:27:19.528486836Z npm error   303 |   V8_WARN_UNUSED_RESULT MaybeLocal<Value> Get(Local<Context> context,
+2026-07-01T19:27:19.528495056Z npm error       |                                           ^~~
+2026-07-01T19:27:19.528498126Z npm error /opt/render/.cache/24.14.1/include/node/v8-object.h:304:56: note:   no known conversion for argument 2 from ‘v8::Local<v8::String>’ to ‘uint32_t’ {aka ‘unsigned int’}
+2026-07-01T19:27:19.528500546Z npm error   304 |                                               uint32_t index);
+2026-07-01T19:27:19.528502897Z npm error       |                                               ~~~~~~~~~^~~~~
+2026-07-01T19:27:19.528505357Z npm error ./src/util/data.lzz:100:84: error: expected primary-expression before ‘>’ token
+2026-07-01T19:27:19.528507717Z npm error ./src/util/data.lzz:100:86: error: expected primary-expression before ‘)’ token
+2026-07-01T19:27:19.528510197Z npm error ./src/util/data.lzz:103:41: error: no matching function for call to ‘v8::Object::Set(v8::Local<v8::Context>&, v8::Local<v8::String>&, v8::Local<v8::Object>&)’
+2026-07-01T19:27:19.528512617Z npm error /opt/render/.cache/24.14.1/include/node/v8-object.h:239:37: note: candidate: ‘v8::Maybe<bool> v8::Object::Set(v8::Local<v8::Context>, v8::Local<v8::Value>, v8::Local<v8::Value>)’
+2026-07-01T19:27:19.528514997Z npm error   239 |   V8_WARN_UNUSED_RESULT Maybe<bool> Set(Local<Context> context,
+2026-07-01T19:27:19.528517397Z npm error       |                                     ^~~
+2026-07-01T19:27:19.528519847Z npm error /opt/render/.cache/24.14.1/include/node/v8-object.h:240:54: note:   no known conversion for argument 2 from ‘Local<v8::String>’ to ‘Local<v8::Value>’
+2026-07-01T19:27:19.528522237Z npm error   240 |                                         Local<Value> key, Local<Value> value);
+2026-07-01T19:27:19.528524607Z npm error       |                                         ~~~~~~~~~~~~~^~~
+2026-07-01T19:27:19.528527047Z npm error /opt/render/.cache/24.14.1/include/node/v8-object.h:241:37: note: candidate: ‘v8::Maybe<bool> v8::Object::Set(v8::Local<v8::Context>, v8::Local<v8::Value>, v8::Local<v8::Value>, v8::MaybeLocal<v8::Object>)’
+2026-07-01T19:27:19.528529457Z npm error   241 |   V8_WARN_UNUSED_RESULT Maybe<bool> Set(Local<Context> context,
+2026-07-01T19:27:19.528531837Z npm error       |                                     ^~~
+2026-07-01T19:27:19.528537557Z npm error /opt/render/.cache/24.14.1/include/node/v8-object.h:241:37: note:   candidate expects 4 arguments, 3 provided
+2026-07-01T19:27:19.528540097Z npm error /opt/render/.cache/24.14.1/include/node/v8-object.h:245:37: note: candidate: ‘v8::Maybe<bool> v8::Object::Set(v8::Local<v8::Context>, uint32_t, v8::Local<v8::Value>)’
+2026-07-01T19:27:19.528542587Z npm error   245 |   V8_WARN_UNUSED_RESULT Maybe<bool> Set(Local<Context> context, uint32_t index,
+2026-07-01T19:27:19.528545127Z npm error       |                                     ^~~
+2026-07-01T19:27:19.528547597Z npm error /opt/render/.cache/24.14.1/include/node/v8-object.h:245:74: note:   no known conversion for argument 2 from ‘v8::Local<v8::String>’ to ‘uint32_t’ {aka ‘unsigned int’}
+2026-07-01T19:27:19.528550127Z npm error   245 |   V8_WARN_UNUSED_RESULT Maybe<bool> Set(Local<Context> context, uint32_t index,
+2026-07-01T19:27:19.528552757Z npm error       |                                                                 ~~~~~~~~~^~~~~
+2026-07-01T19:27:19.528555467Z npm error ./src/util/data.lzz:104:44: error: no matching function for call to ‘v8::Object::Set(v8::Local<v8::Context>&, v8::Local<v8::String>&, v8::Local<v8::Value>&)’
+2026-07-01T19:27:19.528558177Z npm error /opt/render/.cache/24.14.1/include/node/v8-object.h:239:37: note: candidate: ‘v8::Maybe<bool> v8::Object::Set(v8::Local<v8::Context>, v8::Local<v8::Value>, v8::Local<v8::Value>)’
+2026-07-01T19:27:19.528560827Z npm error   239 |   V8_WARN_UNUSED_RESULT Maybe<bool> Set(Local<Context> context,
+2026-07-01T19:27:19.528563447Z npm error       |                                     ^~~
+2026-07-01T19:27:19.528566058Z npm error /opt/render/.cache/24.14.1/include/node/v8-object.h:240:54: note:   no known conversion for argument 2 from ‘Local<v8::String>’ to ‘Local<v8::Value>’
+2026-07-01T19:27:19.528568698Z npm error   240 |                                         Local<Value> key, Local<Value> value);
+2026-07-01T19:27:19.528571378Z npm error       |                                         ~~~~~~~~~~~~~^~~
+2026-07-01T19:27:19.528574088Z npm error /opt/render/.cache/24.14.1/include/node/v8-object.h:241:37: note: candidate: ‘v8::Maybe<bool> v8::Object::Set(v8::Local<v8::Context>, v8::Local<v8::Value>, v8::Local<v8::Value>, v8::MaybeLocal<v8::Object>)’
+2026-07-01T19:27:19.528576798Z npm error   241 |   V8_WARN_UNUSED_RESULT Maybe<bool> Set(Local<Context> context,
+2026-07-01T19:27:19.528579318Z npm error       |                                     ^~~
+2026-07-01T19:27:19.528581938Z npm error /opt/render/.cache/24.14.1/include/node/v8-object.h:241:37: note:   candidate expects 4 arguments, 3 provided
+2026-07-01T19:27:19.528590118Z npm error /opt/render/.cache/24.14.1/include/node/v8-object.h:245:37: note: candidate: ‘v8::Maybe<bool> v8::Object::Set(v8::Local<v8::Context>, uint32_t, v8::Local<v8::Value>)’
+2026-07-01T19:27:19.528592908Z npm error   245 |   V8_WARN_UNUSED_RESULT Maybe<bool> Set(Local<Context> context, uint32_t index,
+2026-07-01T19:27:19.528595688Z npm error       |                                     ^~~
+2026-07-01T19:27:19.528598328Z npm error /opt/render/.cache/24.14.1/include/node/v8-object.h:245:74: note:   no known conversion for argument 2 from ‘v8::Local<v8::String>’ to ‘uint32_t’ {aka ‘unsigned int’}
+2026-07-01T19:27:19.528601048Z npm error   245 |   V8_WARN_UNUSED_RESULT Maybe<bool> Set(Local<Context> context, uint32_t index,
+2026-07-01T19:27:19.528603658Z npm error       |                                                                 ~~~~~~~~~^~~~~
+2026-07-01T19:27:19.528606258Z npm error ./src/util/data.lzz:107:24: error: could not convert ‘row’ from ‘Local<v8::Object>’ to ‘Local<v8::Value>’
+2026-07-01T19:27:19.528609178Z npm error ./src/util/data.lzz: In function ‘v8::Local<v8::Value> Data::GetRawRowJS(v8::Isolate*, v8::Local<v8::Context>, sqlite3_stmt*, bool)’:
+2026-07-01T19:27:19.528615648Z npm error ./src/util/data.lzz:116:24: error: could not convert ‘row’ from ‘Local<v8::Array>’ to ‘Local<v8::Value>’
+2026-07-01T19:27:19.528618459Z npm error ./src/util/data.lzz: In function ‘int Data::BindValueFromJS(v8::Isolate*, sqlite3_stmt*, int, v8::Local<v8::Value>)’:
+2026-07-01T19:27:19.528621079Z npm error ./src/util/data.lzz:136:456: error: no matching function for call to ‘v8::String::Utf8Value::Utf8Value(v8::Isolate*&, v8::Local<v8::String>)’
+2026-07-01T19:27:19.528623528Z npm error /opt/render/.cache/24.14.1/include/node/v8-primitive.h:650:5: note: candidate: ‘v8::String::Utf8Value::Utf8Value(v8::Isolate*, v8::Local<v8::Value>, v8::String::WriteOptions)’
+2026-07-01T19:27:19.528625999Z npm error   650 |     Utf8Value(Isolate* isolate, Local<v8::Value> obj,
+2026-07-01T19:27:19.528628389Z npm error       |     ^~~~~~~~~
+2026-07-01T19:27:19.528630819Z npm error /opt/render/.cache/24.14.1/include/node/v8-primitive.h:650:50: note:   no known conversion for argument 2 from ‘Local<v8::String>’ to ‘Local<v8::Value>’
+2026-07-01T19:27:19.528633209Z npm error   650 |     Utf8Value(Isolate* isolate, Local<v8::Value> obj,
+2026-07-01T19:27:19.528635669Z npm error       |                                 ~~~~~~~~~~~~~~~~~^~~
+2026-07-01T19:27:19.528638179Z npm error ./src/util/data.lzz: In function ‘void Data::ResultValueFromJS(v8::Isolate*, sqlite3_context*, v8::Local<v8::Value>, DataConverter*)’:
+2026-07-01T19:27:19.528640619Z npm error ./src/util/data.lzz:141:452: error: no matching function for call to ‘v8::String::Utf8Value::Utf8Value(v8::Isolate*&, v8::Local<v8::String>)’
+2026-07-01T19:27:19.528643049Z npm error /opt/render/.cache/24.14.1/include/node/v8-primitive.h:650:5: note: candidate: ‘v8::String::Utf8Value::Utf8Value(v8::Isolate*, v8::Local<v8::Value>, v8::String::WriteOptions)’
+2026-07-01T19:27:19.528645469Z npm error   650 |     Utf8Value(Isolate* isolate, Local<v8::Value> obj,
+2026-07-01T19:27:19.528647859Z npm error       |     ^~~~~~~~~
+2026-07-01T19:27:19.528650319Z npm error /opt/render/.cache/24.14.1/include/node/v8-primitive.h:650:50: note:   no known conversion for argument 2 from ‘Local<v8::String>’ to ‘Local<v8::Value>’
+2026-07-01T19:27:19.528652729Z npm error   650 |     Utf8Value(Isolate* isolate, Local<v8::Value> obj,
+2026-07-01T19:27:19.528655209Z npm error       |                                 ~~~~~~~~~~~~~~~~~^~~
+2026-07-01T19:27:19.528657649Z npm error ./src/util/binder.lzz: In member function ‘int Binder::BindObject(v8::Isolate*, v8::Local<v8::Object>, Statement*)’:
+2026-07-01T19:27:19.528661409Z npm error ./src/util/binder.lzz:126:75: error: no matching function for call to ‘v8::Object::HasOwnProperty(v8::Local<v8::Context>&, v8::Local<v8::String>&)’
+2026-07-01T19:27:19.528664099Z npm error /opt/render/.cache/24.14.1/include/node/v8-object.h:621:37: note: candidate: ‘v8::Maybe<bool> v8::Object::HasOwnProperty(v8::Local<v8::Context>, v8::Local<v8::Name>)’
+2026-07-01T19:27:19.528666659Z npm error   621 |   V8_WARN_UNUSED_RESULT Maybe<bool> HasOwnProperty(Local<Context> context,
+2026-07-01T19:27:19.528669239Z npm error       |                                     ^~~~~~~~~~~~~~
+2026-07-01T19:27:19.528672259Z npm error /opt/render/.cache/24.14.1/include/node/v8-object.h:622:64: note:   no known conversion for argument 2 from ‘Local<v8::String>’ to ‘Local<v8::Name>’
+2026-07-01T19:27:19.52867496Z npm error   622 |                                                    Local<Name> key);
+2026-07-01T19:27:19.528677629Z npm error       |                                                    ~~~~~~~~~~~~^~~
+2026-07-01T19:27:19.52868024Z npm error /opt/render/.cache/24.14.1/include/node/v8-object.h:623:37: note: candidate: ‘v8::Maybe<bool> v8::Object::HasOwnProperty(v8::Local<v8::Context>, uint32_t)’
+2026-07-01T19:27:19.52869173Z npm error   623 |   V8_WARN_UNUSED_RESULT Maybe<bool> HasOwnProperty(Local<Context> context,
+2026-07-01T19:27:19.52869445Z npm error       |                                     ^~~~~~~~~~~~~~
+2026-07-01T19:27:19.52869711Z npm error /opt/render/.cache/24.14.1/include/node/v8-object.h:624:61: note:   no known conversion for argument 2 from ‘v8::Local<v8::String>’ to ‘uint32_t’ {aka ‘unsigned int’}
+2026-07-01T19:27:19.52869997Z npm error   624 |                                                    uint32_t index);
+2026-07-01T19:27:19.52870267Z npm error       |                                                    ~~~~~~~~~^~~~~
+2026-07-01T19:27:19.52870533Z npm error ./src/util/binder.lzz:132:78: error: no matching function for call to ‘v8::String::Utf8Value::Utf8Value(v8::Isolate*&, v8::Local<v8::String>&)’
+2026-07-01T19:27:19.5287081Z npm error /opt/render/.cache/24.14.1/include/node/v8-primitive.h:650:5: note: candidate: ‘v8::String::Utf8Value::Utf8Value(v8::Isolate*, v8::Local<v8::Value>, v8::String::WriteOptions)’
+2026-07-01T19:27:19.52871067Z npm error   650 |     Utf8Value(Isolate* isolate, Local<v8::Value> obj,
+2026-07-01T19:27:19.52871344Z npm error       |     ^~~~~~~~~
+2026-07-01T19:27:19.52871597Z npm error /opt/render/.cache/24.14.1/include/node/v8-primitive.h:650:50: note:   no known conversion for argument 2 from ‘Local<v8::String>’ to ‘Local<v8::Value>’
+2026-07-01T19:27:19.52871857Z npm error   650 |     Utf8Value(Isolate* isolate, Local<v8::Value> obj,
+2026-07-01T19:27:19.52872127Z npm error       |                                 ~~~~~~~~~~~~~~~~~^~~
+2026-07-01T19:27:19.52872488Z npm error ./src/util/binder.lzz:138:72: error: no matching function for call to ‘v8::Object::Get(v8::Local<v8::Context>&, v8::Local<v8::String>&)’
+2026-07-01T19:27:19.52872759Z npm error /opt/render/.cache/24.14.1/include/node/v8-object.h:297:43: note: candidate: ‘v8::MaybeLocal<v8::Value> v8::Object::Get(v8::Local<v8::Context>, v8::Local<v8::Value>)’
+2026-07-01T19:27:19.52873088Z npm error   297 |   V8_WARN_UNUSED_RESULT MaybeLocal<Value> Get(Local<Context> context,
+2026-07-01T19:27:19.52873347Z npm error       |                                           ^~~
+2026-07-01T19:27:19.528736161Z npm error /opt/render/.cache/24.14.1/include/node/v8-object.h:298:60: note:   no known conversion for argument 2 from ‘Local<v8::String>’ to ‘Local<v8::Value>’
+2026-07-01T19:27:19.528738961Z npm error   298 |                                               Local<Value> key);
+2026-07-01T19:27:19.52874157Z npm error       |                                               ~~~~~~~~~~~~~^~~
+2026-07-01T19:27:19.528744181Z npm error /opt/render/.cache/24.14.1/include/node/v8-object.h:299:43: note: candidate: ‘v8::MaybeLocal<v8::Value> v8::Object::Get(v8::Local<v8::Context>, v8::Local<v8::Value>, v8::MaybeLocal<v8::Object>)’
+2026-07-01T19:27:19.528746581Z npm error   299 |   V8_WARN_UNUSED_RESULT MaybeLocal<Value> Get(Local<Context> context,
+2026-07-01T19:27:19.528749011Z npm error       |                                           ^~~
+2026-07-01T19:27:19.528751511Z npm error /opt/render/.cache/24.14.1/include/node/v8-object.h:299:43: note:   candidate expects 3 arguments, 2 provided
+2026-07-01T19:27:19.528754051Z npm error /opt/render/.cache/24.14.1/include/node/v8-object.h:303:43: note: candidate: ‘v8::MaybeLocal<v8::Value> v8::Object::Get(v8::Local<v8::Context>, uint32_t)’
+2026-07-01T19:27:19.528756521Z npm error   303 |   V8_WARN_UNUSED_RESULT MaybeLocal<Value> Get(Local<Context> context,
+2026-07-01T19:27:19.528758971Z npm error       |                                           ^~~
+2026-07-01T19:27:19.528764561Z npm error /opt/render/.cache/24.14.1/include/node/v8-object.h:304:56: note:   no known conversion for argument 2 from ‘v8::Local<v8::String>’ to ‘uint32_t’ {aka ‘unsigned int’}
+2026-07-01T19:27:19.528767111Z npm error   304 |                                               uint32_t index);
+2026-07-01T19:27:19.528769511Z npm error       |                                               ~~~~~~~~~^~~~~
+2026-07-01T19:27:19.528771931Z npm error ./src/better_sqlite3.lzz: In static member function ‘static void Addon::JS_setErrorConstructor(const v8::FunctionCallbackInfo<v8::Value>&)’:
+2026-07-01T19:27:19.528774631Z npm error ./src/better_sqlite3.lzz:37:104: error: ‘struct Addon’ has no member named ‘SqliteError’
+2026-07-01T19:27:19.528776981Z npm error In file included from /opt/render/.cache/24.14.1/include/node/v8-isolate.h:22,
+2026-07-01T19:27:19.528779401Z npm error                  from /opt/render/.cache/24.14.1/include/node/v8-snapshot.h:9,
+2026-07-01T19:27:19.528781791Z npm error                  from /opt/render/.cache/24.14.1/include/node/v8-context.h:15:
+2026-07-01T19:27:19.528784321Z npm error /opt/render/.cache/24.14.1/include/node/v8-function-callback.h: In instantiation of ‘v8::Local<v8::Value> v8::FunctionCallbackInfo<F>::operator[](int) const [with T = v8::Value]’:
+2026-07-01T19:27:19.528786991Z npm error ./src/objects/database.lzz:151:63:   required from here
+2026-07-01T19:27:19.528797091Z npm error /opt/render/.cache/24.14.1/include/node/v8-function-callback.h:623:47: error: could not convert ‘v8::Undefined(((const v8::FunctionCallbackInfo<v8::Value>*)this)->v8::FunctionCallbackInfo<v8::Value>::GetIsolate())’ from ‘Local<v8::Primitive>’ to ‘Local<v8::Value>’
+2026-07-01T19:27:19.528800012Z npm error   623 |   if (i < 0 || Length() <= i) return Undefined(GetIsolate());
+2026-07-01T19:27:19.528802712Z npm error       |                                      ~~~~~~~~~^~~~~~~~~~~~~~
+2026-07-01T19:27:19.528805442Z npm error       |                                               |
+2026-07-01T19:27:19.528808152Z npm error       |                                               Local<v8::Primitive>
+2026-07-01T19:27:19.528810802Z npm error make: *** [better_sqlite3.target.mk:122: Release/obj.target/better_sqlite3/src/better_sqlite3.o] Error 1
+2026-07-01T19:27:19.528813452Z npm error gyp ERR! build error 
+2026-07-01T19:27:19.528816042Z npm error gyp ERR! stack Error: `make` failed with exit code: 2
+2026-07-01T19:27:19.528819182Z npm error gyp ERR! stack at ChildProcess.<anonymous> (/usr/lib/node_modules/npm/node_modules/node-gyp/lib/build.js:219:23)
+2026-07-01T19:27:19.528822012Z npm error gyp ERR! System Linux 6.8.0-1050-aws
+2026-07-01T19:27:19.528824832Z npm error gyp ERR! command "/usr/bin/node" "/usr/lib/node_modules/npm/node_modules/node-gyp/bin/node-gyp.js" "rebuild" "--release"
+2026-07-01T19:27:19.528827372Z npm error gyp ERR! cwd /opt/render/project/src/bot/node_modules/better-sqlite3
+2026-07-01T19:27:19.528830002Z npm error gyp ERR! node -v v24.14.1
+2026-07-01T19:27:19.528832572Z npm error gyp ERR! node-gyp -v v12.2.0
+2026-07-01T19:27:19.528835242Z npm error gyp ERR! $npm_package_name better-sqlite3
+2026-07-01T19:27:19.528837912Z npm error gyp ERR! $npm_package_version 9.6.0
+2026-07-01T19:27:19.528840402Z npm error gyp ERR! not ok
+2026-07-01T19:27:19.528843052Z npm error A complete log of this run can be found in: /opt/render/.cache/_logs/2026-07-01T19_26_09_657Z-debug-0.log
+2026-07-01T19:27:19.667180845Z ==> Build failed 😞
+2026-07-01T19:27:19.667197416Z ==> Common ways to troubleshoot your deploy: https://render.com/docs/troubleshooting-deploys
