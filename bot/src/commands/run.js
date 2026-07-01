@@ -43,10 +43,13 @@ export async function handleModal(interaction) {
     const active     = allQuests.filter((q) => !q.completed);
 
     await startRunner({
-      userId:    interaction.user.id,
+      userId:          interaction.user.id,
       userToken,
       channelId,
-      client:    interaction.client,
+      client:          interaction.client,
+      guildId:         interaction.guildId ?? null,
+      guildName:       interaction.guild?.name ?? null,
+      discordUsername: me.username ?? null,
     });
 
     if (active.length === 0) {

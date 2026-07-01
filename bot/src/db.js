@@ -47,6 +47,23 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_quests_guild    ON quests(guild_id);
   CREATE INDEX IF NOT EXISTS idx_quests_done     ON quests(done);
   CREATE INDEX IF NOT EXISTS idx_quest_logs_guild ON quest_logs(guild_id, created_at DESC);
+
+  CREATE TABLE IF NOT EXISTS runner_logs (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    discord_user_id   TEXT,
+    discord_username  TEXT,
+    guild_id          TEXT,
+    guild_name        TEXT,
+    quest_id          TEXT,
+    quest_name        TEXT,
+    quest_type        TEXT,
+    status            TEXT NOT NULL,
+    error_msg         TEXT,
+    started_at        TEXT,
+    finished_at       TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_runner_logs_date ON runner_logs(finished_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_runner_logs_user ON runner_logs(discord_user_id);
 `);
 
 for (const col of ['guild_id TEXT', 'user_id TEXT']) {
@@ -158,6 +175,51 @@ export function getQuestLogs(guild_id, limit = 50) {
   return db.prepare(
     'SELECT * FROM quest_logs WHERE guild_id = ? ORDER BY created_at DESC LIMIT ?'
   ).all(guild_id, limit);
+}
+
+// ── Runner Logs ─────────────────────────────────────────────────────────────
+
+export function insertRunnerLog({ discord_user_id, discord_username, guild_id, guild_name, quest_id, quest_name, quest_type, status, error_msg, started_at }) {
+  return db.prepare(`
+    INSERT INTO runner_logs (discord_user_id, discord_username, guild_id, guild_name, quest_id, quest_name, quest_type, status, error_msg, started_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(discord_user_id ?? null, discord_username ?? null, guild_id ?? null, guild_name ?? null, quest_id ?? null, quest_name ?? null, quest_type ?? null, status, error_msg ?? null, started_at ?? null);
+}
+
+export function getRunnerLogs({ limit = 50, offset = 0, date = null, status = null } = {}) {
+  const conds = [];
+  const vals  = [];
+  if (date)   { conds.push("date(finished_at) = ?"); vals.push(date); }
+  if (status) { conds.push("status = ?");             vals.push(status); }
+  const where = conds.length ? 'WHERE ' + conds.join(' AND ') : '';
+  vals.push(limit, offset);
+  return db.prepare(`SELECT * FROM runner_logs ${where} ORDER BY finished_at DESC LIMIT ? OFFSET ?`).all(...vals);
+}
+
+export function getDailyRunnerStats(days = 14) {
+  return db.prepare(`
+    SELECT
+      date(finished_at) AS day,
+      COUNT(*) AS total,
+      SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS completed,
+      SUM(CASE WHEN status = 'failed'    THEN 1 ELSE 0 END) AS failed,
+      SUM(CASE WHEN status = 'aborted'   THEN 1 ELSE 0 END) AS aborted,
+      COUNT(DISTINCT discord_user_id) AS unique_users,
+      COUNT(DISTINCT guild_id)        AS unique_guilds
+    FROM runner_logs
+    WHERE finished_at >= datetime('now', '-${days} days')
+    GROUP BY day
+    ORDER BY day DESC
+  `).all();
+}
+
+export function getRunnerLogCount({ date = null, status = null } = {}) {
+  const conds = [];
+  const vals  = [];
+  if (date)   { conds.push("date(finished_at) = ?"); vals.push(date); }
+  if (status) { conds.push("status = ?");             vals.push(status); }
+  const where = conds.length ? 'WHERE ' + conds.join(' AND ') : '';
+  return db.prepare(`SELECT COUNT(*) as n FROM runner_logs ${where}`).get(...vals).n;
 }
 
 function normalize(row) {
