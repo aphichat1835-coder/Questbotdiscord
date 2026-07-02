@@ -43,15 +43,28 @@ async function _fetchElectronInfo() {
   return { electronVersion, chromeVersion };
 }
 
+async function _fetchClientVersion() {
+  // Discord's update server redirects to the installer URL which contains the version:
+  // https://dl.discordapp.net/distro/app/stable/win/x86/1.0.9267/DiscordSetup.exe
+  const res = await fetch(
+    'https://discord.com/api/updates/distributions/app/installers/latest?platform=win&channel=stable&arch=x86',
+    { signal: AbortSignal.timeout(8000), redirect: 'follow' },
+  );
+  const m = res.url.match(/\/(\d+\.\d+\.\d+)\/[^/]+\.exe/i);
+  if (!m) throw new Error(`version not found in redirect URL: ${res.url}`);
+  return m[1];
+}
+
 /**
  * Fetch the latest build number + Electron/Chrome versions.
  * Falls back to hardcoded values if any fetch fails.
  * Safe to call multiple times — just updates the `live` object in-place.
  */
 export async function refreshBuildInfo() {
-  const [buildResult, electronResult] = await Promise.allSettled([
+  const [buildResult, electronResult, clientVerResult] = await Promise.allSettled([
     _fetchBuildNumber(),
     _fetchElectronInfo(),
+    _fetchClientVersion(),
   ]);
 
   const prev = { ...live };
@@ -69,12 +82,22 @@ export async function refreshBuildInfo() {
     console.warn(`⚠️  Electron/Chrome fetch failed — ${electronResult.reason?.message} — ใช้ fallback`);
   }
 
+  if (clientVerResult.status === 'fulfilled') {
+    live.clientVersion = clientVerResult.value;
+  } else {
+    console.warn(`⚠️  CLIENT_VERSION fetch failed — ${clientVerResult.reason?.message} — ใช้ fallback ${live.clientVersion}`);
+  }
+
   const buildChanged    = live.buildNumber    !== prev.buildNumber;
   const electronChanged = live.electronVersion !== prev.electronVersion;
+  const clientChanged   = live.clientVersion  !== prev.clientVersion;
 
   console.log(
-    `🔄 Build info — Build: ${live.buildNumber}${buildChanged ? ' ✨' : ''} | ` +
-    `Chrome: ${live.chromeVersion} | Electron: ${live.electronVersion}${electronChanged ? ' ✨' : ''}`,
+    `🔄 Build info — ` +
+    `Client: ${live.clientVersion}${clientChanged ? ' ✨' : ''} | ` +
+    `Build: ${live.buildNumber}${buildChanged ? ' ✨' : ''} | ` +
+    `Chrome: ${live.chromeVersion} | ` +
+    `Electron: ${live.electronVersion}${electronChanged ? ' ✨' : ''}`,
   );
 }
 
