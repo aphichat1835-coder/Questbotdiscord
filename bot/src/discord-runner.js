@@ -65,6 +65,15 @@ async function discordFetch(token, path, options = {}) {
   return data;
 }
 
+// Quest event names → which API to use
+// VIDEO  → POST /quests/{id}/video-progress
+// STREAM → POST /quests/{id}/heartbeat
+// SKIP   → cannot complete via API (requires real game/console/activity)
+const VIDEO_EVENTS  = new Set(['WATCH_VIDEO', 'WATCH_VIDEO_ON_MOBILE']);
+const STREAM_EVENTS = new Set(['STREAM_ON_DESKTOP', 'PLAY_ON_DESKTOP', 'PLAY_ON_DESKTOP_V2']);
+const SKIP_EVENTS   = new Set(['ACHIEVEMENT_IN_GAME', 'ACHIEVEMENT_IN_ACTIVITY', 'PLAY_ACTIVITY',
+                                'PLAY_ON_XBOX', 'PLAY_ON_PLAYSTATION', 'progress']);
+
 export async function fetchMe(token) {
   return discordFetch(token, '/users/@me');
 }
@@ -82,7 +91,18 @@ export async function fetchQuests(token) {
 }
 
 async function enrollQuest(token, questId) {
-  return discordFetch(token, `/quests/${questId}/enroll`, { method: 'POST', body: '{}' });
+  // location: 1 = quest bar; required by API
+  return discordFetch(token, `/quests/${questId}/enroll`, {
+    method: 'POST',
+    body: JSON.stringify({ location: 1 }),
+  });
+}
+
+async function claimQuest(token, questId) {
+  return discordFetch(token, `/quests/${questId}/claim`, {
+    method: 'POST',
+    body: JSON.stringify({ location: 1, platform: 'windows' }),
+  });
 }
 
 async function sendVideoProgress(token, questId, timestamp) {
@@ -92,30 +112,47 @@ async function sendVideoProgress(token, questId, timestamp) {
   });
 }
 
-async function sendStreamHeartbeat(token, questId) {
+async function sendHeartbeat(token, questId) {
   return discordFetch(token, `/quests/${questId}/heartbeat`, {
-    method: 'POST', body: JSON.stringify({ stream_key: `${questId}:stream` }),
+    method: 'POST', body: JSON.stringify({}),
   });
 }
 
 function normalizeQuest(raw) {
   const cfg        = raw.config ?? {};
   const userStatus = raw.user_status ?? {};
-  const secondsNeeded =
-    cfg.stream_duration_requirement ??
-    cfg.video_stream_duration_requirement ??
-    (cfg.minutes_requirement != null ? cfg.minutes_requirement * 60 : 0);
-  const progress     = parseFloat(userStatus.progress ?? '0');
-  const progressSecs = (progress / 100) * secondsNeeded;
+
+  // New API: task_config.tasks is a map keyed by event name (WATCH_VIDEO, STREAM_ON_DESKTOP, etc.)
+  // Each entry has { event_name, target (seconds), ... }
+  const tasks      = cfg.task_config?.tasks ?? {};
+  const taskEntries = Object.entries(tasks);
+  const [eventName, taskDef] = taskEntries[0] ?? ['WATCH_VIDEO', { target: 0 }];
+  const secondsNeeded = Number(taskDef?.target ?? 0);
+
+  // New API: user_status.progress is map[eventName → { value: seconds, heartbeat: timestamp }]
+  // Old API (config v1): user_status.progress was a string percentage ("0"–"100")
+  let progressSecs = 0;
+  const rawProgress = userStatus.progress;
+  if (rawProgress && typeof rawProgress === 'object' && !Array.isArray(rawProgress)) {
+    // New format — value is seconds completed
+    progressSecs = Number(rawProgress[eventName]?.value ?? 0);
+  } else if (typeof rawProgress === 'string' || typeof rawProgress === 'number') {
+    // Old format — value is 0–100 percentage
+    progressSecs = (parseFloat(rawProgress) / 100) * secondsNeeded;
+  }
+
+  const progress = secondsNeeded > 0 ? Math.min(100, (progressSecs / secondsNeeded) * 100) : 0;
+
   return {
-    id: raw.id,
-    name: cfg.messages?.quest_name ?? raw.id,
-    description: cfg.messages?.task_incomplete?.[0] ?? '',
-    progress, secondsNeeded,
-    taskType: cfg.task_config?.type ?? 'video',
-    enrolled: !!userStatus.enrolled_at,
+    id:            raw.id,
+    name:          cfg.messages?.quest_name ?? raw.id,
+    eventName,                                    // WATCH_VIDEO / STREAM_ON_DESKTOP / etc.
+    progress,                                     // 0–100 %
+    secondsNeeded,                                // total seconds needed
+    progressSecs,                                 // seconds already done
+    enrolled:  !!userStatus.enrolled_at,
     completed: !!userStatus.completed_at,
-    progressSecs,
+    claimed:   !!userStatus.claimed_at,
   };
 }
 
@@ -198,10 +235,21 @@ export async function startRunner({ jobKey, ownerId, userToken, channelId, clien
         const allQuests = await fetchQuests(userToken);
         const active    = allQuests.filter((q) => !q.completed);
 
-        if (active.length === 0) {
-          addLog(`📭 ${username}: ไม่มี Quest ให้ทำในตอนนี้`);
+        // Quests that are done but not yet claimed — claim them first
+        const unclaimed = allQuests.filter((q) => q.completed && !q.claimed);
+        for (const quest of unclaimed) {
+          if (signal.aborted) break;
+          await claimQuest(userToken, quest.id).catch(() => {});
+          addLog(`🎁 ${username}: CLAIMED ${quest.name}`);
           await render();
-          break;
+        }
+
+        if (active.length === 0) {
+          // Don't stop — Discord adds new quests regularly; keep polling every 15 min
+          addLog(`📭 ${username}: ไม่มีเควสตอนนี้ — รอเช็คใหม่ใน 15 นาที`);
+          await render();
+          await sleep(15 * 60 * 1000, signal);
+          continue;
         }
 
         addLog(`🎯 ${username}: ${active.length} QUESTS`);
@@ -210,16 +258,22 @@ export async function startRunner({ jobKey, ownerId, userToken, channelId, clien
         for (const quest of active) {
           if (signal.aborted) break;
 
+          // Skip quest types that require real gameplay / console / achievement
+          if (SKIP_EVENTS.has(quest.eventName)) {
+            addLog(`⏭️ ${username}: ข้าม ${quest.name} (${quest.eventName})`);
+            await render();
+            continue;
+          }
+
           if (!quest.enrolled) {
             addLog(`🚀 ${username}: JOIN ${quest.name}`);
             await render();
             await enrollQuest(userToken, quest.id).catch(() => {});
           }
 
-          addLog(`🚀 ${username}: ${quest.name}`);
+          addLog(`▶️ ${username}: ${quest.name} [${quest.eventName}]`);
           await render();
 
-          const isStream = quest.taskType.includes('stream');
           const onProgress = async (pct) => {
             const lastLine = logLines.at(-1) ?? '';
             const newLine  = `⌛ ${username}: ${quest.name} ${pct}%`;
@@ -231,13 +285,21 @@ export async function startRunner({ jobKey, ownerId, userToken, channelId, clien
             await render();
           };
 
-          const runner = isStream ? runStreamQuest : runVideoQuest;
+          const runner = VIDEO_EVENTS.has(quest.eventName) ? runVideoQuest : runStreamQuest;
           await runner(userToken, quest, signal, onProgress, speedMultiplier, heartbeatInterval).catch((e) => {
             if (e.message !== 'aborted') addLog(`⚠️ ${username}: ERROR ${e.message}`);
           });
 
           if (!signal.aborted) {
             addLog(`✅ ${username}: ${quest.name} DONE`);
+            await render();
+            // Auto-claim reward immediately after completing
+            try {
+              await claimQuest(userToken, quest.id);
+              addLog(`🎁 ${username}: CLAIMED ${quest.name}`);
+            } catch (e) {
+              addLog(`⚠️ ${username}: claim error — ${e.message}`);
+            }
             await render();
           }
         }
@@ -287,7 +349,7 @@ async function runStreamQuest(token, quest, signal, onProgress, _speedMultiplier
   const startTick = Math.floor((quest.progressSecs / total) * ticks);
   for (let i = startTick; i < ticks; i++) {
     if (signal.aborted) throw new Error('aborted');
-    await sendStreamHeartbeat(token, quest.id).catch(() => {});
+    await sendHeartbeat(token, quest.id).catch(() => {});
     await onProgress(Math.round(((i + 1) / ticks) * 100));
     await sleep(heartbeatSecs * 1000, signal);
   }
