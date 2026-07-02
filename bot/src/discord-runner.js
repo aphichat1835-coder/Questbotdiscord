@@ -291,7 +291,7 @@ export async function startRunner({ jobKey, ownerId, userToken, channelId, clien
   let username     = '...';
   let lastRenderAt = 0;
   let pendingTimer = null;
-  let flushPromise = null;
+  let flushPromise = Promise.resolve();
   const RENDER_THROTTLE_MS = 2000; // Discord allows ~5 edits/5s; stay safe at 1/2s
   const logLines = [];
 
@@ -303,9 +303,7 @@ export async function startRunner({ jobKey, ownerId, userToken, channelId, clien
   async function flush() {
     // Serialize flushes so concurrent renders cannot create duplicate live
     // messages before the first send has assigned liveMsg.
-    while (flushPromise) await flushPromise;
-
-    const task = (async () => {
+    const task = flushPromise.then(async () => {
       lastRenderAt = Date.now();
       const content = '```\n' + logLines.join('\n') + '\n```';
       try {
@@ -317,14 +315,11 @@ export async function startRunner({ jobKey, ownerId, userToken, channelId, clien
           await liveMsg.edit({ content });
         }
       } catch {}
-    })();
+    });
 
-    flushPromise = task;
-    try {
-      await task;
-    } finally {
-      if (flushPromise === task) flushPromise = null;
-    }
+    // Keep the queue usable even if an unexpected error escapes a flush.
+    flushPromise = task.catch(() => {});
+    await task;
   }
 
   // Throttled — but never silently drops an update. If called too soon after the
@@ -482,7 +477,7 @@ export async function startRunner({ jobKey, ownerId, userToken, channelId, clien
       signal.removeEventListener('abort', clearPendingRender);
       const hadPendingRender = Boolean(pendingTimer);
       clearPendingRender();
-      if (flushPromise) await flushPromise;
+      await flushPromise;
       if (hadPendingRender) {
         // Deliver the latest queued status before tearing the job down.
         await flush();
