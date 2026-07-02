@@ -38,10 +38,10 @@ export async function handleModal(interaction) {
   const tokens    = raw.split('\n').map((t) => t.trim()).filter(Boolean);
 
   if (!tokens.length) {
-    return interaction.reply({ content: '❌ ไม่พบ token กรุณาใส่อย่างน้อย 1 token', ephemeral: true });
+    return interaction.reply({ flags: 64, content: '❌ ไม่พบ token กรุณาใส่อย่างน้อย 1 token' });
   }
 
-  await interaction.deferReply({ ephemeral: true });
+  await interaction.deferReply({ flags: 64 });
 
   const ownerId    = interaction.user.id;
   const existing   = getUserJobs(ownerId);

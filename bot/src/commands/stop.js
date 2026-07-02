@@ -6,7 +6,7 @@ export const data = new SlashCommandBuilder()
   .setDescription('หยุด Quest Runner ทั้งหมดของคุณ');
 
 export async function execute(interaction) {
-  await interaction.deferReply({ ephemeral: true });
+  await interaction.deferReply({ flags: 64 });
   const count = getUserJobs(interaction.user.id).length;
   const stopped = stopRunner(interaction.user.id);
   await interaction.editReply(

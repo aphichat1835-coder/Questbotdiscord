@@ -23,10 +23,10 @@ export async function execute(interaction) {
   const note     = interaction.options.getString('note')?.trim()     || null;
 
   if (!name) {
-    return interaction.reply({ content: '❌ ชื่อเควสต้องไม่ว่างเปล่า', ephemeral: true });
+    return interaction.reply({ flags: 64, content: '❌ ชื่อเควสต้องไม่ว่างเปล่า' });
   }
   if (deadline && !/^\d{4}-\d{2}-\d{2}$/.test(deadline)) {
-    return interaction.reply({ content: '❌ รูปแบบ deadline ต้องเป็น `YYYY-MM-DD` เช่น `2026-07-01`', ephemeral: true });
+    return interaction.reply({ flags: 64, content: '❌ รูปแบบ deadline ต้องเป็น `YYYY-MM-DD` เช่น `2026-07-01`' });
   }
 
   await interaction.deferReply();

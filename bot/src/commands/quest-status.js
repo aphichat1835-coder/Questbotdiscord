@@ -19,6 +19,6 @@ export async function execute(interaction) {
       );
     await interaction.reply({ embeds: [embed] });
   } catch (err) {
-    await interaction.reply({ content: `❌ ${err.message}`, ephemeral: true });
+    await interaction.reply({ flags: 64, content: `❌ ${err.message}` });
   }
 }

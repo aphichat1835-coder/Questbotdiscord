@@ -30,7 +30,7 @@ for (const cmd of commands) {
 
 startDashboard(null);
 
-client.once('ready', () => {
+client.once('clientReady', () => {
   console.log(`✅ บอทพร้อมแล้ว — logged in as ${client.user.tag}`);
   startDashboard(client);
   startWorker(client);

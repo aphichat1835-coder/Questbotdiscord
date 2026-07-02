@@ -67,7 +67,7 @@ export async function handleButton(interaction) {
   if (action === 'refresh') return sendPanel(interaction, true);
 
   if (action === 'list') {
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ flags: 64 });
     try {
       const quests  = await getAllQuests();
       if (!quests.length) return interaction.editReply('📭 ยังไม่มีเควสเลย');
@@ -89,7 +89,7 @@ export async function handleButton(interaction) {
   }
 
   if (action === 'status') {
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ flags: 64 });
     try {
       const { total, done, pending, overdue } = await getStats();
       const pct = total > 0 ? Math.round((done / total) * 100) : 0;
@@ -110,7 +110,7 @@ export async function handleButton(interaction) {
 
   if (action === 'add') {
     if (!isManager(interaction)) {
-      return interaction.reply({ content: '🔒 ต้องการสิทธิ์ **Manager** ขึ้นไป', ephemeral: true });
+      return interaction.reply({ flags: 64, content: '🔒 ต้องการสิทธิ์ **Manager** ขึ้นไป' });
     }
     return interaction.showModal(
       new ModalBuilder().setCustomId('panel_add_modal').setTitle('➕ เพิ่ม Quest ใหม่')
@@ -141,7 +141,7 @@ export async function handleButton(interaction) {
 
   if (action === 'edit') {
     if (!isManager(interaction)) {
-      return interaction.reply({ content: '🔒 ต้องการสิทธิ์ **Manager** ขึ้นไป', ephemeral: true });
+      return interaction.reply({ flags: 64, content: '🔒 ต้องการสิทธิ์ **Manager** ขึ้นไป' });
     }
     return interaction.showModal(
       new ModalBuilder().setCustomId('panel_edit_modal').setTitle('✏️ แก้ไข Quest')
@@ -164,7 +164,7 @@ export async function handleButton(interaction) {
 
   if (action === 'delete') {
     if (!isAdmin(interaction)) {
-      return interaction.reply({ content: '🔒 ต้องการสิทธิ์ **Administrator**', ephemeral: true });
+      return interaction.reply({ flags: 64, content: '🔒 ต้องการสิทธิ์ **Administrator**' });
     }
     return interaction.showModal(
       new ModalBuilder().setCustomId('panel_delete_modal').setTitle('🗑️ ลบ Quest')
@@ -179,7 +179,7 @@ export async function handleButton(interaction) {
   if (action === 'run') return showRunModal(interaction);
 
   if (action === 'stop') {
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ flags: 64 });
     const jobs    = getUserJobs(interaction.user.id);
     const stopped = stopRunner(interaction.user.id);
     return interaction.editReply(
@@ -193,7 +193,7 @@ export async function handlePanelModal(interaction) {
     const name     = interaction.fields.getTextInputValue('name').trim();
     const deadline = interaction.fields.getTextInputValue('deadline').trim() || null;
     const note     = interaction.fields.getTextInputValue('note').trim()     || null;
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ flags: 64 });
     try {
       if (!name) return interaction.editReply('❌ ชื่อต้องไม่ว่างเปล่า');
       if (deadline && !/^\d{4}-\d{2}-\d{2}$/.test(deadline)) return interaction.editReply('❌ deadline ต้องเป็น YYYY-MM-DD');
@@ -204,7 +204,7 @@ export async function handlePanelModal(interaction) {
 
   if (interaction.customId === 'panel_done_modal') {
     const id = parseInt(interaction.fields.getTextInputValue('id').trim(), 10);
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ flags: 64 });
     if (isNaN(id)) return interaction.editReply('❌ ID ต้องเป็นตัวเลข');
     try {
       const quest = await markDone(id);
@@ -218,7 +218,7 @@ export async function handlePanelModal(interaction) {
     const nameRaw = interaction.fields.getTextInputValue('name').trim();
     const deadRaw = interaction.fields.getTextInputValue('deadline').trim();
     const noteRaw = interaction.fields.getTextInputValue('note').trim();
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ flags: 64 });
     if (isNaN(id)) return interaction.editReply('❌ ID ต้องเป็นตัวเลข');
     if (deadRaw && !/^\d{4}-\d{2}-\d{2}$/.test(deadRaw)) return interaction.editReply('❌ deadline ต้องเป็น YYYY-MM-DD');
     try {
@@ -233,7 +233,7 @@ export async function handlePanelModal(interaction) {
 
   if (interaction.customId === 'panel_delete_modal') {
     const id = parseInt(interaction.fields.getTextInputValue('id').trim(), 10);
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ flags: 64 });
     if (isNaN(id)) return interaction.editReply('❌ ID ต้องเป็นตัวเลข');
     try {
       const quest = await removeQuest(id);

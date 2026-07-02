@@ -6,7 +6,7 @@ export const data = new SlashCommandBuilder()
   .setDescription('เช็กสถานะระบบและฐานข้อมูล');
 
 export async function execute(interaction) {
-  await interaction.deferReply({ ephemeral: true });
+  await interaction.deferReply({ flags: 64 });
 
   const start = Date.now();
   let dbOk = false;
