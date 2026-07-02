@@ -1,10 +1,10 @@
 import 'dotenv/config';
 
 const DISCORD_API         = 'https://discord.com/api/v9';
-const CLIENT_VERSION      = '1.0.9251';
-const CHROME_VERSION      = '124.0.6367.243';
-const ELECTRON_VERSION    = '30.2.0';
-const CLIENT_BUILD_NUMBER = 338153;
+const CLIENT_VERSION      = '1.0.9267';
+const CHROME_VERSION      = '138.0.7204.251';
+const ELECTRON_VERSION    = '37.6.0';
+const CLIENT_BUILD_NUMBER = 572700;
 const NATIVE_BUILD_NUMBER = 47491;
 
 const USER_AGENT = `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) discord/${CLIENT_VERSION} Chrome/${CHROME_VERSION} Electron/${ELECTRON_VERSION} Safari/537.36`;
@@ -39,11 +39,15 @@ function userHeaders(token) {
     'X-Discord-Timezone': 'Asia/Bangkok',
     'Accept': '*/*',
     'Accept-Language': 'en-US,en;q=0.9',
+    'Accept-Encoding': 'gzip, deflate, br, zstd',
     'Referer': 'https://discord.com/channels/@me',
     'Origin': 'https://discord.com',
     'Sec-Fetch-Dest': 'empty',
     'Sec-Fetch-Mode': 'cors',
     'Sec-Fetch-Site': 'same-origin',
+    'sec-ch-ua': `"Chromium";v="138", "Not)A;Brand";v="8"`,
+    'sec-ch-ua-mobile': '?0',
+    'sec-ch-ua-platform': '"Windows"',
   };
 }
 
