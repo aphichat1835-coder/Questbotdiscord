@@ -11,30 +11,20 @@ export async function execute(interaction) {
     .addFields(
       {
         name: '🎛️ แผงควบคุม',
-        value: '`/panel` — เปิดแผงควบคุมพร้อมปุ่ม: เพิ่ม, แก้ไข, ลบ, Done, สถิติ, **▶️ Start / 🛑 Stop Runner**',
+        value: '`/panel` — เปิดแผงควบคุม กด **🚀 START NOW** เพื่อเริ่ม / **🔴 STOP ALL** เพื่อหยุด',
       },
       {
-        name: '🤖 Quest Runner (อัตโนมัติ)',
+        name: '🤖 Auto Quest Runner',
         value: [
-          '`/run` — กรอก token แล้วระบบเข้าไปทำ Discord Quest อัตโนมัติทุกอัน',
-          '`/stop` — หยุด Runner ที่กำลังทำงาน',
-        ].join('\n'),
-      },
-      {
-        name: '📝 Quest Tracker',
-        value: [
-          '`/quest-add` — เพิ่มเควสใหม่',
-          '`/quest-list` — ดูรายการเควสทั้งหมด',
-          '`/quest-done` — มาร์คเควสว่าเสร็จแล้ว',
-          '`/quest-remove` — ลบเควสออกจากรายการ',
-          '`/quest-status` — ดูสรุปสถิติเควส',
+          '`/run` — กรอก token แล้วระบบทำ Discord Quest อัตโนมัติ',
+          '`/stop` — หยุด Runner ทั้งหมดของตัวเอง',
         ].join('\n'),
       },
       {
         name: '🔧 ระบบ',
         value: [
-          '`/api-status` — เช็กสถานะระบบและฐานข้อมูล',
-          '`/ping` — เช็กว่าบอทออนไลน์และวัด latency',
+          '`/api-status` — เช็กสถานะระบบ RAM และ ping',
+          '`/ping` — เช็กว่าบอทออนไลน์',
           '`/help` — แสดงหน้านี้',
         ].join('\n'),
       },
