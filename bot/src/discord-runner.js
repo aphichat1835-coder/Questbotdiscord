@@ -44,15 +44,29 @@ async function _fetchElectronInfo() {
 }
 
 async function _fetchClientVersion() {
-  // Discord's update server redirects to the installer URL which contains the version:
-  // https://dl.discordapp.net/distro/app/stable/win/x86/1.0.9267/DiscordSetup.exe
+  // Discord's update endpoint may:
+  //   (a) redirect to https://dl.discordapp.net/.../1.0.9267/DiscordSetup.exe
+  //   (b) return JSON like { url: "https://...exe", name: "1.0.9267" }
   const res = await fetch(
     'https://discord.com/api/updates/distributions/app/installers/latest?platform=win&channel=stable&arch=x86',
     { signal: AbortSignal.timeout(8000), redirect: 'follow' },
   );
-  const m = res.url.match(/\/(\d+\.\d+\.\d+)\/[^/]+\.exe/i);
-  if (!m) throw new Error(`version not found in redirect URL: ${res.url}`);
-  return m[1];
+  const text = await res.text();
+
+  // (b) JSON response
+  try {
+    const json = JSON.parse(text);
+    if (json.name && /^\d+\.\d+\.\d+$/.test(json.name)) return json.name;
+    const urlField = json.url ?? json.download ?? '';
+    const mj = urlField.match(/\/(\d+\.\d+\.\d+)\/[^/]+\.exe/i);
+    if (mj) return mj[1];
+  } catch { /* not JSON */ }
+
+  // (a) redirect URL
+  const mr = res.url.match(/\/(\d+\.\d+\.\d+)\/[^/]+\.exe/i);
+  if (mr) return mr[1];
+
+  throw new Error(`version not found — body: ${text.slice(0, 120)}`);
 }
 
 /**

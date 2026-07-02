@@ -29,7 +29,7 @@ startDashboard(null);
 await refreshBuildInfo();
 setInterval(refreshBuildInfo, 6 * 60 * 60 * 1000);
 
-client.once('ready', () => {
+client.once('clientReady', () => {
   console.log(`✅ บอทพร้อมแล้ว — logged in as ${client.user.tag}`);
   startDashboard(client);
   startWorker(client);
