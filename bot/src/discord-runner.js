@@ -279,6 +279,7 @@ export async function startRunner({ jobKey, ownerId, userToken, channelId, clien
   let liveMsg      = null;
   let username     = '...';
   let lastRenderAt = 0;
+  let pendingTimer = null;
   const RENDER_THROTTLE_MS = 2000; // Discord allows ~5 edits/5s; stay safe at 1/2s
   const logLines = [];
 
@@ -287,10 +288,8 @@ export async function startRunner({ jobKey, ownerId, userToken, channelId, clien
     if (logLines.length > 25) logLines.shift();
   }
 
-  async function render() {
-    const now = Date.now();
-    if (liveMsg && now - lastRenderAt < RENDER_THROTTLE_MS) return;
-    lastRenderAt = now;
+  async function flush() {
+    lastRenderAt = Date.now();
     const content = '```\n' + logLines.join('\n') + '\n```';
     try {
       if (!liveMsg) {
@@ -301,6 +300,24 @@ export async function startRunner({ jobKey, ownerId, userToken, channelId, clien
         await liveMsg.edit({ content });
       }
     } catch {}
+  }
+
+  // Throttled — but never silently drops an update. If called too soon after the
+  // last send, schedules a trailing flush so the latest log line always gets out.
+  async function render() {
+    const now = Date.now();
+    if (liveMsg && now - lastRenderAt < RENDER_THROTTLE_MS) {
+      if (!pendingTimer) {
+        const wait = RENDER_THROTTLE_MS - (now - lastRenderAt);
+        pendingTimer = setTimeout(() => {
+          pendingTimer = null;
+          flush();
+        }, wait);
+      }
+      return;
+    }
+    if (pendingTimer) { clearTimeout(pendingTimer); pendingTimer = null; }
+    await flush();
   }
 
   jobs.set(jobKey, {
