@@ -291,6 +291,7 @@ export async function startRunner({ jobKey, ownerId, userToken, channelId, clien
   let username     = '...';
   let lastRenderAt = 0;
   let pendingTimer = null;
+  let flushPromise = null;
   const RENDER_THROTTLE_MS = 2000; // Discord allows ~5 edits/5s; stay safe at 1/2s
   const logLines = [];
 
@@ -300,17 +301,30 @@ export async function startRunner({ jobKey, ownerId, userToken, channelId, clien
   }
 
   async function flush() {
-    lastRenderAt = Date.now();
-    const content = '```\n' + logLines.join('\n') + '\n```';
+    // Serialize flushes so concurrent renders cannot create duplicate live
+    // messages before the first send has assigned liveMsg.
+    while (flushPromise) await flushPromise;
+
+    const task = (async () => {
+      lastRenderAt = Date.now();
+      const content = '```\n' + logLines.join('\n') + '\n```';
+      try {
+        if (!liveMsg) {
+          const ch = await client.channels.fetch(channelId);
+          if (!ch?.isTextBased?.()) return;
+          liveMsg = await ch.send({ content });
+        } else {
+          await liveMsg.edit({ content });
+        }
+      } catch {}
+    })();
+
+    flushPromise = task;
     try {
-      if (!liveMsg) {
-        const ch = await client.channels.fetch(channelId);
-        if (!ch?.isTextBased?.()) return;
-        liveMsg = await ch.send({ content });
-      } else {
-        await liveMsg.edit({ content });
-      }
-    } catch {}
+      await task;
+    } finally {
+      if (flushPromise === task) flushPromise = null;
+    }
   }
 
   // Throttled — but never silently drops an update. If called too soon after the
@@ -324,6 +338,7 @@ export async function startRunner({ jobKey, ownerId, userToken, channelId, clien
           pendingTimer = null;
           flush();
         }, wait);
+        pendingTimer.unref?.();
       }
       return;
     }
@@ -335,6 +350,14 @@ export async function startRunner({ jobKey, ownerId, userToken, channelId, clien
     controller,
     summary: () => ({ username, status: logLines.at(-1) ?? '' }),
   });
+
+  const clearPendingRender = () => {
+    if (pendingTimer) {
+      clearTimeout(pendingTimer);
+      pendingTimer = null;
+    }
+  };
+  signal.addEventListener('abort', clearPendingRender, { once: true });
 
   (async () => {
     try {
@@ -364,10 +387,10 @@ export async function startRunner({ jobKey, ownerId, userToken, channelId, clien
         }
 
         if (active.length === 0) {
-          // No more quests to do — stop polling forever, log the token out instead.
+          // No more quests to do — intentionally stop this runner permanently.
           addLog(`📭 ${username}: ไม่พบเควสแล้ว`);
           await render();
-          addLog(`🔒 ${username}: LOGGED OUT — TOKEN STOPPED`);
+          addLog(`🔒 ${username}: RUNNER STOPPED — NO ACTIVE QUESTS`);
           await render();
           break;
         }
@@ -456,6 +479,14 @@ export async function startRunner({ jobKey, ownerId, userToken, channelId, clien
         await render();
       }
     } finally {
+      signal.removeEventListener('abort', clearPendingRender);
+      const hadPendingRender = Boolean(pendingTimer);
+      clearPendingRender();
+      if (flushPromise) await flushPromise;
+      if (hadPendingRender) {
+        // Deliver the latest queued status before tearing the job down.
+        await flush();
+      }
       jobs.delete(jobKey);
     }
   })();
