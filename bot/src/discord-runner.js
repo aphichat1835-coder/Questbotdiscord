@@ -1,21 +1,30 @@
 import 'dotenv/config';
 
 const DISCORD_API         = 'https://discord.com/api/v9';
-const CLIENT_VERSION      = '1.0.9243';
-const CHROME_VERSION      = '138.0.7204.251';
-const ELECTRON_VERSION    = '37.6.0';
-const CLIENT_BUILD_NUMBER = 569817;
-const NATIVE_BUILD_NUMBER = 84934;
+const CLIENT_VERSION      = '1.0.9251';
+const CHROME_VERSION      = '124.0.6367.243';
+const ELECTRON_VERSION    = '30.2.0';
+const CLIENT_BUILD_NUMBER = 338153;
+const NATIVE_BUILD_NUMBER = 47491;
 
 const USER_AGENT = `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) discord/${CLIENT_VERSION} Chrome/${CHROME_VERSION} Electron/${ELECTRON_VERSION} Safari/537.36`;
 
 function buildSuperProperties() {
   return Buffer.from(JSON.stringify({
-    os: 'Windows', browser: 'Discord Client', release_channel: 'stable',
-    client_version: CLIENT_VERSION, os_version: '10.0.19045', os_arch: 'x64',
-    app_arch: 'x64', system_locale: 'en-US', browser_user_agent: USER_AGENT,
-    browser_version: CHROME_VERSION, client_build_number: CLIENT_BUILD_NUMBER,
-    native_build_number: NATIVE_BUILD_NUMBER, client_event_source: null,
+    os: 'Windows',
+    browser: 'Discord Client',
+    release_channel: 'stable',
+    client_version: CLIENT_VERSION,
+    os_version: '10.0.22631',
+    os_arch: 'x64',
+    app_arch: 'x64',
+    system_locale: 'en-US',
+    browser_user_agent: USER_AGENT,
+    browser_version: CHROME_VERSION,
+    client_build_number: CLIENT_BUILD_NUMBER,
+    native_build_number: NATIVE_BUILD_NUMBER,
+    client_event_source: null,
+    design_id: 0,
   })).toString('base64');
 }
 
@@ -26,8 +35,15 @@ function userHeaders(token) {
     'User-Agent': USER_AGENT,
     'X-Super-Properties': buildSuperProperties(),
     'X-Debug-Options': 'bugReporterEnabled',
-    Accept: '*/*',
-    Referer: 'https://discord.com/quest-home',
+    'X-Discord-Locale': 'en-US',
+    'X-Discord-Timezone': 'Asia/Bangkok',
+    'Accept': '*/*',
+    'Accept-Language': 'en-US,en;q=0.9',
+    'Referer': 'https://discord.com/channels/@me',
+    'Origin': 'https://discord.com',
+    'Sec-Fetch-Dest': 'empty',
+    'Sec-Fetch-Mode': 'cors',
+    'Sec-Fetch-Site': 'same-origin',
   };
 }
 
