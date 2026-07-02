@@ -290,14 +290,14 @@ export async function startRunner({ jobKey, ownerId, userToken, channelId, clien
 
   async function flush() {
     lastRenderAt = Date.now();
-    const content = '```\n' + logLines.join('\n') + '\n```';
+    const content = `<@${ownerId}>\n\`\`\`\n${logLines.join('\n')}\n\`\`\``;
     try {
       if (!liveMsg) {
         const ch = await client.channels.fetch(channelId);
         if (!ch?.isTextBased?.()) return;
-        liveMsg = await ch.send({ content });
+        liveMsg = await ch.send({ content, allowedMentions: { users: [ownerId] } });
       } else {
-        await liveMsg.edit({ content });
+        await liveMsg.edit({ content, allowedMentions: { users: [ownerId] } });
       }
     } catch {}
   }
@@ -353,17 +353,18 @@ export async function startRunner({ jobKey, ownerId, userToken, channelId, clien
         }
 
         if (active.length === 0) {
-          // Don't stop — Discord adds new quests regularly; keep polling every 15 min
-          addLog(`📭 ${username}: ไม่มีเควสตอนนี้ — รอเช็คใหม่ใน 15 นาที`);
+          // No more quests to do — stop polling forever, log the token out instead.
+          addLog(`📭 ${username}: ไม่พบเควสแล้ว`);
           await render();
-          await sleep(15 * 60 * 1000, signal);
-          continue;
+          addLog(`🔒 ${username}: LOGGED OUT — TOKEN STOPPED`);
+          await render();
+          break;
         }
 
         addLog(`🎯 ${username}: ${active.length} QUESTS`);
         await render();
 
-        for (const quest of active) {
+        for (const [idx, quest] of active.entries()) {
           if (signal.aborted) break;
 
           // Skip quest types that can't be completed via API
@@ -381,12 +382,16 @@ export async function startRunner({ jobKey, ownerId, userToken, channelId, clien
             await enrollQuest(userToken, quest.id).catch(() => {});
           }
 
-          addLog(`▶️ ${username}: ${quest.name} [${quest.eventName}]`);
+          addLog(`▶️ ${username}: [${idx + 1}/${active.length}] ${quest.name} [${quest.eventName}]`);
           await render();
 
+          let lastReportedPct = -1;
           const onProgress = async (pct) => {
+            const bucket = Math.min(100, Math.floor(pct / 25) * 25);
+            if (bucket === lastReportedPct) return;
+            lastReportedPct = bucket;
             const lastLine = logLines.at(-1) ?? '';
-            const newLine  = `⌛ ${username}: ${quest.name} ${pct}%`;
+            const newLine  = `⌛ ${username}: [${idx + 1}/${active.length}] ${quest.name} ${bucket}%`;
             if (lastLine.startsWith('⌛')) {
               logLines[logLines.length - 1] = newLine;
             } else {
