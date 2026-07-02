@@ -28,10 +28,12 @@ for (const cmd of commands) {
   client.commands.set(cmd.data.name, cmd);
 }
 
+startDashboard(null);
+
 client.once('ready', () => {
   console.log(`✅ บอทพร้อมแล้ว — logged in as ${client.user.tag}`);
-  startWorker(client);
   startDashboard(client);
+  startWorker(client);
 });
 
 client.on('interactionCreate', async (interaction) => {

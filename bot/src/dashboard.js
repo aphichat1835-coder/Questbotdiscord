@@ -4,13 +4,19 @@ import { stats } from './db.js';
 const PORT = process.env.PORT || 3000;
 let botClient = null;
 let startTime = Date.now();
+let serverStarted = false;
 
 export function startDashboard(client) {
-  botClient  = client;
-  startTime  = Date.now();
-  createServer(handleRequest).listen(PORT, () => {
-    console.log(`🌐 Dashboard พร้อมใช้งาน → port ${PORT}`);
-  });
+  if (client) {
+    botClient = client;
+    startTime = Date.now();
+  }
+  if (!serverStarted) {
+    serverStarted = true;
+    createServer(handleRequest).listen(PORT, () => {
+      console.log(`🌐 Dashboard พร้อมใช้งาน → port ${PORT}`);
+    });
+  }
 }
 
 function handleRequest(req, res) {
