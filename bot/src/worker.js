@@ -22,32 +22,39 @@ export function stopWorker() {
 }
 
 function scheduleDailySummary() {
-  const tz        = config.timezone ?? 'Asia/Bangkok';
-  const now       = new Date();
-  const tomorrow  = new Date(now.toLocaleDateString('sv-SE', { timeZone: tz }) + 'T08:00:00');
+  const tz       = config.timezone ?? 'Asia/Bangkok';
+  const msUntil  = msUntilNext8am(tz);
 
-  const localOffset = -now.getTimezoneOffset() * 60 * 1000;
-  const tzOffset    = getTzOffsetMs(tz);
-  const targetUtc   = tomorrow.getTime() - tzOffset + localOffset;
-  let msUntil8am    = targetUtc - now.getTime();
-
-  if (msUntil8am <= 0) msUntil8am += 24 * 60 * 60 * 1000;
+  const hrs = Math.floor(msUntil / 3600000);
+  const min = Math.floor((msUntil % 3600000) / 60000);
+  console.log(`📅 Daily summary จะส่งในอีก ${hrs}h ${min}m`);
 
   summaryTimeout = setTimeout(async () => {
     await sendDailySummary();
-    summaryTimeout = setInterval(sendDailySummary, 24 * 60 * 60 * 1000);
-  }, msUntil8am);
-
-  const hrs = Math.floor(msUntil8am / 3600000);
-  const min = Math.floor((msUntil8am % 3600000) / 60000);
-  console.log(`📅 Daily summary จะส่งในอีก ${hrs}h ${min}m`);
+    // Re-schedule daily at 8am instead of drifting with a fixed 24h interval
+    scheduleDailySummary();
+  }, msUntil);
 }
 
-function getTzOffsetMs(tz) {
-  const date = new Date();
-  const utcStr = date.toLocaleString('en-US', { timeZone: 'UTC' });
-  const tzStr  = date.toLocaleString('en-US', { timeZone: tz });
-  return new Date(tzStr).getTime() - new Date(utcStr).getTime();
+/**
+ * Returns milliseconds until the next 08:00 in the given IANA timezone.
+ * Uses Intl.DateTimeFormat to reliably determine the current date in that tz.
+ */
+function msUntilNext8am(tz) {
+  const now     = new Date();
+  // e.g. "2026-07-02" — the current date in target tz
+  const dateStr = now.toLocaleDateString('sv-SE', { timeZone: tz });
+  // Offset in ms: (target tz time) - (UTC time)
+  const utcStr  = now.toLocaleString('en-US', { timeZone: 'UTC' });
+  const tzStr   = now.toLocaleString('en-US', { timeZone: tz });
+  const offset  = new Date(tzStr).getTime() - new Date(utcStr).getTime();
+  // UTC timestamp of today's midnight in target tz
+  const midnightUtc = new Date(dateStr + 'T00:00:00Z').getTime() - offset;
+  // UTC timestamp of 8am today in target tz
+  let next8amUtc = midnightUtc + 8 * 3600000;
+  // If 8am already passed today, aim for tomorrow
+  if (next8amUtc <= now.getTime()) next8amUtc += 24 * 3600000;
+  return next8amUtc - now.getTime();
 }
 
 async function fetchQuests() {
@@ -60,9 +67,14 @@ async function fetchStats() {
 
 async function sendToLogChannel(content) {
   if (!config.logChannelId) return;
-  const channel = await client.channels.fetch(config.logChannelId).catch(() => null);
+  const channel = await client.channels.fetch(config.logChannelId).catch((err) => {
+    console.error('[Worker] ไม่พบ log channel:', err.message);
+    return null;
+  });
   if (!channel?.isTextBased?.()) return;
-  await channel.send({ content });
+  await channel.send({ content }).catch((err) => {
+    console.error('[Worker] ส่งข้อความ log channel ไม่ได้:', err.message);
+  });
 }
 
 async function checkDeadlines() {

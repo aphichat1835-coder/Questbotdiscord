@@ -1,5 +1,13 @@
 import 'dotenv/config';
 
+const required = ['DISCORD_BOT_TOKEN', 'DISCORD_CLIENT_ID', 'DISCORD_GUILD_ID', 'OWNER_ID'];
+for (const key of required) {
+  if (!process.env[key]) {
+    console.error(`❌ Missing required environment variable: ${key}`);
+    process.exit(1);
+  }
+}
+
 export const config = {
   token:          process.env.DISCORD_BOT_TOKEN,
   clientId:       process.env.DISCORD_CLIENT_ID,

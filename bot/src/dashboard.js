@@ -9,7 +9,8 @@ let serverStarted = false;
 export function startDashboard(client) {
   if (client) {
     botClient = client;
-    startTime = Date.now();
+    // startTime intentionally NOT reset here — tracks uptime since process start,
+    // not since last reconnect
   }
   if (!serverStarted) {
     serverStarted = true;

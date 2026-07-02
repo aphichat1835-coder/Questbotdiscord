@@ -57,7 +57,11 @@ async function discordFetch(token, path, options = {}) {
   const text = await res.text();
   let data;
   try { data = JSON.parse(text); } catch { data = text; }
-  if (!res.ok) throw new Error(`Discord API ${res.status}: ${JSON.stringify(data)}`);
+  if (!res.ok) {
+    const err = new Error(`Discord API ${res.status}: ${JSON.stringify(data)}`);
+    err.status = res.status;
+    throw err;
+  }
   return data;
 }
 
@@ -70,7 +74,7 @@ export async function fetchQuests(token) {
   try {
     raw = await discordFetch(token, '/users/@me/quests');
   } catch (err) {
-    if (err.message.includes('404')) return [];
+    if (err.status === 404) return [];
     throw err;
   }
   if (!Array.isArray(raw)) return [];
@@ -148,8 +152,10 @@ export async function startRunner({ jobKey, ownerId, userToken, channelId, clien
   const controller = new AbortController();
   const { signal } = controller;
 
-  let liveMsg   = null;
-  let username  = '...';
+  let liveMsg      = null;
+  let username     = '...';
+  let lastRenderAt = 0;
+  const RENDER_THROTTLE_MS = 2000; // Discord allows ~5 edits/5s; stay safe at 1/2s
   const logLines = [];
 
   function addLog(line) {
@@ -158,6 +164,9 @@ export async function startRunner({ jobKey, ownerId, userToken, channelId, clien
   }
 
   async function render() {
+    const now = Date.now();
+    if (liveMsg && now - lastRenderAt < RENDER_THROTTLE_MS) return;
+    lastRenderAt = now;
     const content = '```\n' + logLines.join('\n') + '\n```';
     try {
       if (!liveMsg) {

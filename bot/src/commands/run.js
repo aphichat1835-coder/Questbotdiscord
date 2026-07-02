@@ -3,12 +3,16 @@ import {
   TextInputBuilder, TextInputStyle, ActionRowBuilder,
 } from 'discord.js';
 import { startRunner, fetchMe, getUserJobs } from '../discord-runner.js';
+import { isManager } from '../permissions.js';
 
 export const data = new SlashCommandBuilder()
   .setName('run')
   .setDescription('เริ่ม Auto Quest อัตโนมัติ (รองรับหลาย TOKEN พร้อมกัน)');
 
 export async function execute(interaction) {
+  if (!isManager(interaction)) {
+    return interaction.reply({ flags: 64, content: '🔒 ต้องการสิทธิ์ **Manager** ขึ้นไปจึงจะใช้คำสั่งนี้ได้' });
+  }
   return showRunModal(interaction);
 }
 

@@ -24,7 +24,7 @@ for (const cmd of commands) {
 
 startDashboard(null);
 
-client.once('clientReady', () => {
+client.once('ready', () => {
   console.log(`✅ บอทพร้อมแล้ว — logged in as ${client.user.tag}`);
   startDashboard(client);
   startWorker(client);
