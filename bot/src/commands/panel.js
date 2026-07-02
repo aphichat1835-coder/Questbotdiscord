@@ -53,32 +53,15 @@ export async function sendPanel(interaction, isUpdate = false) {
       '🎯 รองรับหลาย TOKEN พร้อมกัน\n' +
       '🚀 กดปุ่มด้านล่างเพื่อเริ่มทันที'
     )
-    .addFields(
-      { name: '📦 เควสทั้งหมด',   value: `**${st.total}**`,   inline: true },
-      { name: '✅ เสร็จแล้ว',     value: `**${st.done}**`,    inline: true },
-      { name: '🔴 ค้างอยู่',       value: `**${st.pending}**`, inline: true },
-      { name: '⚠️ เกิน Deadline', value: `**${st.overdue}**`, inline: true },
-      { name: '⚡ Runner ที่รันอยู่', value: `**${activeJobs}** token`, inline: true },
-    )
-    .setFooter({ text: 'POWERED BY NEVERDIE AUTO QUEST™' })
+    .setFooter({ text: `POWERED BY NEVERDIE AUTO QUEST™ · Runner: ${activeJobs} token` })
     .setTimestamp();
 
   const row1 = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId('panel:run').setLabel('🚀 START NOW').setStyle(ButtonStyle.Success),
     new ButtonBuilder().setCustomId('panel:stop').setLabel('🔴 STOP ALL').setStyle(ButtonStyle.Danger),
-    new ButtonBuilder().setCustomId('panel:status').setLabel('📊 สถิติ').setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId('panel:refresh').setLabel('🔄 Refresh').setStyle(ButtonStyle.Secondary),
   );
 
-  const row2 = new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId('panel:list').setLabel('📋 รายการเควส').setStyle(ButtonStyle.Primary),
-    new ButtonBuilder().setCustomId('panel:add').setLabel('➕ เพิ่ม').setStyle(ButtonStyle.Success),
-    new ButtonBuilder().setCustomId('panel:done').setLabel('✅ Done').setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId('panel:edit').setLabel('✏️ แก้ไข').setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId('panel:delete').setLabel('🗑️ ลบ').setStyle(ButtonStyle.Danger),
-  );
-
-  const payload = { embeds: [embed], components: [row1, row2] };
+  const payload = { embeds: [embed], components: [row1] };
   if (isUpdate) await interaction.update(payload);
   else          await interaction.reply(payload);
 }
