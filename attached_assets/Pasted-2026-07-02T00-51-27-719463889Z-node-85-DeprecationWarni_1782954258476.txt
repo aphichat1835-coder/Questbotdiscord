@@ -1,0 +1,50 @@
+2026-07-02T00:51:27.719463889Z (node:85) DeprecationWarning: The ready event has been renamed to clientReady to distinguish it from the gateway READY event and will only emit under that name in v15. Please use clientReady instead.
+2026-07-02T00:51:27.719476409Z (Use `node --trace-deprecation ...` to show where the warning was created)
+2026-07-02T00:51:32.284039625Z ==> ///////////////////////////////////////////////////////////
+2026-07-02T00:51:32.289433269Z ==> 
+2026-07-02T00:51:32.296113581Z ==> Available at your primary URL https://neverdie-quest.onrender.com
+2026-07-02T00:51:32.29993765Z ==> 
+2026-07-02T00:51:32.302852135Z ==> ///////////////////////////////////////////////////////////
+2026-07-02T00:52:49.73215438Z ==> Deploying...
+2026-07-02T00:52:49.808106325Z ==> Setting WEB_CONCURRENCY=1 by default, based on available CPUs in the instance
+2026-07-02T00:52:57.336158097Z ==> Running 'npm start'
+2026-07-02T00:52:58.526545429Z 
+2026-07-02T00:52:58.526567829Z > neverdie-quest-bot@1.0.0 start
+2026-07-02T00:52:58.526574959Z > node src/index.js
+2026-07-02T00:52:58.52657808Z 
+2026-07-02T00:53:04.823359797Z ✅ บอทพร้อมแล้ว — logged in as Questauto#5367
+2026-07-02T00:53:04.82347633Z ⏰ Worker เริ่มแล้ว — เช็ก deadline ทุก 1 ชั่วโมง
+2026-07-02T00:53:05.061998456Z 📅 Daily summary จะส่งในอีก 0h 6m
+2026-07-02T00:53:05.064744379Z 🌐 Dashboard พร้อมใช้งาน → port 10000
+2026-07-02T00:53:05.06512836Z (node:85) DeprecationWarning: The ready event has been renamed to clientReady to distinguish it from the gateway READY event and will only emit under that name in v15. Please use clientReady instead.
+2026-07-02T00:53:05.06514542Z (Use `node --trace-deprecation ...` to show where the warning was created)
+2026-07-02T00:53:10.976549363Z ==> Your service is live 🎉
+2026-07-02T00:53:11.098351241Z ==> 
+2026-07-02T00:53:11.102105746Z ==> ///////////////////////////////////////////////////////////
+2026-07-02T00:53:11.10499458Z ==> 
+2026-07-02T00:53:11.108134138Z ==> Available at your primary URL https://neverdie-quest.onrender.com
+2026-07-02T00:53:11.110800849Z ==> 
+2026-07-02T00:53:11.113677402Z ==> ///////////////////////////////////////////////////////////
+2026-07-02T00:55:34.176698923Z ==> Deploying...
+2026-07-02T00:55:34.241921462Z ==> Setting WEB_CONCURRENCY=1 by default, based on available CPUs in the instance
+2026-07-02T00:55:42.596975714Z ==> Running 'npm start'
+2026-07-02T00:55:44.007101679Z 
+2026-07-02T00:55:44.00712992Z > neverdie-quest-bot@1.0.0 start
+2026-07-02T00:55:44.0071387Z > node src/index.js
+2026-07-02T00:55:44.00714331Z 
+2026-07-02T00:55:50.006307801Z ✅ บอทพร้อมแล้ว — logged in as Questauto#5367
+2026-07-02T00:55:50.006394544Z ⏰ Worker เริ่มแล้ว — เช็ก deadline ทุก 1 ชั่วโมง
+2026-07-02T00:55:50.202222921Z 📅 Daily summary จะส่งในอีก 0h 4m
+2026-07-02T00:55:50.204752851Z 🌐 Dashboard พร้อมใช้งาน → port 10000
+2026-07-02T00:55:50.205161932Z (node:85) DeprecationWarning: The ready event has been renamed to clientReady to distinguish it from the gateway READY event and will only emit under that name in v15. Please use clientReady instead.
+2026-07-02T00:55:50.205176453Z (Use `node --trace-deprecation ...` to show where the warning was created)
+2026-07-02T00:55:55.273372148Z ==> Your service is live 🎉
+2026-07-02T00:55:55.432774242Z ==> 
+2026-07-02T00:55:55.435917251Z ==> ///////////////////////////////////////////////////////////
+2026-07-02T00:55:55.439264262Z ==> 
+2026-07-02T00:55:55.442636465Z ==> Available at your primary URL https://neverdie-quest.onrender.com
+2026-07-02T00:55:55.445727551Z ==> 
+2026-07-02T00:55:55.448488506Z ==> ///////////////////////////////////////////////////////////
+2026-07-02T00:58:03.663946195Z (node:85) Warning: Supplying "ephemeral" for interaction response options is deprecated. Utilize flags instead.
+2026-07-02T01:00:55.712511202Z ==> Detected service running on port 10000
+2026-07-02T01:00:55.815241105Z ==> Docs on specifying a port: https://render.com/docs/web-services#port-binding
