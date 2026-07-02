@@ -2,6 +2,7 @@ import { Client, GatewayIntentBits, Collection } from 'discord.js';
 import { config } from './config.js';
 import { startWorker } from './worker.js';
 import { startDashboard } from './dashboard.js';
+import { refreshBuildInfo } from './discord-runner.js';
 import './db.js';
 
 import * as ping        from './commands/ping.js';
@@ -23,6 +24,10 @@ for (const cmd of commands) {
 }
 
 startDashboard(null);
+
+// ดึง build info ล่าสุดก่อน login และ refresh ทุก 6 ชั่วโมง
+await refreshBuildInfo();
+setInterval(refreshBuildInfo, 6 * 60 * 60 * 1000);
 
 client.once('ready', () => {
   console.log(`✅ บอทพร้อมแล้ว — logged in as ${client.user.tag}`);

@@ -1,38 +1,116 @@
 import 'dotenv/config';
 
-const DISCORD_API         = 'https://discord.com/api/v9';
-const CLIENT_VERSION      = '1.0.9267';
-const CHROME_VERSION      = '138.0.7204.251';
-const ELECTRON_VERSION    = '37.6.0';
-const CLIENT_BUILD_NUMBER = 572700;
-const NATIVE_BUILD_NUMBER = 47491;
+const DISCORD_API = 'https://discord.com/api/v9';
 
-const USER_AGENT = `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) discord/${CLIENT_VERSION} Chrome/${CHROME_VERSION} Electron/${ELECTRON_VERSION} Safari/537.36`;
+// ── Build info — hardcoded fallbacks, overwritten by refreshBuildInfo() ────────
+const FALLBACK = Object.freeze({
+  clientVersion:   '1.0.9267',
+  chromeVersion:   '138.0.7204.251',
+  electronVersion: '37.6.0',
+  buildNumber:     572700,
+  nativeBuildNumber: 47491,
+});
+
+let live = { ...FALLBACK };
+
+// ── Auto-fetch helpers ─────────────────────────────────────────────────────────
+
+async function _fetchBuildNumber() {
+  // Discord-Datamining commits — message format: "2 July 2026 - Build 572700 (...)"
+  const res = await fetch(
+    'https://api.github.com/repos/Discord-Datamining/Discord-Datamining/commits?per_page=1',
+    { headers: { 'User-Agent': 'NeverDieQuestBot/1.0' }, signal: AbortSignal.timeout(8000) },
+  );
+  if (!res.ok) throw new Error(`GitHub API ${res.status}`);
+  const [commit] = await res.json();
+  const m = commit?.commit?.message?.match(/Build (\d+)/);
+  if (!m) throw new Error('build number not found in commit message');
+  return parseInt(m[1], 10);
+}
+
+async function _fetchElectronInfo() {
+  // Latest stable Electron release — body lists "Chromium `x.x.x.x`"
+  const res = await fetch(
+    'https://api.github.com/repos/electron/electron/releases/latest',
+    { headers: { 'User-Agent': 'NeverDieQuestBot/1.0' }, signal: AbortSignal.timeout(8000) },
+  );
+  if (!res.ok) throw new Error(`GitHub API ${res.status}`);
+  const data = await res.json();
+  const electronVersion = data.tag_name?.replace(/^v/, '');
+  const cm = (data.body ?? '').match(/Chromium\s+`([0-9.]+)`/i);
+  const chromeVersion = cm?.[1];
+  if (!electronVersion || !chromeVersion) throw new Error('could not parse Electron/Chrome version');
+  return { electronVersion, chromeVersion };
+}
+
+/**
+ * Fetch the latest build number + Electron/Chrome versions.
+ * Falls back to hardcoded values if any fetch fails.
+ * Safe to call multiple times — just updates the `live` object in-place.
+ */
+export async function refreshBuildInfo() {
+  const [buildResult, electronResult] = await Promise.allSettled([
+    _fetchBuildNumber(),
+    _fetchElectronInfo(),
+  ]);
+
+  const prev = { ...live };
+
+  if (buildResult.status === 'fulfilled') {
+    live.buildNumber = buildResult.value;
+  } else {
+    console.warn(`⚠️  build number fetch failed — ${buildResult.reason?.message} — ใช้ fallback ${live.buildNumber}`);
+  }
+
+  if (electronResult.status === 'fulfilled') {
+    live.electronVersion = electronResult.value.electronVersion;
+    live.chromeVersion   = electronResult.value.chromeVersion;
+  } else {
+    console.warn(`⚠️  Electron/Chrome fetch failed — ${electronResult.reason?.message} — ใช้ fallback`);
+  }
+
+  const buildChanged    = live.buildNumber    !== prev.buildNumber;
+  const electronChanged = live.electronVersion !== prev.electronVersion;
+
+  console.log(
+    `🔄 Build info — Build: ${live.buildNumber}${buildChanged ? ' ✨' : ''} | ` +
+    `Chrome: ${live.chromeVersion} | Electron: ${live.electronVersion}${electronChanged ? ' ✨' : ''}`,
+  );
+}
+
+// ── Dynamic header builders (always read from `live`) ─────────────────────────
+
+function _userAgent() {
+  return `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) discord/${live.clientVersion} Chrome/${live.chromeVersion} Electron/${live.electronVersion} Safari/537.36`;
+}
 
 function buildSuperProperties() {
+  const ua = _userAgent();
   return Buffer.from(JSON.stringify({
     os: 'Windows',
     browser: 'Discord Client',
     release_channel: 'stable',
-    client_version: CLIENT_VERSION,
+    client_version: live.clientVersion,
     os_version: '10.0.22631',
     os_arch: 'x64',
     app_arch: 'x64',
     system_locale: 'en-US',
-    browser_user_agent: USER_AGENT,
-    browser_version: CHROME_VERSION,
-    client_build_number: CLIENT_BUILD_NUMBER,
-    native_build_number: NATIVE_BUILD_NUMBER,
+    browser_user_agent: ua,
+    browser_version: live.chromeVersion,
+    client_build_number: live.buildNumber,
+    native_build_number: live.nativeBuildNumber,
     client_event_source: null,
     design_id: 0,
   })).toString('base64');
 }
 
 function userHeaders(token) {
+  const ua          = _userAgent();
+  const chromeMajor = live.chromeVersion.split('.')[0];
   return {
     Authorization: token,
     'Content-Type': 'application/json',
-    'User-Agent': USER_AGENT,
+    'User-Agent': ua,
     'X-Super-Properties': buildSuperProperties(),
     'X-Debug-Options': 'bugReporterEnabled',
     'X-Discord-Locale': 'en-US',
@@ -45,7 +123,7 @@ function userHeaders(token) {
     'Sec-Fetch-Dest': 'empty',
     'Sec-Fetch-Mode': 'cors',
     'Sec-Fetch-Site': 'same-origin',
-    'sec-ch-ua': `"Chromium";v="138", "Not)A;Brand";v="8"`,
+    'sec-ch-ua': `"Chromium";v="${chromeMajor}", "Not)A;Brand";v="8"`,
     'sec-ch-ua-mobile': '?0',
     'sec-ch-ua-platform': '"Windows"',
   };
