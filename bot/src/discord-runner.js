@@ -1,6 +1,5 @@
 import 'dotenv/config';
 import { EmbedBuilder } from 'discord.js';
-import { insertRunnerLog } from './db.js';
 
 const DISCORD_API         = 'https://discord.com/api/v9';
 const CLIENT_VERSION      = '1.0.9243';
@@ -229,23 +228,13 @@ export async function startRunner({
             render();
           };
 
-          const questStartedAt = new Date().toISOString();
           const runner = isStream ? runStreamQuest : runVideoQuest;
-          let questError = null;
 
           await runner(userToken, quest, signal, onProgress, speedMultiplier, heartbeatInterval).catch((e) => {
-            if (e.message !== 'aborted') {
-              questError = e.message;
-              render(`⚠️ **${quest.name}** error: ${e.message}`);
-            }
+            if (e.message !== 'aborted') render(`⚠️ **${quest.name}** error: ${e.message}`);
           });
 
-          if (signal.aborted) {
-            insertRunnerLog({ discord_user_id: userId, discord_username: discordUsername, guild_id: guildId, guild_name: guildName, quest_id: quest.id, quest_name: quest.name, quest_type: quest.taskType, status: 'aborted', started_at: questStartedAt });
-            break;
-          }
-
-          insertRunnerLog({ discord_user_id: userId, discord_username: discordUsername, guild_id: guildId, guild_name: guildName, quest_id: quest.id, quest_name: quest.name, quest_type: quest.taskType, status: questError ? 'failed' : 'completed', error_msg: questError, started_at: questStartedAt });
+          if (signal.aborted) break;
 
           if (!signal.aborted) await render(`✅ **${quest.name}** เสร็จแล้ว!`);
         }
