@@ -1,0 +1,44 @@
+2026-07-02T05:19:48.058873415Z ==> Downloading cache...
+2026-07-02T05:19:48.102862709Z ==> Cloning from https://github.com/aphichat1835-coder/neverdie-quest-helper
+2026-07-02T05:19:49.065754427Z ==> Checking out commit c16bcc5e431ca3381fbcb14bd672cf65355681cf in branch main
+2026-07-02T05:19:50.41582792Z ==> Downloaded 27MB in 0s. Extraction took 1s.
+2026-07-02T05:20:20.372382661Z ==> Requesting Node.js version 20
+2026-07-02T05:20:20.533683358Z ==> Using Node.js version 20.20.2 via /opt/render/project/src/bot/.node-version
+2026-07-02T05:20:20.533699048Z ==> Docs on specifying a Node.js version: https://render.com/docs/node-version
+2026-07-02T05:20:20.53378473Z ==> Installing Node.js version 20.20.2...
+2026-07-02T05:20:21.863238625Z ==> Running build command 'npm install'...
+2026-07-02T05:20:23.768164019Z 
+2026-07-02T05:20:23.768194429Z up to date, audited 66 packages in 2s
+2026-07-02T05:20:23.768276961Z 
+2026-07-02T05:20:23.768285471Z 17 packages are looking for funding
+2026-07-02T05:20:23.768290281Z   run `npm fund` for details
+2026-07-02T05:20:23.823307949Z 
+2026-07-02T05:20:23.865882324Z 4 vulnerabilities (3 moderate, 1 high)
+2026-07-02T05:20:23.865898354Z 
+2026-07-02T05:20:23.865904094Z To address all issues (including breaking changes), run:
+2026-07-02T05:20:23.865908834Z   npm audit fix --force
+2026-07-02T05:20:23.865912454Z 
+2026-07-02T05:20:23.865916804Z Run `npm audit` for details.
+2026-07-02T05:20:27.505083285Z ==> Uploading build...
+2026-07-02T05:20:31.528495531Z ==> Uploaded in 2.4s. Compression took 1.6s
+2026-07-02T05:20:31.549801994Z ==> Build successful 🎉
+2026-07-02T05:20:37.086704428Z ==> Deploying...
+2026-07-02T05:20:37.153714408Z ==> Setting WEB_CONCURRENCY=1 by default, based on available CPUs in the instance
+2026-07-02T05:20:44.929742709Z ==> Running 'npm start'
+2026-07-02T05:20:46.354994079Z 
+2026-07-02T05:20:46.355045162Z > neverdie-quest-bot@1.0.0 start
+2026-07-02T05:20:46.355053773Z > node src/index.js
+2026-07-02T05:20:46.355056803Z 
+2026-07-02T05:20:51.346121087Z 🌐 Dashboard พร้อมใช้งาน → port 10000
+2026-07-02T05:20:52.031606553Z ⚠️  CLIENT_VERSION fetch failed — version not found — body: {"message": "404: Not Found", "code": 0} — ใช้ fallback 1.0.9267
+2026-07-02T05:20:52.031653966Z 🔄 Build info — Client: 1.0.9267 | Build: 572743 ✨ | Chrome: 150.0.7871.46 | Electron: 43.0.0 ✨
+2026-07-02T05:20:53.250048375Z ✅ บอทพร้อมแล้ว — logged in as Questauto#5367
+2026-07-02T05:20:53.250081247Z ⏰ Worker เริ่มแล้ว — เช็ก deadline ทุก 1 ชั่วโมง
+2026-07-02T05:20:53.433663696Z 📅 Daily summary จะส่งในอีก 19h 39m
+2026-07-02T05:20:58.074477248Z ==> Your service is live 🎉
+2026-07-02T05:20:58.231598369Z ==> 
+2026-07-02T05:20:58.237686378Z ==> ///////////////////////////////////////////////////////////
+2026-07-02T05:20:58.242116269Z ==> 
+2026-07-02T05:20:58.24704895Z ==> Available at your primary URL https://neverdie-quest.onrender.com
+2026-07-02T05:20:58.251673363Z ==> 
+2026-07-02T05:20:58.261425108Z ==> ///////////////////////////////////////////////////////////
