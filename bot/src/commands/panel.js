@@ -47,12 +47,7 @@ export async function sendPanel(interaction, isUpdate = false) {
   const embed = new EmbedBuilder()
     .setTitle('🔥 AUTO QUEST SYSTEM')
     .setColor(0xff3333)
-    .setDescription(
-      '```\nPREMIUM PANEL ENABLED\n```' +
-      '⚡ ระบบทำเควสออโต้เวอร์ชั่นเทพ\n' +
-      '🎯 รองรับหลาย TOKEN พร้อมกัน\n' +
-      '🚀 กดปุ่มด้านล่างเพื่อเริ่มทันที'
-    )
+    .setDescription('```\nPREMIUM PANEL ENABLED\n```')
     .setFooter({ text: `POWERED BY NEVERDIE AUTO QUEST™ · Runner: ${activeJobs} token` })
     .setTimestamp();
 
