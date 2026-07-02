@@ -46,7 +46,13 @@ export async function fetchMe(token) {
 }
 
 export async function fetchQuests(token) {
-  const raw = await discordFetch(token, '/users/@me/quests');
+  let raw;
+  try {
+    raw = await discordFetch(token, '/users/@me/quests');
+  } catch (err) {
+    if (err.message.includes('404')) return [];
+    throw err;
+  }
   if (!Array.isArray(raw)) return [];
   return raw.map(normalizeQuest);
 }
@@ -164,7 +170,7 @@ export async function startRunner({ jobKey, ownerId, userToken, channelId, clien
         const active    = allQuests.filter((q) => !q.completed);
 
         if (active.length === 0) {
-          addLog(`🏆 ${username}: ALL QUESTS DONE!`);
+          addLog(`📭 ${username}: ไม่มี Quest ให้ทำในตอนนี้`);
           await render();
           break;
         }
