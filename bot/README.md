@@ -28,6 +28,7 @@ npm start          # เริ่มใช้งาน
 | `LOG_CHANNEL_ID` | ห้องรับการแจ้งเตือน | ➖ |
 | `MANAGER_ROLE_ID` | Role สำหรับผู้จัดการ | ➖ |
 | `DATABASE_PATH` | ที่อยู่ไฟล์ DB (ค่าเริ่มต้น: `./data/quests.db`) | ➖ |
+| `GITHUB_TOKEN` | Fine-grained GitHub token สำหรับเพิ่ม API rate limit (Public repositories: read-only) | ➖ |
 
 ---
 
@@ -75,6 +76,9 @@ Bot จะดึงค่าล่าสุดจากอินเทอร์�
 | `CHROME_VERSION` | Electron GitHub Releases | ทุก 2–3 เดือน |
 | `ELECTRON_VERSION` | Electron GitHub Releases | ทุก 2–3 เดือน |
 | `sec-ch-ua` header | Generate จาก Chrome version | อัตโนมัติตาม Chrome |
+
+แนะนำให้ตั้ง `GITHUB_TOKEN` ใน Render Environment เพื่อป้องกัน rate limit จาก IP ที่ใช้งานร่วมกัน
+โดยใช้ Fine-grained token สิทธิ์ `Public repositories: read-only` และห้ามบันทึก token ลง Git
 
 **ถ้า fetch ไม่ได้** (GitHub ล่ม / rate limit) → ใช้ค่า hardcode เป็น fallback โดยอัตโนมัติ — Bot ไม่ crash
 

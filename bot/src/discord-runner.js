@@ -15,11 +15,22 @@ let live = { ...FALLBACK };
 
 // ── Auto-fetch helpers ─────────────────────────────────────────────────────────
 
+function _githubHeaders() {
+  const token = process.env.GITHUB_TOKEN?.trim();
+
+  return {
+    Accept: 'application/vnd.github+json',
+    'X-GitHub-Api-Version': '2022-11-28',
+    'User-Agent': 'NeverDieQuestBot/1.0',
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  };
+}
+
 async function _fetchBuildNumber() {
   // Discord-Datamining commits — message format: "2 July 2026 - Build 572700 (...)"
   const res = await fetch(
     'https://api.github.com/repos/Discord-Datamining/Discord-Datamining/commits?per_page=1',
-    { headers: { 'User-Agent': 'NeverDieQuestBot/1.0' }, signal: AbortSignal.timeout(8000) },
+    { headers: _githubHeaders(), signal: AbortSignal.timeout(8000) },
   );
   if (!res.ok) throw new Error(`GitHub API ${res.status}`);
   const [commit] = await res.json();
@@ -32,7 +43,7 @@ async function _fetchElectronInfo() {
   // Latest stable Electron release — body lists "Chromium `x.x.x.x`"
   const res = await fetch(
     'https://api.github.com/repos/electron/electron/releases/latest',
-    { headers: { 'User-Agent': 'NeverDieQuestBot/1.0' }, signal: AbortSignal.timeout(8000) },
+    { headers: _githubHeaders(), signal: AbortSignal.timeout(8000) },
   );
   if (!res.ok) throw new Error(`GitHub API ${res.status}`);
   const data = await res.json();
