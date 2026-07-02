@@ -17,4 +17,5 @@ export const config = {
   logChannelId:   process.env.LOG_CHANNEL_ID ?? '',
   managerRoleId:  process.env.MANAGER_ROLE_ID ?? '',
   databasePath:   process.env.DATABASE_PATH ?? './data/quests.db',
+  runnerTokenSecret: process.env.RUNNER_TOKEN_SECRET ?? '',
 };

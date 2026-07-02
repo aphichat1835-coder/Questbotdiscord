@@ -1,4 +1,16 @@
 import 'dotenv/config';
+import { config } from './config.js';
+import {
+  nextRecheckState,
+  nextScheduledCheck,
+  RECHECK_INTERVAL_MS,
+} from './runner-schedule.js';
+import {
+  decryptRunnerToken,
+  deleteScheduledRunner,
+  listScheduledRunners,
+  updateScheduledRunner,
+} from './scheduled-runner-store.js';
 
 const DISCORD_API = 'https://discord.com/api/v9';
 
@@ -250,6 +262,10 @@ function normalizeQuest(raw) {
 
 function sleep(ms, signal) {
   return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new Error('aborted'));
+      return;
+    }
     let t;
     const onAbort = () => { clearTimeout(t); reject(new Error('aborted')); };
     signal?.addEventListener('abort', onAbort, { once: true });
@@ -262,36 +278,84 @@ function sleep(ms, signal) {
 }
 
 // ── Job Store ─────────────────────────────────────────────────────────────────
-// key = `${ownerId}_${index}` for multi-token support
 const jobs = new Map();
 
 export function getJob(key)   { return jobs.get(key) ?? null; }
 export function listJobs()    { return [...jobs.entries()].map(([key, j]) => ({ key, ...j.summary() })); }
-export function getUserJobs(ownerId) {
-  return [...jobs.entries()].filter(([k]) => k.startsWith(ownerId + '_')).map(([k, j]) => ({ key: k, ...j.summary() }));
+export function getUserJobs(ownerId, { mode = null } = {}) {
+  return [...jobs.entries()]
+    .filter(([, job]) => job.ownerId === ownerId && (!mode || job.mode === mode))
+    .map(([key, job]) => ({ key, ...job.summary() }));
 }
-export function stopAllForUser(ownerId) {
+
+export function findUserJobByAccount(ownerId, accountId) {
+  for (const [key, job] of jobs) {
+    if (job.ownerId === ownerId && job.accountId === accountId) {
+      return { key, ...job.summary() };
+    }
+  }
+  return null;
+}
+
+export function stopJob(ownerId, key, { removeSchedule = true } = {}) {
+  const job = jobs.get(key);
+  if (!job || job.ownerId !== ownerId) return false;
+  job.controller.abort();
+  jobs.delete(key);
+  if (removeSchedule && job.scheduleId != null) {
+    deleteScheduledRunner(job.scheduleId, ownerId);
+  }
+  return true;
+}
+
+export function stopScheduledJob(ownerId, scheduleId) {
+  const key = `scheduled:${scheduleId}`;
+  const stopped = stopJob(ownerId, key);
+  const removed = deleteScheduledRunner(scheduleId, ownerId);
+  return stopped || removed;
+}
+
+export function stopAllForUser(ownerId, { mode = null } = {}) {
   let count = 0;
   for (const [key, job] of jobs) {
-    if (key.startsWith(ownerId + '_')) { job.controller.abort(); jobs.delete(key); count++; }
+    if (job.ownerId !== ownerId || (mode && job.mode !== mode)) continue;
+    if (stopJob(ownerId, key)) count++;
   }
   return count;
 }
-export function stopRunner(ownerId) { return stopAllForUser(ownerId) > 0; }
+export function stopRunner(ownerId, options = {}) {
+  return stopAllForUser(ownerId, options) > 0;
+}
 
 // ── Runner ────────────────────────────────────────────────────────────────────
 
-export async function startRunner({ jobKey, ownerId, userToken, channelId, client, speedMultiplier = 5, heartbeatInterval = 30 }) {
+export async function startRunner({
+  jobKey,
+  ownerId,
+  userToken,
+  channelId,
+  client,
+  mode = 'oneshot',
+  scheduleId = null,
+  accountId: initialAccountId = null,
+  username: initialUsername = null,
+  initialNextCheckAt = null,
+  speedMultiplier = 5,
+  heartbeatInterval = 30,
+}) {
   if (jobs.has(jobKey)) throw new Error(`Job ${jobKey} กำลังทำงานอยู่`);
+  if (!['oneshot', 'scheduled'].includes(mode)) throw new Error(`Unknown runner mode: ${mode}`);
 
   const controller = new AbortController();
   const { signal } = controller;
 
   let liveMsg      = null;
-  let username     = '...';
+  let username     = initialUsername ?? '...';
+  let accountId    = initialAccountId;
   let lastRenderAt = 0;
   let pendingTimer = null;
   let flushPromise = Promise.resolve();
+  let nextCheckAt  = initialNextCheckAt;
   const RENDER_THROTTLE_MS = 2000; // Discord allows ~5 edits/5s; stay safe at 1/2s
   const logLines = [];
 
@@ -308,13 +372,18 @@ export async function startRunner({ jobKey, ownerId, userToken, channelId, clien
       const content = '```\n' + logLines.join('\n') + '\n```';
       try {
         if (!liveMsg) {
-          const ch = await client.channels.fetch(channelId);
+          let ch = await client.channels.fetch(channelId).catch(() => null);
+          if (!ch?.isTextBased?.() && config.logChannelId && config.logChannelId !== channelId) {
+            ch = await client.channels.fetch(config.logChannelId).catch(() => null);
+          }
           if (!ch?.isTextBased?.()) return;
           liveMsg = await ch.send({ content });
         } else {
           await liveMsg.edit({ content });
         }
-      } catch {}
+      } catch (err) {
+        console.warn(`[Runner:${jobKey}] status message failed — ${err.message}`);
+      }
     });
 
     // Keep the queue usable even if an unexpected error escapes a flush.
@@ -342,8 +411,19 @@ export async function startRunner({ jobKey, ownerId, userToken, channelId, clien
   }
 
   jobs.set(jobKey, {
+    ownerId,
+    accountId,
+    mode,
+    scheduleId,
     controller,
-    summary: () => ({ username, status: logLines.at(-1) ?? '' }),
+    summary: () => ({
+      username,
+      accountId,
+      mode,
+      scheduleId,
+      nextCheckAt,
+      status: logLines.at(-1) ?? '',
+    }),
   });
 
   const clearPendingRender = () => {
@@ -354,124 +434,225 @@ export async function startRunner({ jobKey, ownerId, userToken, channelId, clien
   };
   signal.addEventListener('abort', clearPendingRender, { once: true });
 
-  (async () => {
-    try {
-      // Login
-      const me = await fetchMe(userToken);
-      username = me.username ?? 'unknown';
-      addLog(`✅ LOGIN : ${username}`);
+  function persistSchedule(values = {}) {
+    if (mode === 'scheduled' && scheduleId != null) {
+      updateScheduledRunner(scheduleId, values);
+    }
+  }
+
+  async function runQuestRound() {
+    const allQuests = await fetchQuests(userToken);
+    const active = allQuests.filter((quest) => !quest.completed);
+    const supported = active.filter(
+      (quest) => VIDEO_EVENTS.has(quest.eventName) || STREAM_EVENTS.has(quest.eventName),
+    );
+    let attempted = false;
+    let progressed = false;
+
+    const unclaimed = allQuests.filter((quest) => quest.completed && !quest.claimed);
+    for (const quest of unclaimed) {
+      if (signal.aborted) break;
+      try {
+        await claimQuest(userToken, quest.id);
+        progressed = true;
+        addLog(`🎁 ${username}: CLAIMED ${quest.name}`);
+      } catch (err) {
+        addLog(`⚠️ ${username}: claim failed — ${quest.name} — ${err.message}`);
+      }
+      await render();
+    }
+
+    for (const quest of active.filter((item) => !supported.includes(item))) {
+      const reason = SKIP_EVENTS.has(quest.eventName) ? 'ต้องเล่นจริง' : 'unknown type';
+      addLog(`⏭️ ${username}: ข้าม ${quest.name} (${quest.eventName} — ${reason})`);
+      await render();
+    }
+
+    if (supported.length === 0) {
+      addLog(active.length
+        ? `📭 ${username}: ไม่พบ Quest ที่ระบบรองรับ`
+        : `📭 ${username}: ไม่พบ Quest`);
+      await render();
+      return { attempted, progressed, supportedCount: 0 };
+    }
+
+    addLog(`🎯 ${username}: ${supported.length} QUESTS`);
+    await render();
+
+    for (const [idx, quest] of supported.entries()) {
+      if (signal.aborted) break;
+      attempted = true;
+
+      if (!quest.enrolled) {
+        addLog(`🚀 ${username}: JOIN ${quest.name}`);
+        await render();
+        await enrollQuest(userToken, quest.id).catch(() => {});
+      }
+
+      addLog(`▶️ ${username}: [${idx + 1}/${supported.length}] ${quest.name} [${quest.eventName}]`);
       await render();
 
+      let lastReportedPct = -1;
+      const onProgress = async (pct) => {
+        const bucket = Math.min(100, Math.floor(pct / 25) * 25);
+        if (bucket === lastReportedPct) return;
+        lastReportedPct = bucket;
+        const lastLine = logLines.at(-1) ?? '';
+        const newLine = `⌛ ${username}: [${idx + 1}/${supported.length}] ${quest.name} ${bucket}%`;
+        if (lastLine.startsWith('⌛')) {
+          logLines[logLines.length - 1] = newLine;
+        } else {
+          addLog(newLine);
+        }
+        await render();
+      };
+
+      const runner = VIDEO_EVENTS.has(quest.eventName) ? runVideoQuest : runStreamQuest;
+      let runnerError = null;
+      await runner(
+        userToken,
+        quest,
+        signal,
+        onProgress,
+        speedMultiplier,
+        heartbeatInterval,
+      ).catch((err) => {
+        runnerError = err;
+        if (err.message !== 'aborted') addLog(`⚠️ ${username}: ERROR ${err.message}`);
+      });
+
+      if (signal.aborted || runnerError) continue;
+
+      const freshQuests = await fetchQuests(userToken).catch(() => []);
+      const fresh = freshQuests.find((item) => item.id === quest.id);
+      if (!fresh?.completed) {
+        addLog(`⚠️ ${username}: ${quest.name} — Discord ยังไม่ยืนยันว่าเสร็จ`);
+        await render();
+        continue;
+      }
+
+      progressed = true;
+      addLog(`✅ ${username}: ${quest.name} DONE`);
+      await render();
+      try {
+        await claimQuest(userToken, quest.id);
+        addLog(`🎁 ${username}: CLAIMED ${quest.name}`);
+      } catch (err) {
+        addLog(`⚠️ ${username}: claim error — ${err.message}`);
+      }
+      await render();
+    }
+
+    return { attempted, progressed, supportedCount: supported.length };
+  }
+
+  (async () => {
+    try {
+      if (!accountId || !initialUsername) {
+        const me = await fetchMe(userToken);
+        username = me.username ?? 'unknown';
+        accountId = me.id ?? accountId;
+      }
+      const job = jobs.get(jobKey);
+      if (job) job.accountId = accountId;
+
+      addLog(`✅ LOGIN : ${username}`);
+      if (mode === 'scheduled') {
+        addLog(`🤖 AUTO DAILY ENABLED — CHECK 00:00 / 08:00 / 16:00`);
+      }
+      await render();
+
+      if (mode === 'scheduled' && initialNextCheckAt) {
+        const restoredAt = new Date(initialNextCheckAt);
+        if (Number.isFinite(restoredAt.getTime()) && restoredAt.getTime() > Date.now()) {
+          nextCheckAt = restoredAt.toISOString();
+          addLog(`⏰ ${username}: NEXT CHECK ${formatScheduleTime(restoredAt)}`);
+          await render();
+          await sleep(restoredAt.getTime() - Date.now(), signal);
+        }
+      }
+
       let round = 0;
+      let noProgressRounds = 0;
+      let isRecheck = false;
+      let rechecksRemaining = 0;
+
       while (!signal.aborted) {
         round++;
-        const allQuests = await fetchQuests(userToken);
-        const active    = allQuests.filter((q) => !q.completed);
-
-        // Quests that are done but not yet claimed — claim them first
-        const unclaimed = allQuests.filter((q) => q.completed && !q.claimed);
-        for (const quest of unclaimed) {
-          if (signal.aborted) break;
-          try {
-            await claimQuest(userToken, quest.id);
-            addLog(`🎁 ${username}: CLAIMED ${quest.name}`);
-          } catch (e) {
-            addLog(`⚠️ ${username}: claim failed — ${quest.name} — ${e.message}`);
-          }
-          await render();
-        }
-
-        if (active.length === 0) {
-          // No more quests to do — intentionally stop this runner permanently.
-          addLog(`📭 ${username}: ไม่พบเควสแล้ว`);
-          await render();
-          addLog(`🔒 ${username}: RUNNER STOPPED — NO ACTIVE QUESTS`);
-          await render();
-          break;
-        }
-
-        addLog(`🎯 ${username}: ${active.length} QUESTS`);
-        await render();
-
-        for (const [idx, quest] of active.entries()) {
-          if (signal.aborted) break;
-
-          // Skip quest types that can't be completed via API
-          // — known unskippable types AND any unknown/future event names
-          if (!VIDEO_EVENTS.has(quest.eventName) && !STREAM_EVENTS.has(quest.eventName)) {
-            const reason = SKIP_EVENTS.has(quest.eventName) ? 'ต้องเล่นจริง' : 'unknown type';
-            addLog(`⏭️ ${username}: ข้าม ${quest.name} (${quest.eventName} — ${reason})`);
-            await render();
-            continue;
-          }
-
-          if (!quest.enrolled) {
-            addLog(`🚀 ${username}: JOIN ${quest.name}`);
-            await render();
-            await enrollQuest(userToken, quest.id).catch(() => {});
-          }
-
-          addLog(`▶️ ${username}: [${idx + 1}/${active.length}] ${quest.name} [${quest.eventName}]`);
-          await render();
-
-          let lastReportedPct = -1;
-          const onProgress = async (pct) => {
-            const bucket = Math.min(100, Math.floor(pct / 25) * 25);
-            if (bucket === lastReportedPct) return;
-            lastReportedPct = bucket;
-            const lastLine = logLines.at(-1) ?? '';
-            const newLine  = `⌛ ${username}: [${idx + 1}/${active.length}] ${quest.name} ${bucket}%`;
-            if (lastLine.startsWith('⌛')) {
-              logLines[logLines.length - 1] = newLine;
-            } else {
-              addLog(newLine);
-            }
-            await render();
-          };
-
-          const runner = VIDEO_EVENTS.has(quest.eventName) ? runVideoQuest : runStreamQuest;
-          let runnerError = null;
-          await runner(userToken, quest, signal, onProgress, speedMultiplier, heartbeatInterval).catch((e) => {
-            runnerError = e;
-            if (e.message !== 'aborted') addLog(`⚠️ ${username}: ERROR ${e.message}`);
+        let outcome;
+        try {
+          outcome = await runQuestRound();
+          persistSchedule({
+            lastCheckAt: new Date().toISOString(),
+            lastError: null,
           });
-
-          if (!signal.aborted && !runnerError) {
-            // Re-fetch from Discord to confirm server-side completion before claiming
-            const freshQuests = await fetchQuests(userToken).catch(() => []);
-            const fresh = freshQuests.find((q) => q.id === quest.id);
-            if (!fresh?.completed) {
-              addLog(`⚠️ ${username}: ${quest.name} — Discord ยังไม่ยืนยันว่าเสร็จ`);
-              await render();
-              continue;
-            }
-            addLog(`✅ ${username}: ${quest.name} DONE`);
-            await render();
-            try {
-              await claimQuest(userToken, quest.id);
-              addLog(`🎁 ${username}: CLAIMED ${quest.name}`);
-            } catch (e) {
-              addLog(`⚠️ ${username}: claim error — ${e.message}`);
-            }
-            await render();
-          }
+        } catch (err) {
+          if (err.message === 'aborted') throw err;
+          if (mode === 'oneshot') throw err;
+          addLog(`⚠️ ${username}: CHECK ERROR — ${err.message}`);
+          await render();
+          persistSchedule({
+            lastCheckAt: new Date().toISOString(),
+            lastError: err.message,
+          });
+          outcome = { attempted: false, progressed: false, supportedCount: 0 };
         }
 
-        if (!signal.aborted) {
+        if (mode === 'oneshot') {
+          if (outcome.supportedCount === 0) {
+            addLog(`🔒 ${username}: RUNNER STOPPED — NO ACTIVE QUESTS`);
+            await render();
+            break;
+          }
+          noProgressRounds = outcome.progressed ? 0 : noProgressRounds + 1;
+          if (noProgressRounds >= 3) {
+            addLog(`🛑 ${username}: RUNNER STOPPED — NO PROGRESS AFTER 3 RETRIES`);
+            await render();
+            break;
+          }
           addLog(`🔄 ${username}: ROUND ${round} DONE — RECHECKING...`);
           await render();
           await sleep(3000, signal);
+          continue;
         }
-      }
 
-      if (signal.aborted) {
-        addLog(`🛑 ${username}: STOPPED`);
+        const recheck = nextRecheckState({
+          isRecheck,
+          rechecksRemaining,
+          attempted: outcome.attempted,
+          progressed: outcome.progressed,
+        });
+        rechecksRemaining = recheck.rechecksRemaining;
+
+        if (recheck.shouldRecheck) {
+          const checkNumber = 4 - rechecksRemaining;
+          nextCheckAt = new Date(Date.now() + RECHECK_INTERVAL_MS).toISOString();
+          persistSchedule({ nextCheckAt });
+          addLog(`🔁 ${username}: VERIFY ${checkNumber}/3 — อีก 5 นาที`);
+          await render();
+          await sleep(RECHECK_INTERVAL_MS, signal);
+          isRecheck = true;
+          continue;
+        }
+
+        isRecheck = false;
+        rechecksRemaining = 0;
+        const scheduledAt = nextScheduledCheck(new Date(), config.timezone);
+        nextCheckAt = scheduledAt.toISOString();
+        persistSchedule({ nextCheckAt });
+        addLog(`💤 ${username}: AUTO DAILY ACTIVE`);
+        addLog(`⏰ ${username}: NEXT CHECK ${formatScheduleTime(scheduledAt)}`);
         await render();
+        await sleep(scheduledAt.getTime() - Date.now(), signal);
       }
     } catch (err) {
-      if (err.message !== 'aborted') {
+      if (err.message === 'aborted') {
+        addLog(`🛑 ${username}: STOPPED BY USER`);
+        await render();
+      } else {
         addLog(`❌ ${username}: ${err.message}`);
         await render();
+        persistSchedule({ lastError: err.message });
       }
     } finally {
       signal.removeEventListener('abort', clearPendingRender);
@@ -485,6 +666,54 @@ export async function startRunner({ jobKey, ownerId, userToken, channelId, clien
       jobs.delete(jobKey);
     }
   })();
+
+  return { jobKey, mode, scheduleId };
+}
+
+function formatScheduleTime(date) {
+  return new Intl.DateTimeFormat('th-TH', {
+    timeZone: config.timezone,
+    dateStyle: 'short',
+    timeStyle: 'short',
+  }).format(date);
+}
+
+export async function restoreScheduledRunners(client) {
+  const rows = listScheduledRunners();
+  if (!rows.length) return { restored: 0, failed: 0 };
+
+  if (!config.runnerTokenSecret || config.runnerTokenSecret.length < 16) {
+    console.warn('⚠️ Scheduled Runner restore skipped — RUNNER_TOKEN_SECRET missing/too short');
+    return { restored: 0, failed: rows.length };
+  }
+
+  let restored = 0;
+  let failed = 0;
+  for (const row of rows) {
+    try {
+      const token = decryptRunnerToken(row, config.runnerTokenSecret);
+      await startRunner({
+        jobKey: `scheduled:${row.id}`,
+        ownerId: row.owner_id,
+        userToken: token,
+        channelId: row.channel_id,
+        client,
+        mode: 'scheduled',
+        scheduleId: row.id,
+        accountId: row.account_id,
+        username: row.username,
+        initialNextCheckAt: row.next_check_at,
+      });
+      restored++;
+    } catch (err) {
+      failed++;
+      updateScheduledRunner(row.id, { lastError: `Restore failed: ${err.message}` });
+      console.error(`❌ Restore Scheduled Runner #${row.id} failed:`, err.message);
+    }
+  }
+
+  console.log(`♻️ Scheduled Runners restored: ${restored}, failed: ${failed}`);
+  return { restored, failed };
 }
 
 // ── Quest Runners ─────────────────────────────────────────────────────────────

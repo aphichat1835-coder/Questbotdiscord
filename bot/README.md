@@ -29,6 +29,7 @@ npm start          # เริ่มใช้งาน
 | `MANAGER_ROLE_ID` | Role สำหรับผู้จัดการ | ➖ |
 | `DATABASE_PATH` | ที่อยู่ไฟล์ DB (ค่าเริ่มต้น: `./data/quests.db`) | ➖ |
 | `GITHUB_TOKEN` | Fine-grained GitHub token สำหรับเพิ่ม API rate limit (Public repositories: read-only) | ➖ |
+| `RUNNER_TOKEN_SECRET` | Secret อย่างน้อย 16 ตัวอักษร สำหรับเข้ารหัส Token ของ Auto Daily Runner | ✅ สำหรับ `/run` |
 
 ---
 
@@ -41,8 +42,28 @@ npm start          # เริ่มใช้งาน
 
 ### Quest Runner
 - `/panel` — แผงควบคุมหลัก พร้อมปุ่ม Start / Stop / Refresh และจัดการ Quest ครบชุด
-- `/run` — เริ่มต้น Quest Runner
-- `/stop` — หยุด Quest Runner
+- `/run` — เริ่ม Auto Daily Runner และรายงานสถานะในห้องที่ใช้คำสั่ง
+- `/stop` — เปิดแผงส่วนตัวเพื่อเลือกหยุด Auto Daily Runner ทีละหลาย Token หรือทั้งหมด
+
+### โหมด Runner
+
+| ช่องทาง | รูปแบบ | เมื่อไม่พบ Quest |
+|---|---|---|
+| `/panel` → `START NOW` | One-shot | หยุด Runner และทิ้ง Token จากหน่วยความจำ |
+| `/run` | Auto Daily | รอรอบ 00:00, 08:00, 16:00 ตาม `TIMEZONE` จนกว่าจะสั่ง `/stop` |
+
+หลัง Auto Daily ทำ Quest แล้ว ระบบจะตรวจย้ำ 3 ครั้ง ห่างกันครั้งละ 5 นาที
+หากพบ Quest ใหม่ระหว่างตรวจย้ำจะทำทันทีและเริ่มนับการตรวจย้ำใหม่
+
+Token ของ Auto Daily ถูกเข้ารหัสด้วย AES-256-GCM ก่อนเก็บใน SQLite และกู้คืนอัตโนมัติหลัง restart
+ควรตั้ง `DATABASE_PATH` ไปยัง Persistent Disk ของผู้ให้บริการ และห้ามเปลี่ยน
+`RUNNER_TOKEN_SECRET` ขณะที่ยังมี Runner ที่บันทึกอยู่ มิฉะนั้นระบบจะถอดรหัส Token เดิมไม่ได้
+
+สร้าง secret ที่แข็งแรงได้ด้วย:
+
+```bash
+openssl rand -hex 32
+```
 
 ---
 

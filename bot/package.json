@@ -9,7 +9,8 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
-    "register": "node src/register-commands.js"
+    "register": "node src/register-commands.js",
+    "test": "node --test"
   },
   "dependencies": {
     "better-sqlite3": "^9.6.0",

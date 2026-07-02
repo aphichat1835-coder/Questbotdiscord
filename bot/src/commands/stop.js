@@ -1,15 +1,111 @@
-import { SlashCommandBuilder } from 'discord.js';
-import { stopRunner, getUserJobs } from '../discord-runner.js';
+import {
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  EmbedBuilder,
+  SlashCommandBuilder,
+  StringSelectMenuBuilder,
+} from 'discord.js';
+import { config } from '../config.js';
+import { stopScheduledJob } from '../discord-runner.js';
+import { listScheduledRunners } from '../scheduled-runner-store.js';
 
 export const data = new SlashCommandBuilder()
   .setName('stop')
-  .setDescription('หยุด Quest Runner ทั้งหมดของคุณ');
+  .setDescription('เลือกหยุด Auto Daily Runner ของคุณ');
+
+function shortStatus(row) {
+  if (row.last_error) return `มีข้อผิดพลาด: ${row.last_error}`.slice(0, 100);
+  if (row.next_check_at) {
+    const next = new Date(row.next_check_at);
+    if (Number.isFinite(next.getTime())) {
+      return `ตรวจครั้งถัดไป ${next.toLocaleString('th-TH', { timeZone: config.timezone })}`.slice(0, 100);
+    }
+  }
+  return 'ระบบอัตโนมัติรายวันกำลังทำงาน';
+}
+
+function stopPanelPayload(ownerId, notice = null) {
+  const rows = listScheduledRunners(ownerId);
+  const embed = new EmbedBuilder()
+    .setTitle('🛑 AUTO DAILY RUNNER CONTROL')
+    .setColor(rows.length ? 0xed4245 : 0x57f287)
+    .setDescription(
+      notice
+        ? `${notice}\n\n${rows.length ? 'เลือก Token ที่ต้องการหยุดได้หลายรายการ' : 'ไม่มี Auto Daily Runner ที่กำลังทำงาน'}`
+        : rows.length
+          ? 'เลือก Token ที่ต้องการหยุดได้หลายรายการจากเมนูด้านล่าง'
+          : 'ไม่มี Auto Daily Runner ที่กำลังทำงาน',
+    )
+    .setFooter({ text: `Active: ${rows.length} token` })
+    .setTimestamp();
+
+  const components = [];
+  if (rows.length) {
+    const select = new StringSelectMenuBuilder()
+      .setCustomId('runner-stop:select')
+      .setPlaceholder('เลือก Token ที่ต้องการหยุด')
+      .setMinValues(1)
+      .setMaxValues(Math.min(rows.length, 10))
+      .addOptions(rows.slice(0, 10).map((row) => ({
+        label: row.username.slice(0, 100),
+        description: shortStatus(row),
+        value: String(row.id),
+        emoji: '🤖',
+      })));
+    components.push(new ActionRowBuilder().addComponents(select));
+  }
+
+  components.push(new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId('runner-stop:refresh')
+      .setLabel('Refresh')
+      .setEmoji('🔄')
+      .setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder()
+      .setCustomId('runner-stop:all')
+      .setLabel('STOP ALL')
+      .setEmoji('🛑')
+      .setStyle(ButtonStyle.Danger)
+      .setDisabled(rows.length === 0),
+  ));
+
+  return { embeds: [embed], components };
+}
 
 export async function execute(interaction) {
-  await interaction.deferReply({ flags: 64 });
-  const count = getUserJobs(interaction.user.id).length;
-  const stopped = stopRunner(interaction.user.id);
-  await interaction.editReply(
-    stopped ? `🛑 หยุด Runner ทั้งหมด ${count} token แล้ว` : 'ℹ️ ไม่มี Runner ที่กำลังทำงาน'
-  );
+  await interaction.reply({
+    ...stopPanelPayload(interaction.user.id),
+    flags: 64,
+  });
+}
+
+export async function handleSelect(interaction) {
+  const stopped = [];
+  for (const rawId of interaction.values) {
+    const id = Number(rawId);
+    if (!Number.isInteger(id)) continue;
+    const row = listScheduledRunners(interaction.user.id).find((item) => item.id === id);
+    if (row && stopScheduledJob(interaction.user.id, id)) stopped.push(row.username);
+  }
+
+  const notice = stopped.length
+    ? `✅ หยุดแล้ว: **${stopped.join(', ')}**`
+    : 'ℹ️ ไม่พบ Runner ที่เลือก';
+  await interaction.update(stopPanelPayload(interaction.user.id, notice));
+}
+
+export async function handleButton(interaction) {
+  const action = interaction.customId.split(':')[1];
+  if (action === 'refresh') {
+    return interaction.update(stopPanelPayload(interaction.user.id, '🔄 อัปเดตสถานะแล้ว'));
+  }
+
+  if (action === 'all') {
+    const rows = listScheduledRunners(interaction.user.id);
+    for (const row of rows) stopScheduledJob(interaction.user.id, row.id);
+    return interaction.update(
+      stopPanelPayload(interaction.user.id, `✅ หยุด Auto Daily Runner ทั้งหมด **${rows.length}** token แล้ว`),
+    );
+  }
 }

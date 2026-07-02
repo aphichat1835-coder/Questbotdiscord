@@ -42,13 +42,16 @@ export async function sendPanel(interaction, isUpdate = false) {
   let st = { total: 0, done: 0, pending: 0, overdue: 0 };
   try { st = await getStats(); } catch {}
 
-  const activeJobs = getUserJobs(interaction.user.id).length;
+  const oneShotJobs = getUserJobs(interaction.user.id, { mode: 'oneshot' }).length;
+  const scheduledJobs = getUserJobs(interaction.user.id, { mode: 'scheduled' }).length;
 
   const embed = new EmbedBuilder()
     .setTitle('🔥 AUTO QUEST SYSTEM')
     .setColor(0xff3333)
     .setDescription('```\nPREMIUM PANEL ENABLED\n```')
-    .setFooter({ text: `POWERED BY NEVERDIE AUTO QUEST™ · Runner: ${activeJobs} token` })
+    .setFooter({
+      text: `POWERED BY NEVERDIE AUTO QUEST™ · One-shot: ${oneShotJobs} · Auto Daily: ${scheduledJobs}`,
+    })
     .setTimestamp();
 
   const row1 = new ActionRowBuilder().addComponents(
@@ -176,14 +179,19 @@ export async function handleButton(interaction) {
     );
   }
 
-  if (action === 'run') return showRunModal(interaction);
+  if (action === 'run') {
+    if (!isManager(interaction)) {
+      return interaction.reply({ flags: 64, content: '🔒 ต้องการสิทธิ์ **Manager** ขึ้นไป' });
+    }
+    return showRunModal(interaction, 'oneshot');
+  }
 
   if (action === 'stop') {
     await interaction.deferReply({ flags: 64 });
-    const jobs    = getUserJobs(interaction.user.id);
-    const stopped = stopRunner(interaction.user.id);
+    const jobs = getUserJobs(interaction.user.id, { mode: 'oneshot' });
+    const stopped = stopRunner(interaction.user.id, { mode: 'oneshot' });
     return interaction.editReply(
-      stopped ? `🛑 หยุดแล้ว **${jobs.length}** token` : 'ℹ️ ไม่มี Runner ที่กำลังทำงาน'
+      stopped ? `🛑 หยุด One-shot Runner แล้ว **${jobs.length}** token` : 'ℹ️ ไม่มี One-shot Runner ที่กำลังทำงาน'
     );
   }
 }

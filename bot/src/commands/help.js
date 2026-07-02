@@ -11,13 +11,13 @@ export async function execute(interaction) {
     .addFields(
       {
         name: '🎛️ แผงควบคุม',
-        value: '`/panel` — เปิดแผงควบคุม กด **🚀 START NOW** เพื่อเริ่ม / **🔴 STOP ALL** เพื่อหยุด',
+        value: '`/panel` — เริ่ม One-shot Runner; เมื่อทำครบหรือไม่พบ Quest ระบบจะหยุดเอง',
       },
       {
-        name: '🤖 Auto Quest Runner',
+        name: '🤖 Auto Daily Runner',
         value: [
-          '`/run` — กรอก token แล้วระบบทำ Discord Quest อัตโนมัติ',
-          '`/stop` — หยุด Runner ทั้งหมดของตัวเอง',
+          '`/run` — เริ่มระบบตรวจอัตโนมัติเวลา 00:00 / 08:00 / 16:00 น.',
+          '`/stop` — เปิดแผงส่วนตัว เลือกหยุดหนึ่ง หลาย Token หรือทั้งหมด',
         ].join('\n'),
       },
       {

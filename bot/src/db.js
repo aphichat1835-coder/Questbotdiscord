@@ -44,9 +44,29 @@ db.exec(`
     created_at  TEXT    NOT NULL DEFAULT (datetime('now'))
   );
 
+  CREATE TABLE IF NOT EXISTS scheduled_runners (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    owner_id          TEXT NOT NULL,
+    guild_id          TEXT,
+    channel_id        TEXT NOT NULL,
+    account_id        TEXT NOT NULL,
+    username          TEXT NOT NULL,
+    token_ciphertext  TEXT NOT NULL,
+    token_iv          TEXT NOT NULL,
+    token_tag         TEXT NOT NULL,
+    token_salt        TEXT NOT NULL,
+    next_check_at     TEXT,
+    last_check_at     TEXT,
+    last_error        TEXT,
+    created_at        TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at        TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(owner_id, account_id)
+  );
+
   CREATE INDEX IF NOT EXISTS idx_quests_guild    ON quests(guild_id);
   CREATE INDEX IF NOT EXISTS idx_quests_done     ON quests(done);
   CREATE INDEX IF NOT EXISTS idx_quest_logs_guild ON quest_logs(guild_id, created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_scheduled_runners_owner ON scheduled_runners(owner_id);
 
 `);
 

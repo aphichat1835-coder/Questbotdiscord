@@ -2,7 +2,7 @@ import { Client, GatewayIntentBits, Collection } from 'discord.js';
 import { config } from './config.js';
 import { startWorker } from './worker.js';
 import { startDashboard } from './dashboard.js';
-import { refreshBuildInfo } from './discord-runner.js';
+import { refreshBuildInfo, restoreScheduledRunners } from './discord-runner.js';
 import './db.js';
 
 import * as ping        from './commands/ping.js';
@@ -29,10 +29,11 @@ startDashboard(null);
 await refreshBuildInfo();
 setInterval(refreshBuildInfo, 6 * 60 * 60 * 1000);
 
-client.once('clientReady', () => {
+client.once('clientReady', async () => {
   console.log(`✅ บอทพร้อมแล้ว — logged in as ${client.user.tag}`);
   startDashboard(client);
   startWorker(client);
+  await restoreScheduledRunners(client);
 });
 
 client.on('interactionCreate', async (interaction) => {
@@ -47,6 +48,12 @@ client.on('interactionCreate', async (interaction) => {
 
     if (interaction.isButton()) {
       if (interaction.customId.startsWith('panel:')) return panel.handleButton(interaction);
+      if (interaction.customId.startsWith('runner-stop:')) return stop.handleButton(interaction);
+      return;
+    }
+
+    if (interaction.isStringSelectMenu()) {
+      if (interaction.customId === 'runner-stop:select') return stop.handleSelect(interaction);
       return;
     }
 
