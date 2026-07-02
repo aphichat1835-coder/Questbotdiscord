@@ -4,6 +4,7 @@ import {
   ModalBuilder, TextInputBuilder, TextInputStyle,
 } from 'discord.js';
 import { getAllQuests, getStats, addQuest, editQuest, markDone, removeQuest } from '../storage.js';
+import { stopRunner, getJob } from '../discord-runner.js';
 import { isAdmin, isManager } from '../permissions.js';
 
 export const data = new SlashCommandBuilder()
@@ -62,6 +63,8 @@ export async function sendPanel(interaction, isUpdate = false) {
 
   const row2 = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId('panel:status').setLabel('📊 สถิติ').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId('panel:run').setLabel('▶️ Start Runner').setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId('panel:stop').setLabel('🛑 Stop Runner').setStyle(ButtonStyle.Danger),
     new ButtonBuilder().setCustomId('panel:refresh').setLabel('🔄 Refresh').setStyle(ButtonStyle.Secondary),
   );
 
@@ -183,6 +186,26 @@ export async function handleButton(interaction) {
           ),
         )
     );
+  }
+
+  if (action === 'run') {
+    if (getJob(interaction.user.id)) {
+      return interaction.reply({ content: '⚠️ คุณมี Runner ที่กำลังทำงานอยู่แล้ว ใช้ 🛑 Stop Runner ก่อน', ephemeral: true });
+    }
+    return interaction.showModal(
+      new ModalBuilder().setCustomId(`run_modal:${interaction.channelId}`).setTitle('▶️ Start Quest Runner')
+        .addComponents(
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder().setCustomId('user_token').setLabel('Discord User Token').setStyle(TextInputStyle.Paragraph).setRequired(true).setMinLength(50).setPlaceholder('วาง token ของคุณที่นี่')
+          ),
+        )
+    );
+  }
+
+  if (action === 'stop') {
+    await interaction.deferReply({ ephemeral: true });
+    const stopped = stopRunner(interaction.user.id);
+    return interaction.editReply(stopped ? '🛑 หยุด Runner แล้ว' : 'ℹ️ ไม่มี Runner ที่กำลังทำงาน');
   }
 }
 

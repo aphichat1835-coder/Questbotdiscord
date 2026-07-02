@@ -11,7 +11,14 @@ export async function execute(interaction) {
     .addFields(
       {
         name: '🎛️ แผงควบคุม',
-        value: '`/panel` — เปิดแผงควบคุมพร้อมปุ่ม: เพิ่ม, แก้ไข, ลบ, Done, สถิติ',
+        value: '`/panel` — เปิดแผงควบคุมพร้อมปุ่ม: เพิ่ม, แก้ไข, ลบ, Done, สถิติ, **▶️ Start / 🛑 Stop Runner**',
+      },
+      {
+        name: '🤖 Quest Runner (อัตโนมัติ)',
+        value: [
+          '`/run` — กรอก token แล้วระบบเข้าไปทำ Discord Quest อัตโนมัติทุกอัน',
+          '`/stop` — หยุด Runner ที่กำลังทำงาน',
+        ].join('\n'),
       },
       {
         name: '📝 Quest Tracker',
