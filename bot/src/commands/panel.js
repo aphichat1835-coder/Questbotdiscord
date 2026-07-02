@@ -4,8 +4,9 @@ import {
   ModalBuilder, TextInputBuilder, TextInputStyle,
 } from 'discord.js';
 import { getAllQuests, getStats, addQuest, editQuest, markDone, removeQuest } from '../storage.js';
-import { stopRunner, getJob } from '../discord-runner.js';
+import { stopRunner, getUserJobs } from '../discord-runner.js';
 import { isAdmin, isManager } from '../permissions.js';
+import { showRunModal } from './run.js';
 
 export const data = new SlashCommandBuilder()
   .setName('panel')
@@ -41,31 +42,40 @@ export async function sendPanel(interaction, isUpdate = false) {
   let st = { total: 0, done: 0, pending: 0, overdue: 0 };
   try { st = await getStats(); } catch {}
 
+  const activeJobs = getUserJobs(interaction.user.id).length;
+
   const embed = new EmbedBuilder()
-    .setTitle('🎮 NeverDie Quest — แผงควบคุม')
-    .setColor(0x5865f2)
-    .addFields(
-      { name: '📦 ทั้งหมด',      value: `**${st.total}**`,   inline: true },
-      { name: '✅ เสร็จแล้ว',    value: `**${st.done}**`,    inline: true },
-      { name: '🔴 ค้างอยู่',      value: `**${st.pending}**`, inline: true },
-      { name: '⚠️ เกิน deadline', value: `**${st.overdue}**`, inline: true },
+    .setTitle('🔥 AUTO QUEST SYSTEM')
+    .setColor(0xff3333)
+    .setDescription(
+      '```\nPREMIUM PANEL ENABLED\n```' +
+      '⚡ ระบบทำเควสออโต้เวอร์ชั่นเทพ\n' +
+      '🎯 รองรับหลาย TOKEN พร้อมกัน\n' +
+      '🚀 กดปุ่มด้านล่างเพื่อเริ่มทันที'
     )
-    .setFooter({ text: 'กดปุ่มด้านล่างเพื่อจัดการ quest' })
+    .addFields(
+      { name: '📦 เควสทั้งหมด',   value: `**${st.total}**`,   inline: true },
+      { name: '✅ เสร็จแล้ว',     value: `**${st.done}**`,    inline: true },
+      { name: '🔴 ค้างอยู่',       value: `**${st.pending}**`, inline: true },
+      { name: '⚠️ เกิน Deadline', value: `**${st.overdue}**`, inline: true },
+      { name: '⚡ Runner ที่รันอยู่', value: `**${activeJobs}** token`, inline: true },
+    )
+    .setFooter({ text: 'POWERED BY NEVERDIE AUTO QUEST™' })
     .setTimestamp();
 
   const row1 = new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId('panel:list').setLabel('📋 รายการ').setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId('panel:run').setLabel('🚀 START NOW').setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId('panel:stop').setLabel('🔴 STOP ALL').setStyle(ButtonStyle.Danger),
+    new ButtonBuilder().setCustomId('panel:status').setLabel('📊 สถิติ').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId('panel:refresh').setLabel('🔄 Refresh').setStyle(ButtonStyle.Secondary),
+  );
+
+  const row2 = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId('panel:list').setLabel('📋 รายการเควส').setStyle(ButtonStyle.Primary),
     new ButtonBuilder().setCustomId('panel:add').setLabel('➕ เพิ่ม').setStyle(ButtonStyle.Success),
     new ButtonBuilder().setCustomId('panel:done').setLabel('✅ Done').setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId('panel:edit').setLabel('✏️ แก้ไข').setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId('panel:delete').setLabel('🗑️ ลบ').setStyle(ButtonStyle.Danger),
-  );
-
-  const row2 = new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId('panel:status').setLabel('📊 สถิติ').setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId('panel:run').setLabel('▶️ Start Runner').setStyle(ButtonStyle.Success),
-    new ButtonBuilder().setCustomId('panel:stop').setLabel('🛑 Stop Runner').setStyle(ButtonStyle.Danger),
-    new ButtonBuilder().setCustomId('panel:refresh').setLabel('🔄 Refresh').setStyle(ButtonStyle.Secondary),
   );
 
   const payload = { embeds: [embed], components: [row1, row2] };
@@ -188,24 +198,15 @@ export async function handleButton(interaction) {
     );
   }
 
-  if (action === 'run') {
-    if (getJob(interaction.user.id)) {
-      return interaction.reply({ content: '⚠️ คุณมี Runner ที่กำลังทำงานอยู่แล้ว ใช้ 🛑 Stop Runner ก่อน', ephemeral: true });
-    }
-    return interaction.showModal(
-      new ModalBuilder().setCustomId(`run_modal:${interaction.channelId}`).setTitle('▶️ Start Quest Runner')
-        .addComponents(
-          new ActionRowBuilder().addComponents(
-            new TextInputBuilder().setCustomId('user_token').setLabel('Discord User Token').setStyle(TextInputStyle.Paragraph).setRequired(true).setMinLength(50).setPlaceholder('วาง token ของคุณที่นี่')
-          ),
-        )
-    );
-  }
+  if (action === 'run') return showRunModal(interaction);
 
   if (action === 'stop') {
     await interaction.deferReply({ ephemeral: true });
+    const jobs    = getUserJobs(interaction.user.id);
     const stopped = stopRunner(interaction.user.id);
-    return interaction.editReply(stopped ? '🛑 หยุด Runner แล้ว' : 'ℹ️ ไม่มี Runner ที่กำลังทำงาน');
+    return interaction.editReply(
+      stopped ? `🛑 หยุดแล้ว **${jobs.length}** token` : 'ℹ️ ไม่มี Runner ที่กำลังทำงาน'
+    );
   }
 }
 
