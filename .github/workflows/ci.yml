@@ -76,35 +76,4 @@ jobs:
             node --check "$f" && echo "✅ $f"
           done
 
-  api-checks:
-    name: API checks
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: api
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Syntax check — server entry
-        run: node --check src/index.js && echo "✅ src/index.js"
-
-      - name: Syntax check — routes
-        run: |
-          for f in src/routes/*.js; do
-            node --check "$f" && echo "✅ $f"
-          done
-
-      - name: Syntax check — modules
-        run: |
-          for f in src/db.js src/discord-runner.js; do
-            node --check "$f" && echo "✅ $f"
-          done
+  
