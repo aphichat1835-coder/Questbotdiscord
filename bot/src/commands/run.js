@@ -135,7 +135,7 @@ export async function handleModal(interaction) {
 
       results.push(isScheduled
         ? `🤖 เริ่มระบบอัตโนมัติรายวัน: **${me.username}**\n   ตรวจทันที และตรวจประจำเวลา **00:00 / 08:00 / 16:00 น.**`
-        : `✅ เริ่ม One-shot Runner: **${me.username}**`);
+        : `✅ เริ่ม Quest auto : **${me.username}**`);
     } catch (err) {
       if (schedule) deleteScheduledRunner(schedule.id, ownerId);
       results.push(`❌ เริ่ม **${me.username}** ไม่สำเร็จ — ${err.message}`);
