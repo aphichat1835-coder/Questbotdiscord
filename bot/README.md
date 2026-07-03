@@ -79,8 +79,8 @@ Discord API requests มี timeout 15 วินาที รองรับ `Re
 
 ### วิธีตรวจว่า Discord รับผลจริง
 
-- ระบบจะแสดง `Discord ยืนยัน DONE` เฉพาะเมื่อดึงข้อมูลใหม่แล้วพบ `completed_at`
-- ระบบจะแสดง `Discord ยืนยัน CLAIMED` เฉพาะเมื่อดึงข้อมูลใหม่แล้วพบ `claimed_at`
+- ระบบถือว่า Quest เสร็จและรายงาน `100%` เฉพาะเมื่อดึงข้อมูลใหม่แล้วพบ `completed_at`
+- ระบบ Claim รางวัลแบบเงียบ และบันทึกเวลายืนยัน `claimed_at` ไว้ให้ตรวจผ่าน `/api-status`
 - ระบบรายงาน 25% / 50% / 75% / 100% จาก `user_status.progress` ที่ดึงกลับจาก Discord
   ไม่ใช่การนับเวลาในเครื่อง Bot
 - ใช้ `/api-status` ดูเวลาที่ Quest API สำเร็จล่าสุด, schema/event ที่ไม่รู้จัก
@@ -89,13 +89,45 @@ Discord API requests มี timeout 15 วินาที รองรับ `Re
   แทนการรายงานผิดว่า “ไม่พบ Quest”
 - การดึงรายการใช้ `/quests/@me` เป็นหลัก รองรับทั้ง response แบบ array และ `{ quests: [] }`
   และตรวจ `/users/@me/quests` เป็น fallback หาก endpoint หลักใช้ไม่ได้หรือส่งรายการว่าง
-- รองรับ `excluded_quests` และ `quest_enrollment_blocked_until`; เควสที่ยังรับไม่ได้จะถูกรายงาน
-  แต่ระบบจะไม่ยิง enroll ซ้ำจนกว่า Discord จะเปิดให้รับ
-- ก่อนเริ่มทำ ระบบรายงานเควสที่ยังไม่เสร็จทั้งหมด จากนั้นรีเฟรชสถานะก่อนเริ่มแต่ละเควส
-  และวนตรวจอีกครั้งหลังจบจนไม่เหลือเควสที่รองรับ
+- รองรับ `excluded_quests` และ `quest_enrollment_blocked_until`; เควสที่ยังรับไม่ได้จะไม่ถูกนับ
+  และระบบจะไม่ยิง enroll ซ้ำจนกว่า Discord จะเปิดให้รับ
+- ระบบรายงานเฉพาะจำนวน Quest ที่ทำได้ เลือกทำทีละหนึ่ง Quest แล้วดึงรายการใหม่ทันที
+  วนต่อจนจำนวน Quest ที่ทำได้เหลือศูนย์
 
 สถานะนี้เก็บในหน่วยความจำ จึงเริ่มเป็น “ยังไม่มีการตรวจ” ทุกครั้งที่ Bot restart
 และจะมีหลักฐานจริงหลังจาก Runner ตรวจด้วย Token และ Quest จริงแล้วเท่านั้น
+
+### ตรวจหลัง Discord อัปเดต หรือเมื่อระบบผิดปกติ
+
+- ตรวจ `Discord Client Version`, Build Number และ Chrome/Electron version
+- ตรวจว่า Endpoint รายการ Quest ยังตอบที่ `/quests/@me` หรือ `/users/@me/quests`
+- ตรวจรูปแบบ `task_config`, `task_config_v2`, `user_status.progress`,
+  `completed_at` และ `claimed_at`
+- ตรวจชื่อ Event ใหม่ รวมถึงหน่วยของ `target` และ progress
+- ตรวจ payload ของ enroll, video-progress, heartbeat และ claim
+- ตรวจ eligibility เช่น Quest หมดเวลา, ยังไม่เริ่ม, enrollment blocked หรือ excluded
+- ตรวจ API version, headers และค่า `X-Super-Properties`
+- ตรวจ HTTP `401/403`, Rate Limit `429`, timeout, network error และ Discord 5xx
+- ตรวจตารางเวลา, timezone, Scheduled Job, Render deploy และ Persistent Disk
+- หลังแก้ไขต้องรัน Bot tests/CI, deploy แล้วทดสอบด้วย Quest จริงอย่างน้อยหนึ่งตัว
+
+### ดูอาการแล้วแก้ตรงไหน
+
+| อาการ | จุดที่ควรตรวจ |
+|---|---|
+| Discord มี Quest แต่ Runner รายงาน `0 QUESTS` | Endpoint รายการ Quest, response schema, task/event parser และ eligibility filter |
+| พบ Quest แต่รับ Quest ไม่ได้ | enroll endpoint/payload และ `quest_enrollment_blocked_until` |
+| เริ่มทำแล้ว progress ค้าง `0%` | video-progress หรือ heartbeat payload, progress key และหน่วย target |
+| Progress เพิ่มแต่ไม่ถึง `100%` | ค่าที่ Discord ตอบกลับ, timing, Rate Limit และเงื่อนไขของ Quest |
+| ถึงเป้าหมายแต่ไม่จบ | ตรวจว่า Discord ส่ง `completed_at` หรือไม่ |
+| จบแล้วแต่ไม่ได้รางวัล | claim endpoint/payload และ `claimed_at`/`orb_quantity_claimed` |
+| `/api-status` แสดง `unknown event` | เพิ่ม parser/Runner สำหรับ Event ใหม่ หากประเภทนั้นทำผ่าน API ได้จริง |
+| ได้ `401` | Token ถูกปฏิเสธหรือหมดอายุ ระบบจะหยุด Runner |
+| ได้ `403` | ตรวจ Token, endpoint, headers, client/build version และสิทธิ์ของ action |
+| ได้ `429` | ลดความถี่และตรวจ `Retry-After`; ห้ามยิง request ซ้ำถี่ขึ้น |
+| API เป็น `incompatible` หรือ `schema changed` | เก็บ response ที่ลบ Token/ข้อมูลส่วนตัว แล้วอัปเดต parser และ test fixture |
+| Scheduled Runner ไม่ทำงานตามเวลา | ตรวจ timezone, `next_check_at`, ฐานข้อมูล, Persistent Disk และ Render restart |
+| แก้โค้ดแล้วระบบออนไลน์ยังเหมือนเดิม | ตรวจว่า branch/commit ที่แก้ถูก merge และ Render deploy commit ล่าสุดแล้ว |
 
 > Quest endpoints ที่ Runner ใช้ไม่ได้อยู่ใน Discord Bot API สาธารณะ และการใช้ User Token
 > ทำงานอัตโนมัติมีความเสี่ยงต่อบัญชี ไม่มีระบบใดรับประกันความเข้ากันได้หรือความปลอดภัยของบัญชีได้ 100%
@@ -124,7 +156,7 @@ Bot สามารถทำ Quest ผ่าน API ได้เฉพาะป�
 | `PLAY_ACTIVITY` | ต้องเล่น Discord Activity จริง | ❌ ข้าม |
 | `PLAY_ON_XBOX` / `PLAY_ON_PLAYSTATION` | ต้องเล่นบน console จริง | ❌ ข้าม |
 
-Quest ที่ข้ามจะถูก log บอกเหตุผลและข้ามไปทำอันถัดไปอัตโนมัติ
+Quest ที่ไม่รองรับจะไม่ถูกนับหรือแสดงในข้อความ Runner และระบบจะทำเฉพาะ Quest ที่รองรับ
 
 `STREAM_ON_DESKTOP` ไม่สามารถรับประกันด้วย Token อย่างเดียว เพราะ Discord ต้องผูก heartbeat
 กับ stream session จริง ระบบจึงไม่ส่ง heartbeat เปล่าและไม่รายงานผลสำเร็จปลอม
