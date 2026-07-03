@@ -13,11 +13,16 @@ process.env.RUNNER_TOKEN_SECRET = 'runner-mode-test-secret-123456';
 
 const {
   DiscordApiError,
+  QuestCompatibilityError,
+  fetchQuests,
+  getQuestEngineStatus,
   getUserJobs,
   isFatalAuthError,
+  normalizeQuest,
   restoreScheduledRunners,
   shutdownRunners,
   startRunner,
+  stopRunner,
   stopScheduledJob,
 } = await import('../src/discord-runner.js');
 const {
@@ -32,9 +37,10 @@ const { backupDatabase } = await import('../src/db.js');
 const { redactSensitive } = await import('../src/error-reporter.js');
 const { runDatabaseBackup } = await import('../src/worker.js');
 
-function mockClient() {
+function mockClient(contents = null) {
   const message = {
-    async edit() {
+    async edit(payload) {
+      if (contents) contents.push(payload.content);
       return message;
     },
   };
@@ -43,7 +49,8 @@ function mockClient() {
       async fetch() {
         return {
           isTextBased: () => true,
-          async send() {
+          async send(payload) {
+            if (contents) contents.push(payload.content);
             return message;
           },
         };
@@ -61,16 +68,480 @@ async function waitFor(predicate, timeoutMs = 1000) {
   throw new Error('Timed out waiting for runner state');
 }
 
+function isQuestListUrl(url) {
+  const value = String(url);
+  return value.endsWith('/quests/@me') || value.endsWith('/users/@me/quests');
+}
+
 test.beforeEach(() => {
   global.fetch = async (url) => {
-    if (String(url).endsWith('/users/@me/quests')) {
-      return new Response(JSON.stringify([]), {
+    if (isQuestListUrl(url)) {
+      return new Response(JSON.stringify({ quests: [] }), {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
       });
     }
     throw new Error(`Unexpected fetch: ${url}`);
   };
+});
+
+test('quest parser selects a supported task when an unsupported platform is listed first', () => {
+  const quest = normalizeQuest({
+    id: 'quest-multi-platform',
+    config: {
+      messages: { quest_name: 'Multi-platform Quest' },
+      task_config_v2: {
+        tasks: {
+          PLAY_ON_XBOX: { target: 900 },
+          WATCH_VIDEO: { target: 60 },
+        },
+      },
+    },
+    user_status: {
+      progress: { WATCH_VIDEO: { value: 15 } },
+    },
+  });
+
+  assert.equal(quest.eventName, 'WATCH_VIDEO');
+  assert.equal(quest.secondsNeeded, 60);
+  assert.equal(quest.progressSecs, 15);
+  assert.equal(quest.progress, 25);
+  assert.deepEqual(quest.schemaIssues, []);
+});
+
+test('quest parser uses task definition type when the map key changes', () => {
+  const quest = normalizeQuest({
+    id: 'quest-typed-task',
+    config: {
+      task_config_v2: {
+        tasks: {
+          desktop_task: { type: 'PLAY_ON_DESKTOP_V2', target: 120 },
+        },
+      },
+      application: { id: 'app-typed-task' },
+    },
+    user_status: {
+      progress: { desktop_task: { value: 30 } },
+    },
+  });
+
+  assert.equal(quest.eventName, 'PLAY_ON_DESKTOP_V2');
+  assert.equal(quest.progressKey, 'desktop_task');
+  assert.equal(quest.applicationId, 'app-typed-task');
+  assert.equal(quest.progress, 25);
+});
+
+test('quest parser recognizes the current event_name task field', () => {
+  const quest = normalizeQuest({
+    id: 'quest-event-name',
+    config: {
+      task_config: {
+        tasks: {
+          opaque_task_key: { event_name: 'WATCH_VIDEO_ON_MOBILE', target: 80 },
+        },
+      },
+    },
+    user_status: {
+      progress: { opaque_task_key: { value: 20 } },
+    },
+  });
+
+  assert.equal(quest.eventName, 'WATCH_VIDEO_ON_MOBILE');
+  assert.equal(quest.progressKey, 'opaque_task_key');
+  assert.equal(quest.progress, 25);
+});
+
+test('quest parser recognizes current orb reward claim status', () => {
+  const quest = normalizeQuest({
+    id: 'quest-orb-claimed',
+    config: {
+      task_config_v2: {
+        tasks: { WATCH_VIDEO: { target: 60 } },
+      },
+    },
+    user_status: {
+      completed_at: '2026-07-03T00:00:00Z',
+      claimed_at: null,
+      orb_quantity_claimed: 500,
+      progress: { WATCH_VIDEO: { value: 60 } },
+    },
+  });
+
+  assert.equal(quest.completed, true);
+  assert.equal(quest.claimed, true);
+});
+
+test('malformed Quest API response is reported as incompatible, not as an empty quest list', async () => {
+  global.fetch = async () => new Response(
+    JSON.stringify({ items: [] }),
+    { status: 200, headers: { 'Content-Type': 'application/json' } },
+  );
+
+  await assert.rejects(
+    fetchQuests('token-schema-changed'),
+    QuestCompatibilityError,
+  );
+  const status = getQuestEngineStatus();
+  assert.equal(status.state, 'incompatible');
+  assert.match(status.lastError, /expected an array/);
+});
+
+test('quest fetch falls back to the legacy endpoint when /quests/@me is unavailable', async () => {
+  global.fetch = async (url) => {
+    const path = String(url);
+    if (path.endsWith('/quests/@me')) {
+      return new Response(JSON.stringify({ message: 'Not Found' }), {
+        status: 404,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    if (path.endsWith('/users/@me/quests')) {
+      return new Response(JSON.stringify([{
+        id: 'legacy-quest',
+        config: {
+          task_config: { tasks: { WATCH_VIDEO: { target: 60 } } },
+        },
+        user_status: { progress: { WATCH_VIDEO: { value: 0 } } },
+      }]), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    throw new Error(`Unexpected fetch: ${url}`);
+  };
+
+  const quests = await fetchQuests('token-legacy-endpoint');
+  assert.equal(quests.length, 1);
+  assert.equal(getQuestEngineStatus().questListPath, '/users/@me/quests');
+});
+
+test('quest fetch checks the alternate endpoint before accepting an empty list', async () => {
+  const calls = [];
+  global.fetch = async (url) => {
+    calls.push(String(url));
+    if (calls.length === 1) {
+      return new Response(JSON.stringify({ quests: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    return new Response(JSON.stringify({ quests: [{
+      id: 'quest-from-alternate',
+      config: {
+        task_config: { tasks: { WATCH_VIDEO: { target: 60 } } },
+      },
+      user_status: { progress: { WATCH_VIDEO: { value: 0 } } },
+    }] }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const quests = await fetchQuests('token-empty-primary');
+  assert.equal(calls.length, 2);
+  assert.equal(quests[0].id, 'quest-from-alternate');
+});
+
+test('current Quest API requests use the quest-home referer', async () => {
+  let referer = null;
+  global.fetch = async (url, options = {}) => {
+    if (String(url).endsWith('/quests/@me')) {
+      referer = options.headers?.Referer;
+      return new Response(JSON.stringify({ quests: [{
+        id: 'referer-quest',
+        config: { task_config: { tasks: { WATCH_VIDEO: { target: 1 } } } },
+        user_status: { progress: { WATCH_VIDEO: { value: 0 } } },
+      }] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    throw new Error(`Unexpected fetch: ${url}`);
+  };
+
+  const quests = await fetchQuests('token-quest-referer');
+  assert.equal(quests.length, 1);
+  assert.equal(referer, 'https://discord.com/quest-home');
+});
+
+test('quest enrollment cooldown is preserved and excludes unaccepted quests from runnable count', async () => {
+  const blockedUntil = new Date(Date.now() + 60_000).toISOString();
+  global.fetch = async (url) => {
+    if (String(url).endsWith('/quests/@me')) {
+      return new Response(JSON.stringify({
+        quests: [{
+          id: 'cooldown-quest',
+          config: { task_config: { tasks: { WATCH_VIDEO: { target: 60 } } } },
+          user_status: null,
+        }],
+        excluded_quests: [{ id: 'excluded-quest' }],
+        quest_enrollment_blocked_until: blockedUntil,
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    throw new Error(`Unexpected fetch: ${url}`);
+  };
+
+  const [quest] = await fetchQuests('token-enrollment-cooldown');
+  const status = getQuestEngineStatus();
+  assert.equal(quest.enrollmentBlockedUntil, blockedUntil);
+  assert.equal(status.enrollmentBlockedUntil, blockedUntil);
+  assert.equal(status.excludedCount, 1);
+  assert.equal(status.supportedCount, 0);
+});
+
+test('runner records completion and claim only after Discord returns completed_at and claimed_at', async () => {
+  let completed = false;
+  let claimed = false;
+  let claimBody = null;
+  global.fetch = async (url, options = {}) => {
+    const path = String(url);
+    if (isQuestListUrl(path)) {
+      return new Response(JSON.stringify({ quests: [{
+        id: 'quest-server-proof',
+        config: {
+          messages: { quest_name: 'Server Proof Quest' },
+          task_config: { tasks: { WATCH_VIDEO: { target: 1 } } },
+        },
+        user_status: {
+          enrolled_at: '2026-07-03T00:00:00Z',
+          completed_at: completed ? '2026-07-03T00:01:00Z' : null,
+          claimed_at: claimed ? '2026-07-03T00:02:00Z' : null,
+          progress: { WATCH_VIDEO: { value: completed ? 1 : 0 } },
+        },
+      }] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    if (path.endsWith('/video-progress')) {
+      const body = JSON.parse(options.body);
+      if (body.timestamp >= 1) completed = true;
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    if (path.endsWith('/claim-reward')) {
+      claimBody = JSON.parse(options.body);
+      claimed = true;
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    throw new Error(`Unexpected fetch: ${url}`);
+  };
+
+  await startRunner({
+    jobKey: 'scheduled:server-proof',
+    ownerId: 'owner-server-proof',
+    userToken: 'token-server-proof',
+    channelId: 'channel-server-proof',
+    client: mockClient(),
+    mode: 'scheduled',
+    accountId: 'account-server-proof',
+    username: 'server-proof-user',
+    heartbeatInterval: 1,
+  });
+
+  await waitFor(() => Boolean(getQuestEngineStatus().lastVerifiedClaimAt), 3000);
+  const status = getQuestEngineStatus();
+  assert.ok(status.lastVerifiedCompletionAt);
+  assert.ok(status.lastVerifiedClaimAt);
+  assert.equal(completed, true);
+  assert.equal(claimed, true);
+  assert.deepEqual(claimBody, { location: 11, platform: 'windows' });
+  assert.equal(stopRunner('owner-server-proof', { mode: 'scheduled' }), true);
+});
+
+test('one-shot runner reports every pending quest and server-confirmed 25 percent checkpoints in order', async () => {
+  const states = new Map([
+    ['quest-a', { completed: false, claimed: false }],
+    ['quest-b', { completed: false, claimed: false }],
+  ]);
+  const contents = [];
+
+  const payload = () => ({
+    quests: [...states.entries()].map(([id, state]) => ({
+      id,
+      config: {
+        messages: { quest_name: id === 'quest-a' ? 'Quest A' : 'Quest B' },
+        task_config: { tasks: { WATCH_VIDEO: { target: 1 } } },
+      },
+      user_status: {
+        enrolled_at: '2026-07-03T00:00:00Z',
+        completed_at: state.completed ? '2026-07-03T00:01:00Z' : null,
+        claimed_at: state.claimed ? '2026-07-03T00:02:00Z' : null,
+        progress: { WATCH_VIDEO: { value: state.completed ? 1 : 0 } },
+      },
+    })),
+  });
+
+  global.fetch = async (url, options = {}) => {
+    const path = String(url);
+    if (isQuestListUrl(path)) {
+      return new Response(JSON.stringify(payload()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    const questId = path.includes('quest-a') ? 'quest-a' : 'quest-b';
+    if (path.endsWith('/video-progress')) {
+      states.get(questId).completed = JSON.parse(options.body).timestamp >= 1;
+      return new Response(JSON.stringify({ completed_at: new Date().toISOString() }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    if (path.endsWith('/claim-reward')) {
+      states.get(questId).claimed = true;
+      return new Response(JSON.stringify({ claimed_at: new Date().toISOString() }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    throw new Error(`Unexpected fetch: ${url}`);
+  };
+
+  await startRunner({
+    jobKey: 'oneshot:multi-quest-proof',
+    ownerId: 'owner-multi-quest-proof',
+    userToken: 'token-multi-quest-proof',
+    channelId: 'channel-multi-quest-proof',
+    client: mockClient(contents),
+    mode: 'oneshot',
+    accountId: 'account-multi-quest-proof',
+    username: 'multi-quest-user',
+  });
+
+  await waitFor(() => getUserJobs('owner-multi-quest-proof').length === 0, 7000);
+  const transcript = contents.join('\n');
+  assert.match(transcript, /เควสที่ยังไม่เสร็จทั้งหมด 2 เควส/);
+  assert.match(transcript, /1\. Quest A/);
+  assert.match(transcript, /2\. Quest B/);
+  for (const checkpoint of [25, 50, 75, 100]) {
+    assert.match(transcript, new RegExp(`Discord ${checkpoint}%`));
+  }
+  assert.ok(transcript.indexOf('Discord ยืนยัน DONE — Quest A')
+    < transcript.indexOf('▶️ multi-quest-user: [2/2] Quest B'));
+  assert.equal(states.get('quest-a').claimed, true);
+  assert.equal(states.get('quest-b').claimed, true);
+});
+
+test('pending quest inventory is chunked without dropping entries beyond the live log limit', async () => {
+  const contents = [];
+  const quests = Array.from({ length: 30 }, (_, index) => ({
+    id: `console-quest-${index + 1}`,
+    config: {
+      messages: { quest_name: `Console Quest ${index + 1}` },
+      task_config: { tasks: { PLAY_ON_XBOX: { target: 60 } } },
+    },
+    user_status: { progress: { PLAY_ON_XBOX: { value: 0 } } },
+  }));
+  global.fetch = async (url) => {
+    if (isQuestListUrl(url)) {
+      return new Response(JSON.stringify({ quests }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    throw new Error(`Unexpected fetch: ${url}`);
+  };
+
+  await startRunner({
+    jobKey: 'oneshot:inventory-chunks',
+    ownerId: 'owner-inventory-chunks',
+    userToken: 'token-inventory-chunks',
+    channelId: 'channel-inventory-chunks',
+    client: mockClient(contents),
+    mode: 'oneshot',
+    accountId: 'account-inventory-chunks',
+    username: 'inventory-user',
+  });
+
+  await waitFor(() => getUserJobs('owner-inventory-chunks').length === 0);
+  const transcript = contents.join('\n');
+  assert.match(transcript, /เควสที่ยังไม่เสร็จทั้งหมด 30 เควส/);
+  assert.match(transcript, /1\. Console Quest 1 /);
+  assert.match(transcript, /30\. Console Quest 30 /);
+});
+
+test('PLAY_ON_DESKTOP switches to application_id when the first heartbeat payload makes no progress', async () => {
+  let progress = 0;
+  let completed = false;
+  let claimed = false;
+  const heartbeatBodies = [];
+
+  global.fetch = async (url, options = {}) => {
+    const path = String(url);
+    if (isQuestListUrl(path)) {
+      return new Response(JSON.stringify({ quests: [{
+        id: 'quest-play',
+        config: {
+          application: { id: 'application-play' },
+          messages: { quest_name: 'Play Quest' },
+          task_config_v2: {
+            tasks: {
+              play_task: { type: 'PLAY_ON_DESKTOP', target: 1 },
+            },
+          },
+        },
+        user_status: {
+          enrolled_at: '2026-07-03T00:00:00Z',
+          completed_at: completed ? '2026-07-03T00:01:00Z' : null,
+          claimed_at: claimed ? '2026-07-03T00:02:00Z' : null,
+          progress: { play_task: { value: progress } },
+        },
+      }] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    if (path.endsWith('/heartbeat')) {
+      const body = JSON.parse(options.body);
+      heartbeatBodies.push(body);
+      if (body.terminal) completed = true;
+      else if (body.application_id) progress = 1;
+      return new Response(JSON.stringify({
+        completed_at: completed ? new Date().toISOString() : null,
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    if (path.endsWith('/claim-reward')) {
+      claimed = true;
+      return new Response(JSON.stringify({ claimed_at: new Date().toISOString() }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    throw new Error(`Unexpected fetch: ${url}`);
+  };
+
+  await startRunner({
+    jobKey: 'oneshot:play-proof',
+    ownerId: 'owner-play-proof',
+    userToken: 'token-play-proof',
+    channelId: 'channel-play-proof',
+    client: mockClient(),
+    mode: 'oneshot',
+    accountId: 'account-play-proof',
+    username: 'play-proof-user',
+    heartbeatInterval: 1,
+  });
+
+  await waitFor(() => getUserJobs('owner-play-proof').length === 0, 6000);
+  assert.deepEqual(heartbeatBodies, [
+    { stream_key: 'call:quest-play:1', terminal: false },
+    { application_id: 'application-play', terminal: false },
+    { application_id: 'application-play', terminal: true },
+  ]);
+  assert.equal(completed, true);
+  assert.equal(claimed, true);
 });
 
 test('one-shot runner exits after the first empty quest scan', async () => {
@@ -151,8 +622,8 @@ test('/run replies publicly and starts a persisted scheduled runner', async () =
         headers: { 'Content-Type': 'application/json' },
       });
     }
-    if (String(url).endsWith('/users/@me/quests')) {
-      return new Response(JSON.stringify([]), {
+    if (isQuestListUrl(url)) {
+      return new Response(JSON.stringify({ quests: [] }), {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
       });
@@ -246,7 +717,7 @@ test('401 disables a scheduled runner and removes its saved token', async () => 
 
 test('403 is fatal only for identity and quest-list endpoints', () => {
   assert.equal(
-    isFatalAuthError(new DiscordApiError(403, '/users/@me/quests', {})),
+    isFatalAuthError(new DiscordApiError(403, '/quests/@me', {})),
     true,
   );
   assert.equal(
@@ -266,10 +737,11 @@ test('a 401 from heartbeat is propagated and disables the scheduled runner', asy
     secret: process.env.RUNNER_TOKEN_SECRET,
   });
   global.fetch = async (url) => {
-    if (String(url).endsWith('/users/@me/quests')) {
-      return new Response(JSON.stringify([{
+    if (isQuestListUrl(url)) {
+      return new Response(JSON.stringify({ quests: [{
         id: 'quest-401',
         config: {
+          application: { id: 'app-401' },
           messages: { quest_name: 'Unauthorized Quest' },
           task_config: { tasks: { PLAY_ON_DESKTOP: { target: 30 } } },
         },
@@ -277,7 +749,7 @@ test('a 401 from heartbeat is propagated and disables the scheduled runner', asy
           enrolled_at: '2026-07-02T00:00:00Z',
           progress: { PLAY_ON_DESKTOP: { value: 0 } },
         },
-      }]), {
+      }] }), {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
       });
@@ -318,10 +790,11 @@ test('an action-specific 403 stops that attempt without deleting the scheduled r
     secret: process.env.RUNNER_TOKEN_SECRET,
   });
   global.fetch = async (url) => {
-    if (String(url).endsWith('/users/@me/quests')) {
-      return new Response(JSON.stringify([{
+    if (isQuestListUrl(url)) {
+      return new Response(JSON.stringify({ quests: [{
         id: 'quest-403',
         config: {
+          application: { id: 'app-403' },
           messages: { quest_name: 'Forbidden Quest' },
           task_config: { tasks: { PLAY_ON_DESKTOP: { target: 30 } } },
         },
@@ -329,7 +802,7 @@ test('an action-specific 403 stops that attempt without deleting the scheduled r
           enrolled_at: '2026-07-02T00:00:00Z',
           progress: { PLAY_ON_DESKTOP: { value: 0 } },
         },
-      }]), {
+      }] }), {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
       });

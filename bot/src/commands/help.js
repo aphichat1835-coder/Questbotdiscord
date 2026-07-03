@@ -23,7 +23,7 @@ export async function execute(interaction) {
       {
         name: '🔧 ระบบ',
         value: [
-          '`/api-status` — เช็กสถานะระบบ RAM และ ping',
+          '`/api-status` — เช็กระบบและหลักฐานล่าสุดจาก Discord Quest API',
           '`/ping` — เช็กว่าบอทออนไลน์',
           '`/help` — แสดงหน้านี้',
         ].join('\n'),

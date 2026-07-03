@@ -16,7 +16,8 @@ import {
 } from './scheduled-runner-store.js';
 
 const DISCORD_API = 'https://discord.com/api/v9';
-const FATAL_FORBIDDEN_PATHS = new Set(['/users/@me', '/users/@me/quests']);
+const QUEST_LIST_PATHS = ['/quests/@me', '/users/@me/quests'];
+const FATAL_FORBIDDEN_PATHS = new Set(['/users/@me', ...QUEST_LIST_PATHS]);
 
 export class DiscordApiError extends Error {
   constructor(status, path, data) {
@@ -149,7 +150,7 @@ function buildSuperProperties() {
   })).toString('base64');
 }
 
-function userHeaders(token) {
+function userHeaders(token, path = '') {
   const ua          = _userAgent();
   const chromeMajor = live.chromeVersion.split('.')[0];
   return {
@@ -163,7 +164,9 @@ function userHeaders(token) {
     'Accept': '*/*',
     'Accept-Language': 'en-US,en;q=0.9',
     'Accept-Encoding': 'gzip, deflate, br, zstd',
-    'Referer': 'https://discord.com/channels/@me',
+    'Referer': path.startsWith('/quests/')
+      ? 'https://discord.com/quest-home'
+      : 'https://discord.com/channels/@me',
     'Origin': 'https://discord.com',
     'Sec-Fetch-Dest': 'empty',
     'Sec-Fetch-Mode': 'cors',
@@ -178,7 +181,7 @@ async function discordFetch(token, path, options = {}) {
   const { headers = {}, ...requestOptions } = options;
   const res = await fetchWithRetry(`${DISCORD_API}${path}`, {
     ...requestOptions,
-    headers: { ...userHeaders(token), ...headers },
+    headers: { ...userHeaders(token, path), ...headers },
   });
   if (res.status === 204) return { ok: true, status: 204 };
   const text = await res.text();
@@ -195,41 +198,239 @@ async function discordFetch(token, path, options = {}) {
 // STREAM → POST /quests/{id}/heartbeat
 // SKIP   → cannot complete via API (requires real game/console/activity)
 const VIDEO_EVENTS  = new Set(['WATCH_VIDEO', 'WATCH_VIDEO_ON_MOBILE']);
-const STREAM_EVENTS = new Set(['STREAM_ON_DESKTOP', 'PLAY_ON_DESKTOP', 'PLAY_ON_DESKTOP_V2']);
+const GAME_EVENTS   = new Set(['PLAY_ON_DESKTOP', 'PLAY_ON_DESKTOP_V2']);
+const STREAM_EVENTS = new Set(['STREAM_ON_DESKTOP']);
 const SKIP_EVENTS   = new Set(['ACHIEVEMENT_IN_GAME', 'ACHIEVEMENT_IN_ACTIVITY', 'PLAY_ACTIVITY',
-                                'PLAY_ON_XBOX', 'PLAY_ON_PLAYSTATION', 'progress']);
+                                'PLAY_ON_XBOX', 'PLAY_ON_PLAYSTATION', 'progress',
+                                ...STREAM_EVENTS]);
+
+function isVideoEvent(eventName) {
+  return VIDEO_EVENTS.has(eventName) || /^WATCH_VIDEO(?:_|$)/.test(eventName);
+}
+
+function isGameEvent(eventName) {
+  return GAME_EVENTS.has(eventName) || /^PLAY_ON_DESKTOP(?:_V\d+)?$/.test(eventName);
+}
+
+function isSupportedEvent(eventName) {
+  return isVideoEvent(eventName) || isGameEvent(eventName);
+}
+
+function questUnavailableReason(quest, now = Date.now()) {
+  if (quest.autoSupported === false) return 'ต้องทำหลาย task พร้อมกัน';
+  const enrollmentBlockedUntil = Date.parse(quest.enrollmentBlockedUntil);
+  if (!quest.enrolled && Number.isFinite(enrollmentBlockedUntil) && enrollmentBlockedUntil > now) {
+    return 'Discord ยังไม่เปิดให้รับ Quest';
+  }
+  const startsAt = Date.parse(quest.startsAt);
+  if (Number.isFinite(startsAt) && startsAt > now) return 'ยังไม่เริ่ม';
+  const expiresAt = Date.parse(quest.expiresAt);
+  if (Number.isFinite(expiresAt) && expiresAt <= now) return 'หมดเวลาแล้ว';
+  return null;
+}
+
+function isRunnableQuest(quest) {
+  return isSupportedEvent(quest.eventName) && !questUnavailableReason(quest);
+}
+
+const questEngineStatus = {
+  lastCheckAt: null,
+  lastSuccessfulCheckAt: null,
+  state: 'unknown',
+  questCount: 0,
+  excludedCount: 0,
+  enrollmentBlockedUntil: null,
+  supportedCount: 0,
+  unknownEvents: [],
+  schemaIssues: [],
+  lastVerifiedProgressAt: null,
+  lastVerifiedCompletionAt: null,
+  lastVerifiedClaimAt: null,
+  questListPath: null,
+  lastError: null,
+};
+
+export class QuestCompatibilityError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'QuestCompatibilityError';
+  }
+}
+
+export function getQuestEngineStatus() {
+  return {
+    ...questEngineStatus,
+    unknownEvents: [...questEngineStatus.unknownEvents],
+    schemaIssues: [...questEngineStatus.schemaIssues],
+  };
+}
+
+function recordQuestError(error) {
+  questEngineStatus.lastCheckAt = new Date().toISOString();
+  questEngineStatus.state = error instanceof QuestCompatibilityError ? 'incompatible' : 'error';
+  questEngineStatus.lastError = error.message;
+}
 
 export async function fetchMe(token, signal) {
   return discordFetch(token, '/users/@me', { signal });
 }
 
 export async function fetchQuests(token, signal) {
+  const paths = QUEST_LIST_PATHS;
   let raw;
-  try {
-    raw = await discordFetch(token, '/users/@me/quests', { signal });
-  } catch (err) {
-    if (err.status === 404) return [];
-    throw err;
+  let selectedPath;
+  let selectedExcludedCount = 0;
+  let selectedEnrollmentBlockedUntil = null;
+  let lastError;
+  let fatalError;
+  let emptyCandidate = null;
+
+  for (const path of paths) {
+    try {
+      const candidate = await discordFetch(token, path, { signal });
+      const candidateQuests = Array.isArray(candidate)
+        ? candidate
+        : candidate && typeof candidate === 'object' && Array.isArray(candidate.quests)
+          ? candidate.quests
+          : null;
+      if (!candidateQuests) {
+        lastError = new QuestCompatibilityError(
+          `Quest API schema changed at ${path}: expected an array or { quests: [] }`,
+        );
+        continue;
+      }
+      if (candidateQuests.length === 0 && paths.length > 1) {
+        emptyCandidate ??= {
+          path,
+          quests: candidateQuests,
+          excludedCount: Array.isArray(candidate?.excluded_quests)
+            ? candidate.excluded_quests.length
+            : 0,
+          enrollmentBlockedUntil: candidate?.quest_enrollment_blocked_until ?? null,
+        };
+        continue;
+      }
+      raw = candidateQuests;
+      selectedExcludedCount = Array.isArray(candidate?.excluded_quests)
+        ? candidate.excluded_quests.length
+        : 0;
+      selectedEnrollmentBlockedUntil = candidate?.quest_enrollment_blocked_until ?? null;
+      selectedPath = path;
+      break;
+    } catch (error) {
+      if (isFatalAuthError(error)) {
+        fatalError = error;
+        if (error.status === 401) {
+          recordQuestError(error);
+          throw error;
+        }
+        if (emptyCandidate) {
+          lastError = error;
+          break;
+        }
+      }
+      lastError = error;
+    }
   }
-  if (!Array.isArray(raw)) return [];
-  return raw.map(normalizeQuest);
+
+  if (!selectedPath && emptyCandidate) {
+    raw = emptyCandidate.quests;
+    selectedExcludedCount = emptyCandidate.excludedCount;
+    selectedEnrollmentBlockedUntil = emptyCandidate.enrollmentBlockedUntil;
+    selectedPath = emptyCandidate.path;
+  }
+
+  if (!selectedPath) {
+    if (fatalError) {
+      recordQuestError(fatalError);
+      throw fatalError;
+    }
+    const error = lastError instanceof QuestCompatibilityError
+      ? lastError
+      : new QuestCompatibilityError(
+        `Quest API endpoints unavailable: ${lastError?.message ?? 'unknown error'}`,
+      );
+    recordQuestError(error);
+    await reportCriticalError('Quest API compatibility', error);
+    throw error;
+  }
+
+  let quests;
+  try {
+    quests = raw.map((quest) => ({
+      ...normalizeQuest(quest),
+      enrollmentBlockedUntil: selectedEnrollmentBlockedUntil,
+    }));
+  } catch (error) {
+    const compatibilityError = error instanceof QuestCompatibilityError
+      ? error
+      : new QuestCompatibilityError(`Quest payload could not be parsed: ${error.message}`);
+    recordQuestError(compatibilityError);
+    await reportCriticalError('Quest API compatibility', compatibilityError);
+    throw compatibilityError;
+  }
+  const unknownEvents = [...new Set(
+    quests
+      .filter((quest) => !isSupportedEvent(quest.eventName) && !SKIP_EVENTS.has(quest.eventName))
+      .map((quest) => quest.eventName),
+  )];
+  const schemaIssues = quests.flatMap((quest) => quest.schemaIssues);
+
+  Object.assign(questEngineStatus, {
+    lastCheckAt: new Date().toISOString(),
+    lastSuccessfulCheckAt: new Date().toISOString(),
+    state: schemaIssues.length || unknownEvents.length ? 'degraded' : 'compatible',
+    questCount: quests.length,
+    excludedCount: selectedExcludedCount,
+    enrollmentBlockedUntil: selectedEnrollmentBlockedUntil,
+    supportedCount: quests.filter((quest) => !quest.completed && isRunnableQuest(quest)).length,
+    unknownEvents,
+    schemaIssues,
+    questListPath: selectedPath,
+    lastError: null,
+  });
+
+  if (schemaIssues.length || unknownEvents.length) {
+    await reportCriticalError(
+      'Quest API compatibility',
+      new QuestCompatibilityError(
+        [
+          ...schemaIssues,
+          unknownEvents.length ? `unknown events: ${unknownEvents.join(', ')}` : '',
+        ].filter(Boolean).join('; '),
+      ),
+    );
+  }
+  return quests;
 }
 
 async function enrollQuest(token, questId, signal) {
-  // location: 1 = quest bar; required by API
   return discordFetch(token, `/quests/${questId}/enroll`, {
     method: 'POST',
-    body: JSON.stringify({ location: 1 }),
+    body: JSON.stringify({
+      location: 11,
+      is_targeted: false,
+      metadata_raw: null,
+    }),
     signal,
   });
 }
 
 async function claimQuest(token, questId, signal) {
-  return discordFetch(token, `/quests/${questId}/claim`, {
-    method: 'POST',
-    body: JSON.stringify({ location: 1, platform: 'windows' }),
-    signal,
-  });
+  try {
+    return await discordFetch(token, `/quests/${questId}/claim-reward`, {
+      method: 'POST',
+      body: JSON.stringify({ location: 11, platform: 'windows' }),
+      signal,
+    });
+  } catch (error) {
+    if (error?.status !== 404) throw error;
+    return discordFetch(token, `/quests/${questId}/claim`, {
+      method: 'POST',
+      body: JSON.stringify({ location: 1, platform: 'windows' }),
+      signal,
+    });
+  }
 }
 
 async function sendVideoProgress(token, questId, timestamp, signal) {
@@ -239,21 +440,91 @@ async function sendVideoProgress(token, questId, timestamp, signal) {
   });
 }
 
-async function sendHeartbeat(token, questId, signal) {
-  return discordFetch(token, `/quests/${questId}/heartbeat`, {
-    method: 'POST', body: JSON.stringify({}), signal,
+async function sendGameHeartbeat(token, quest, terminal, signal) {
+  try {
+    return await discordFetch(token, `/quests/${quest.id}/heartbeat`, {
+      method: 'POST',
+      body: JSON.stringify({
+        stream_key: `call:${quest.id}:1`,
+        terminal,
+      }),
+      signal,
+    });
+  } catch (error) {
+    if (error?.status !== 400 || !quest.applicationId) throw error;
+    return discordFetch(token, `/quests/${quest.id}/heartbeat`, {
+      method: 'POST',
+      body: JSON.stringify({
+        application_id: quest.applicationId,
+        terminal,
+      }),
+      signal,
+    });
+  }
+}
+
+async function sendApplicationHeartbeat(token, quest, terminal, signal) {
+  if (!quest.applicationId) {
+    throw new QuestCompatibilityError(`Quest ${quest.id} is missing config.application.id`);
+  }
+  return discordFetch(token, `/quests/${quest.id}/heartbeat`, {
+    method: 'POST',
+    body: JSON.stringify({
+      application_id: quest.applicationId,
+      terminal,
+    }),
+    signal,
   });
 }
 
-function normalizeQuest(raw) {
+export function normalizeQuest(raw) {
+  if (!raw || typeof raw !== 'object' || !raw.id) {
+    throw new QuestCompatibilityError('Quest item is missing a valid id');
+  }
+
   const cfg        = raw.config ?? {};
   const userStatus = raw.user_status ?? {};
+  const schemaIssues = [];
 
   // Support task_config (current) and task_config_v2 (alternate schema)
-  const tasks      = cfg.task_config?.tasks ?? cfg.task_config_v2?.tasks ?? {};
-  const taskEntries = Object.entries(tasks);
-  const [eventName, taskDef] = taskEntries[0] ?? ['WATCH_VIDEO', { target: 0 }];
+  const taskConfig = cfg.task_config_v2 ?? cfg.task_config;
+  const tasks = taskConfig?.tasks;
+  const taskEntries = tasks && typeof tasks === 'object' && !Array.isArray(tasks)
+    ? Object.entries(tasks)
+    : [];
+  if (!taskEntries.length) schemaIssues.push(`quest ${raw.id}: missing task definitions`);
+
+  // Some Quest payloads contain several platform alternatives. Do not miss a
+  // supported task merely because an unsupported platform happens to be first.
+  const progressMap = userStatus.progress && typeof userStatus.progress === 'object'
+    ? userStatus.progress
+    : {};
+  const normalizedEntries = taskEntries.map(([key, definition]) => ({
+    key,
+    definition,
+    type: typeof definition?.event_name === 'string'
+      ? definition.event_name
+      : typeof definition?.type === 'string' ? definition.type : key,
+  }));
+  const supportedEntries = normalizedEntries.filter(({ type }) => isSupportedEvent(type));
+  const selectedTask = (
+    supportedEntries.find(({ key, type }) => progressMap[key] != null || progressMap[type] != null)
+    ?? supportedEntries[0]
+    ?? normalizedEntries[0]
+    ?? { key: 'UNKNOWN_SCHEMA', type: 'UNKNOWN_SCHEMA', definition: { target: 0 } }
+  );
+  const progressKey = selectedTask.key;
+  const eventName = selectedTask.type;
+  const taskDef = selectedTask.definition;
   const secondsNeeded = Number(taskDef?.target ?? 0);
+  const joinOperator = taskConfig?.join_operator ?? 'or';
+  const autoSupported = !(joinOperator === 'and' && taskEntries.length > 1);
+  if (!autoSupported) {
+    schemaIssues.push(`quest ${raw.id}: multi-task join_operator=and requires every task`);
+  }
+  if (!Number.isFinite(secondsNeeded) || secondsNeeded <= 0) {
+    schemaIssues.push(`quest ${raw.id}: invalid target for ${eventName}`);
+  }
 
   // New API: user_status.progress is map[eventName → { value: seconds, heartbeat: timestamp }]
   // Old API (config v1): user_status.progress was a string percentage ("0"–"100")
@@ -261,10 +532,17 @@ function normalizeQuest(raw) {
   const rawProgress = userStatus.progress;
   if (rawProgress && typeof rawProgress === 'object' && !Array.isArray(rawProgress)) {
     // New format — value is seconds completed
-    progressSecs = Number(rawProgress[eventName]?.value ?? 0);
+    const eventProgress = rawProgress[progressKey] ?? rawProgress[eventName];
+    progressSecs = Number(
+      eventProgress && typeof eventProgress === 'object'
+        ? eventProgress.value ?? 0
+        : eventProgress ?? 0,
+    );
   } else if (typeof rawProgress === 'string' || typeof rawProgress === 'number') {
     // Old format — value is 0–100 percentage
     progressSecs = (parseFloat(rawProgress) / 100) * secondsNeeded;
+  } else if (Number.isFinite(Number(userStatus.stream_progress_seconds))) {
+    progressSecs = Number(userStatus.stream_progress_seconds);
   }
 
   const progress = secondsNeeded > 0 ? Math.min(100, (progressSecs / secondsNeeded) * 100) : 0;
@@ -276,9 +554,16 @@ function normalizeQuest(raw) {
     progress,                                     // 0–100 %
     secondsNeeded,                                // total seconds needed
     progressSecs,                                 // seconds already done
+    progressKey,
+    applicationId: cfg.application?.id ?? null,
+    autoSupported,
+    startsAt: cfg.starts_at ?? null,
+    expiresAt: cfg.expires_at ?? null,
+    enrolledAt: userStatus.enrolled_at ?? null,
     enrolled:  !!userStatus.enrolled_at,
     completed: !!userStatus.completed_at,
-    claimed:   !!userStatus.claimed_at,
+    claimed:   !!userStatus.claimed_at || userStatus.orb_quantity_claimed != null,
+    schemaIssues,
   };
 }
 
@@ -297,6 +582,18 @@ function sleep(ms, signal) {
       resolve();
     }, ms);
   });
+}
+
+async function waitForQuestState(token, questId, predicate, signal, {
+  attempts = 3,
+  delayMs = 1500,
+} = {}) {
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    const fresh = (await fetchQuests(token, signal)).find((quest) => quest.id === questId);
+    if (fresh && predicate(fresh)) return fresh;
+    if (attempt < attempts) await sleep(delayMs, signal);
+  }
+  return null;
 }
 
 // ── Job Store ─────────────────────────────────────────────────────────────────
@@ -391,18 +688,54 @@ export async function startRunner({
   const { signal } = controller;
 
   let liveMsg      = null;
+  let outputChannel = null;
   let username     = initialUsername ?? '...';
   let accountId    = initialAccountId;
   let lastRenderAt = 0;
   let pendingTimer = null;
   let flushPromise = Promise.resolve();
   let nextCheckAt  = initialNextCheckAt;
+  let lastInventoryFingerprint = null;
   const RENDER_THROTTLE_MS = 2000; // Discord allows ~5 edits/5s; stay safe at 1/2s
   const logLines = [];
 
   function addLog(line) {
-    logLines.push(line);
+    logLines.push(String(line).slice(0, 180));
     if (logLines.length > 25) logLines.shift();
+  }
+
+  async function resolveOutputChannel() {
+    if (outputChannel?.isTextBased?.()) return outputChannel;
+    let channel = await client.channels.fetch(channelId).catch(() => null);
+    if (!channel?.isTextBased?.() && config.logChannelId && config.logChannelId !== channelId) {
+      channel = await client.channels.fetch(config.logChannelId).catch(() => null);
+    }
+    if (channel?.isTextBased?.()) outputChannel = channel;
+    return outputChannel;
+  }
+
+  async function sendStandaloneLines(header, lines) {
+    try {
+      const channel = await resolveOutputChannel();
+      if (!channel) return;
+      const chunks = [];
+      let current = header;
+      for (const rawLine of lines) {
+        const line = String(rawLine).slice(0, 180);
+        if (`${current}\n${line}`.length > 1850) {
+          chunks.push(current);
+          current = line;
+        } else {
+          current += `\n${line}`;
+        }
+      }
+      if (current) chunks.push(current);
+      for (const chunk of chunks) {
+        await channel.send({ content: `\`\`\`\n${chunk}\n\`\`\`` });
+      }
+    } catch (error) {
+      console.warn(`[Runner:${jobKey}] inventory message failed — ${error.message}`);
+    }
   }
 
   async function flush() {
@@ -410,13 +743,15 @@ export async function startRunner({
     // messages before the first send has assigned liveMsg.
     const task = flushPromise.then(async () => {
       lastRenderAt = Date.now();
-      const content = '```\n' + logLines.join('\n') + '\n```';
+      const visibleLines = [...logLines];
+      let content = '```\n' + visibleLines.join('\n') + '\n```';
+      while (content.length > 1950 && visibleLines.length > 1) {
+        visibleLines.shift();
+        content = '```\n' + visibleLines.join('\n') + '\n```';
+      }
       try {
         if (!liveMsg) {
-          let ch = await client.channels.fetch(channelId).catch(() => null);
-          if (!ch?.isTextBased?.() && config.logChannelId && config.logChannelId !== channelId) {
-            ch = await client.channels.fetch(config.logChannelId).catch(() => null);
-          }
+          const ch = await resolveOutputChannel();
           if (!ch?.isTextBased?.()) return;
           liveMsg = await ch.send({ content });
         } else {
@@ -489,18 +824,51 @@ export async function startRunner({
     const allQuests = await fetchQuests(userToken, signal);
     const active = allQuests.filter((quest) => !quest.completed);
     const supported = active.filter(
-      (quest) => VIDEO_EVENTS.has(quest.eventName) || STREAM_EVENTS.has(quest.eventName),
+      (quest) => isRunnableQuest(quest),
     );
     let attempted = false;
     let progressed = false;
+
+    const inventoryFingerprint = active
+      .map((quest) => `${quest.id}:${quest.eventName}`)
+      .sort()
+      .join('|');
+    if (inventoryFingerprint !== lastInventoryFingerprint) {
+      lastInventoryFingerprint = inventoryFingerprint;
+      addLog(`📋 ${username}: เควสที่ยังไม่เสร็จทั้งหมด ${active.length} เควส`);
+      const inventoryLines = active.map((quest, index) => {
+        const unavailableReason = questUnavailableReason(quest);
+        const supportedLabel = isRunnableQuest(quest)
+          ? 'พร้อมทำ'
+          : unavailableReason ?? 'ต้องทำจริง';
+        return `  ${index + 1}. ${quest.name} [${quest.eventName}] `
+          + `${Math.floor(quest.progress)}% — ${supportedLabel}`;
+      });
+      await render();
+      await sendStandaloneLines(
+        `📋 ${username}: เควสที่ยังไม่เสร็จทั้งหมด ${active.length} เควส`,
+        inventoryLines,
+      );
+    }
 
     const unclaimed = allQuests.filter((quest) => quest.completed && !quest.claimed);
     for (const quest of unclaimed) {
       if (signal.aborted) break;
       try {
         await claimQuest(userToken, quest.id, signal);
-        progressed = true;
-        addLog(`🎁 ${username}: CLAIMED ${quest.name}`);
+        const claimed = await waitForQuestState(
+          userToken,
+          quest.id,
+          (fresh) => fresh.claimed,
+          signal,
+        );
+        if (claimed) {
+          progressed = true;
+          questEngineStatus.lastVerifiedClaimAt = new Date().toISOString();
+          addLog(`🎁 ${username}: Discord ยืนยัน CLAIMED — ${quest.name}`);
+        } else {
+          addLog(`⚠️ ${username}: ${quest.name} — ส่ง Claim แล้วแต่ยังไม่พบ claimed_at`);
+        }
       } catch (err) {
         rethrowFatalAuth(err);
         addLog(`⚠️ ${username}: claim failed — ${quest.name} — ${err.message}`);
@@ -509,7 +877,10 @@ export async function startRunner({
     }
 
     for (const quest of active.filter((item) => !supported.includes(item))) {
-      const reason = SKIP_EVENTS.has(quest.eventName) ? 'ต้องเล่นจริง' : 'unknown type';
+      const reason = STREAM_EVENTS.has(quest.eventName)
+        ? 'ต้องสตรีมจริงและมี stream session'
+        : questUnavailableReason(quest)
+          ?? (SKIP_EVENTS.has(quest.eventName) ? 'ต้องเล่นจริง' : 'unknown type');
       addLog(`⏭️ ${username}: ข้าม ${quest.name} (${quest.eventName} — ${reason})`);
       await render();
     }
@@ -519,15 +890,37 @@ export async function startRunner({
         ? `📭 ${username}: ไม่พบ Quest ที่ระบบรองรับ`
         : `📭 ${username}: ไม่พบ Quest`);
       await render();
-      return { attempted, progressed, supportedCount: 0 };
+      return { attempted, progressed, supportedCount: 0, activeCount: active.length };
     }
 
     addLog(`🎯 ${username}: ${supported.length} QUESTS`);
     await render();
 
-    for (const [idx, quest] of supported.entries()) {
+    for (const [idx, initialQuest] of supported.entries()) {
       if (signal.aborted) break;
       attempted = true;
+      let quest;
+      try {
+        quest = await fetchFreshQuest(userToken, initialQuest.id, signal);
+      } catch (err) {
+        rethrowFatalAuth(err);
+        addLog(`⚠️ ${username}: refresh failed — ${initialQuest.name} — ${err.message}`);
+        await render();
+        continue;
+      }
+      if (quest.completed) {
+        addLog(`↪️ ${username}: ${quest.name} เสร็จแล้วระหว่างรอ — ข้าม`);
+        await render();
+        continue;
+      }
+      if (!isRunnableQuest(quest)) {
+        addLog(
+          `↪️ ${username}: ${quest.name} ไม่พร้อมทำ `
+          + `(${questUnavailableReason(quest) ?? quest.eventName}) — ข้าม`,
+        );
+        await render();
+        continue;
+      }
 
       if (!quest.enrolled) {
         addLog(`🚀 ${username}: JOIN ${quest.name}`);
@@ -540,33 +933,54 @@ export async function startRunner({
           await render();
           continue;
         }
+        try {
+          const enrolled = await waitForQuestState(
+            userToken,
+            quest.id,
+            (fresh) => fresh.enrolled,
+            signal,
+          );
+          if (!enrolled) {
+            addLog(`⚠️ ${username}: ${quest.name} — Discord ยังไม่ยืนยันการ JOIN`);
+            await render();
+            continue;
+          }
+          quest = enrolled;
+        } catch (err) {
+          rethrowFatalAuth(err);
+          addLog(`⚠️ ${username}: enroll verify failed — ${quest.name} — ${err.message}`);
+          await render();
+          continue;
+        }
       }
 
       addLog(`▶️ ${username}: [${idx + 1}/${supported.length}] ${quest.name} [${quest.eventName}]`);
       await render();
 
-      let lastReportedPct = -1;
-      const onProgress = async (pct) => {
-        const bucket = Math.min(100, Math.floor(pct / 25) * 25);
-        if (bucket === lastReportedPct) return;
-        lastReportedPct = bucket;
-        const lastLine = logLines.at(-1) ?? '';
-        const newLine = `⌛ ${username}: [${idx + 1}/${supported.length}] ${quest.name} ${bucket}%`;
-        if (lastLine.startsWith('⌛')) {
-          logLines[logLines.length - 1] = newLine;
-        } else {
-          addLog(newLine);
+      let nextCheckpoint = Math.max(25, (Math.floor(quest.progress / 25) + 1) * 25);
+      const onServerProgress = async (fresh) => {
+        const pct = fresh.completed ? 100 : Math.min(100, Math.floor(fresh.progress));
+        const confirmedSeconds = fresh.completed ? fresh.secondsNeeded : fresh.progressSecs;
+        if (fresh.progressSecs > 0 || fresh.completed) {
+          questEngineStatus.lastVerifiedProgressAt = new Date().toISOString();
+        }
+        while (nextCheckpoint <= 100 && pct >= nextCheckpoint) {
+          addLog(
+            `⌛ Discord ${nextCheckpoint}% — ${quest.name} `
+            + `${formatQuestDuration(confirmedSeconds)}/${formatQuestDuration(fresh.secondsNeeded)}`,
+          );
+          nextCheckpoint += 25;
         }
         await render();
       };
 
-      const runner = VIDEO_EVENTS.has(quest.eventName) ? runVideoQuest : runStreamQuest;
+      const runner = isVideoEvent(quest.eventName) ? runVideoQuest : runGameQuest;
       let runnerError = null;
       await runner(
         userToken,
         quest,
         signal,
-        onProgress,
+        onServerProgress,
         speedMultiplier,
         heartbeatInterval,
       ).catch((err) => {
@@ -577,28 +991,44 @@ export async function startRunner({
 
       if (signal.aborted || runnerError) continue;
 
-      let freshQuests;
+      let fresh;
       try {
-        freshQuests = await fetchQuests(userToken, signal);
+        fresh = await waitForQuestState(
+          userToken,
+          quest.id,
+          (item) => item.completed,
+          signal,
+        );
       } catch (err) {
         rethrowFatalAuth(err);
         addLog(`⚠️ ${username}: verify failed — ${err.message}`);
         await render();
         continue;
       }
-      const fresh = freshQuests.find((item) => item.id === quest.id);
-      if (!fresh?.completed) {
-        addLog(`⚠️ ${username}: ${quest.name} — Discord ยังไม่ยืนยันว่าเสร็จ`);
+      if (!fresh) {
+        addLog(`⚠️ ${username}: ${quest.name} — Discord ยังไม่ส่ง completed_at หลังตรวจ 3 ครั้ง`);
         await render();
         continue;
       }
 
       progressed = true;
-      addLog(`✅ ${username}: ${quest.name} DONE`);
+      questEngineStatus.lastVerifiedCompletionAt = new Date().toISOString();
+      addLog(`✅ ${username}: Discord ยืนยัน DONE — ${quest.name}`);
       await render();
       try {
         await claimQuest(userToken, quest.id, signal);
-        addLog(`🎁 ${username}: CLAIMED ${quest.name}`);
+        const claimed = await waitForQuestState(
+          userToken,
+          quest.id,
+          (item) => item.claimed,
+          signal,
+        );
+        if (claimed) {
+          questEngineStatus.lastVerifiedClaimAt = new Date().toISOString();
+          addLog(`🎁 ${username}: Discord ยืนยัน CLAIMED — ${quest.name}`);
+        } else {
+          addLog(`⚠️ ${username}: ${quest.name} — ส่ง Claim แล้วแต่ยังไม่พบ claimed_at`);
+        }
       } catch (err) {
         rethrowFatalAuth(err);
         addLog(`⚠️ ${username}: claim error — ${err.message}`);
@@ -606,7 +1036,12 @@ export async function startRunner({
       await render();
     }
 
-    return { attempted, progressed, supportedCount: supported.length };
+    const latestQuests = await fetchQuests(userToken, signal);
+    const supportedRemaining = latestQuests.filter(
+      (quest) => !quest.completed && isRunnableQuest(quest),
+    ).length;
+    const activeCount = latestQuests.filter((quest) => !quest.completed).length;
+    return { attempted, progressed, supportedCount: supportedRemaining, activeCount };
   }
 
   const runPromise = (async () => {
@@ -659,12 +1094,14 @@ export async function startRunner({
             lastCheckAt: new Date().toISOString(),
             lastError: err.message,
           });
-          outcome = { attempted: false, progressed: false, supportedCount: 0 };
+          outcome = { attempted: false, progressed: false, supportedCount: 0, activeCount: 0 };
         }
 
         if (mode === 'oneshot') {
           if (outcome.supportedCount === 0) {
-            addLog(`🔒 ${username}: RUNNER STOPPED — NO ACTIVE QUESTS`);
+            addLog(outcome.activeCount > 0
+              ? `🔒 ${username}: RUNNER STOPPED — NO SUPPORTED QUESTS`
+              : `🔒 ${username}: RUNNER STOPPED — NO ACTIVE QUESTS`);
             await render();
             break;
           }
@@ -675,6 +1112,13 @@ export async function startRunner({
             break;
           }
           addLog(`🔄 ${username}: ROUND ${round} DONE — RECHECKING...`);
+          await render();
+          await sleep(3000, signal);
+          continue;
+        }
+
+        if (outcome.progressed && outcome.supportedCount > 0) {
+          addLog(`🔄 ${username}: พบ Quest ที่ยังเหลือ — ตรวจและทำต่อทันที`);
           await render();
           await sleep(3000, signal);
           continue;
@@ -760,6 +1204,13 @@ function formatScheduleTime(date) {
   }).format(date);
 }
 
+function formatQuestDuration(seconds) {
+  const total = Math.max(0, Math.round(Number(seconds) || 0));
+  const minutes = Math.floor(total / 60);
+  const remaining = total % 60;
+  return minutes > 0 ? `${minutes}m${remaining ? ` ${remaining}s` : ''}` : `${remaining}s`;
+}
+
 export async function restoreScheduledRunners(client) {
   const rows = listScheduledRunners();
   if (!rows.length) return { restored: 0, failed: 0 };
@@ -800,30 +1251,106 @@ export async function restoreScheduledRunners(client) {
 
 // ── Quest Runners ─────────────────────────────────────────────────────────────
 
-async function runVideoQuest(token, quest, signal, onProgress, speedMultiplier, heartbeatSecs) {
-  let current  = quest.progressSecs;
-  const target = quest.secondsNeeded;
-  while (current < target) {
-    if (signal.aborted) throw new Error('aborted');
-    await sendVideoProgress(token, quest.id, current, signal);
-    current = Math.min(current + speedMultiplier * heartbeatSecs, target);
-    await onProgress(Math.floor((current / target) * 100));
-    if (current >= target) break;
-    await sleep(heartbeatSecs * 1000, signal);
-  }
-  await sendVideoProgress(token, quest.id, target, signal);
-  await onProgress(100);
+async function fetchFreshQuest(token, questId, signal) {
+  const fresh = (await fetchQuests(token, signal)).find((item) => item.id === questId);
+  if (!fresh) throw new QuestCompatibilityError(`Quest ${questId} disappeared from Quest API`);
+  return fresh;
 }
 
-async function runStreamQuest(token, quest, signal, onProgress, _speedMultiplier, heartbeatSecs) {
-  const total     = quest.secondsNeeded;
-  const ticks     = Math.ceil(total / heartbeatSecs);
-  const startTick = Math.floor((quest.progressSecs / total) * ticks);
-  for (let i = startTick; i < ticks; i++) {
+async function runVideoQuest(token, quest, signal, onServerProgress, _speedMultiplier) {
+  let fresh = quest;
+  let current = fresh.progressSecs;
+  const target = fresh.secondsNeeded;
+  const submissionIntervalSecs = 10;
+  const step = submissionIntervalSecs;
+  const enrolledAtMs = Date.parse(fresh.enrolledAt);
+  let unchangedChecks = 0;
+  let allowanceWaits = 0;
+
+  while (!fresh.completed && current < target) {
     if (signal.aborted) throw new Error('aborted');
-    await sendHeartbeat(token, quest.id, signal);
-    await onProgress(Math.round(((i + 1) / ticks) * 100));
-    await sleep(heartbeatSecs * 1000, signal);
+
+    // Discord limits video timestamps to roughly the elapsed enrollment time.
+    // Never report an arbitrarily accelerated local value as accepted progress.
+    const maxAllowed = Number.isFinite(enrolledAtMs)
+      ? Math.floor((Date.now() - enrolledAtMs) / 1000) + 10
+      : current + 1;
+    const nextTimestamp = Math.min(target, current + step, maxAllowed);
+    if (nextTimestamp <= current) {
+      allowanceWaits++;
+      if (allowanceWaits >= 120) {
+        throw new Error('รอ video timestamp allowance จาก Discord เกิน 2 นาที');
+      }
+      await sleep(1000, signal);
+      continue;
+    }
+    allowanceWaits = 0;
+
+    await sendVideoProgress(token, quest.id, nextTimestamp, signal);
+    await sleep(1000, signal);
+    fresh = await fetchFreshQuest(token, quest.id, signal);
+    await onServerProgress(fresh);
+
+    if (fresh.progressSecs > current || fresh.completed) {
+      unchangedChecks = 0;
+    } else {
+      unchangedChecks++;
+    }
+    if (unchangedChecks >= 8) {
+      throw new Error('Discord ไม่ยืนยัน video progress หลังตรวจ 8 ครั้ง');
+    }
+    current = Math.max(current, fresh.progressSecs);
+    if (!fresh.completed && current < target) {
+      await sleep((submissionIntervalSecs - 1) * 1000, signal);
+    }
   }
-  await onProgress(100);
+
+  return fresh;
+}
+
+async function runGameQuest(token, quest, signal, onServerProgress, _speedMultiplier, heartbeatSecs) {
+  let fresh = quest;
+  let current = fresh.progressSecs;
+  const intervalSecs = Math.max(1, Number(heartbeatSecs) || 30);
+  let unchangedChecks = 0;
+  let forceApplicationPayload = false;
+
+  while (!fresh.completed && current < fresh.secondsNeeded) {
+    if (signal.aborted) throw new Error('aborted');
+
+    if (forceApplicationPayload) {
+      await sendApplicationHeartbeat(token, fresh, false, signal);
+    } else {
+      await sendGameHeartbeat(token, fresh, false, signal);
+    }
+    await sleep(1000, signal);
+    fresh = await fetchFreshQuest(token, quest.id, signal);
+    await onServerProgress(fresh);
+
+    if (fresh.progressSecs > current || fresh.completed) {
+      unchangedChecks = 0;
+    } else {
+      unchangedChecks++;
+      if (fresh.applicationId) forceApplicationPayload = true;
+    }
+    if (unchangedChecks >= 5) {
+      throw new Error('Discord ไม่ยืนยัน game progress หลัง heartbeat 5 ครั้ง');
+    }
+    current = Math.max(current, fresh.progressSecs);
+    if (!fresh.completed && current < fresh.secondsNeeded) {
+      await sleep(Math.max(0, intervalSecs - 1) * 1000, signal);
+    }
+  }
+
+  if (!fresh.completed) {
+    if (forceApplicationPayload) {
+      await sendApplicationHeartbeat(token, fresh, true, signal);
+    } else {
+      await sendGameHeartbeat(token, fresh, true, signal);
+    }
+    await sleep(1000, signal);
+    fresh = await fetchFreshQuest(token, quest.id, signal);
+    await onServerProgress(fresh);
+  }
+  return fresh;
 }

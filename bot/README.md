@@ -77,6 +77,29 @@ Discord API requests มี timeout 15 วินาที รองรับ `Re
 และ retry แบบ exponential backoff สำหรับ network/5xx สูงสุด 3 ครั้ง
 หาก Token ตอบ 401 หรือ endpoint หลักตอบ 403 ระบบจะหยุด Runner และลบ schedule ทันที
 
+### วิธีตรวจว่า Discord รับผลจริง
+
+- ระบบจะแสดง `Discord ยืนยัน DONE` เฉพาะเมื่อดึงข้อมูลใหม่แล้วพบ `completed_at`
+- ระบบจะแสดง `Discord ยืนยัน CLAIMED` เฉพาะเมื่อดึงข้อมูลใหม่แล้วพบ `claimed_at`
+- ระบบรายงาน 25% / 50% / 75% / 100% จาก `user_status.progress` ที่ดึงกลับจาก Discord
+  ไม่ใช่การนับเวลาในเครื่อง Bot
+- ใช้ `/api-status` ดูเวลาที่ Quest API สำเร็จล่าสุด, schema/event ที่ไม่รู้จัก
+  endpoint ที่ใช้งานจริง และเวลาที่ Discord ยืนยัน progress/การจบ/รับรางวัลล่าสุด
+- หาก Discord เปลี่ยน response จาก array เป็นรูปแบบอื่น ระบบจะแจ้ง compatibility error
+  แทนการรายงานผิดว่า “ไม่พบ Quest”
+- การดึงรายการใช้ `/quests/@me` เป็นหลัก รองรับทั้ง response แบบ array และ `{ quests: [] }`
+  และตรวจ `/users/@me/quests` เป็น fallback หาก endpoint หลักใช้ไม่ได้หรือส่งรายการว่าง
+- รองรับ `excluded_quests` และ `quest_enrollment_blocked_until`; เควสที่ยังรับไม่ได้จะถูกรายงาน
+  แต่ระบบจะไม่ยิง enroll ซ้ำจนกว่า Discord จะเปิดให้รับ
+- ก่อนเริ่มทำ ระบบรายงานเควสที่ยังไม่เสร็จทั้งหมด จากนั้นรีเฟรชสถานะก่อนเริ่มแต่ละเควส
+  และวนตรวจอีกครั้งหลังจบจนไม่เหลือเควสที่รองรับ
+
+สถานะนี้เก็บในหน่วยความจำ จึงเริ่มเป็น “ยังไม่มีการตรวจ” ทุกครั้งที่ Bot restart
+และจะมีหลักฐานจริงหลังจาก Runner ตรวจด้วย Token และ Quest จริงแล้วเท่านั้น
+
+> Quest endpoints ที่ Runner ใช้ไม่ได้อยู่ใน Discord Bot API สาธารณะ และการใช้ User Token
+> ทำงานอัตโนมัติมีความเสี่ยงต่อบัญชี ไม่มีระบบใดรับประกันความเข้ากันได้หรือความปลอดภัยของบัญชีได้ 100%
+
 สร้าง secret ที่แข็งแรงได้ด้วย:
 
 ```bash
@@ -91,17 +114,20 @@ Bot สามารถทำ Quest ผ่าน API ได้เฉพาะป�
 
 | Event Type | วิธีทำ | รองรับ |
 |---|---|---|
-| `WATCH_VIDEO` | ส่ง video-progress timestamp | ✅ |
-| `WATCH_VIDEO_ON_MOBILE` | ส่ง video-progress timestamp | ✅ |
-| `STREAM_ON_DESKTOP` | ส่ง heartbeat | ✅ |
-| `PLAY_ON_DESKTOP` | ส่ง heartbeat | ✅ |
-| `PLAY_ON_DESKTOP_V2` | ส่ง heartbeat | ✅ |
+| `WATCH_VIDEO` | ส่ง video-progress ช่วงเล็กทุก 10 วินาทีและอ่าน progress กลับ | ✅ |
+| `WATCH_VIDEO_ON_MOBILE` | ส่ง video-progress ช่วงเล็กและตรวจผลจากเซิร์ฟเวอร์ | ✅ |
+| `STREAM_ON_DESKTOP` | ต้องมี stream session จริง | ❌ ข้าม |
+| `PLAY_ON_DESKTOP` | ส่ง `stream_key` heartbeat และ fallback `application_id` เมื่อจำเป็น | ✅ |
+| `PLAY_ON_DESKTOP_V2` | ส่ง `stream_key` heartbeat และ fallback `application_id` เมื่อจำเป็น | ✅ |
 | `ACHIEVEMENT_IN_GAME` | ต้องเล่นเกมจริง | ❌ ข้าม |
 | `ACHIEVEMENT_IN_ACTIVITY` | ต้องเล่น Activity จริง | ❌ ข้าม |
 | `PLAY_ACTIVITY` | ต้องเล่น Discord Activity จริง | ❌ ข้าม |
 | `PLAY_ON_XBOX` / `PLAY_ON_PLAYSTATION` | ต้องเล่นบน console จริง | ❌ ข้าม |
 
 Quest ที่ข้ามจะถูก log บอกเหตุผลและข้ามไปทำอันถัดไปอัตโนมัติ
+
+`STREAM_ON_DESKTOP` ไม่สามารถรับประกันด้วย Token อย่างเดียว เพราะ Discord ต้องผูก heartbeat
+กับ stream session จริง ระบบจึงไม่ส่ง heartbeat เปล่าและไม่รายงานผลสำเร็จปลอม
 
 ---
 
@@ -120,6 +146,9 @@ Bot จะดึงค่าล่าสุดจากอินเทอร์�
 โดยใช้ Fine-grained token สิทธิ์ `Public repositories: read-only` และห้ามบันทึก token ลง Git
 
 **ถ้า fetch ไม่ได้** (GitHub ล่ม / rate limit) → ใช้ค่า hardcode เป็น fallback โดยอัตโนมัติ — Bot ไม่ crash
+
+Build/header ที่อัปเดตสำเร็จไม่ได้ยืนยันว่า Quest schema หรือ action endpoint ยังทำงาน
+ให้ยึดผลจาก `/api-status`, `completed_at` และ `claimed_at` เป็นหลัก
 
 Log ที่จะเห็นทุกครั้งที่ start:
 ```
