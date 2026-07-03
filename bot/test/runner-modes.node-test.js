@@ -357,7 +357,7 @@ test('runner records completion and claim only after Discord returns completed_a
   assert.equal(stopRunner('owner-server-proof', { mode: 'scheduled' }), true);
 });
 
-test('one-shot runner reports every pending quest and server-confirmed 25 percent checkpoints in order', async () => {
+test('one-shot runner rescans after each quest and reports the requested flow in order', async () => {
   const states = new Map([
     ['quest-a', { completed: false, claimed: false }],
     ['quest-b', { completed: false, claimed: false }],
@@ -418,32 +418,124 @@ test('one-shot runner reports every pending quest and server-confirmed 25 percen
   });
 
   await waitFor(() => getUserJobs('owner-multi-quest-proof').length === 0, 7000);
-  const transcript = contents.join('\n');
-  assert.match(transcript, /เควสที่ยังไม่เสร็จทั้งหมด 2 เควส/);
-  assert.match(transcript, /1\. Quest A/);
-  assert.match(transcript, /2\. Quest B/);
-  for (const checkpoint of [25, 50, 75, 100]) {
-    assert.match(transcript, new RegExp(`Discord ${checkpoint}%`));
+  const finalStatus = contents.at(-1);
+  const expectedLines = [
+    '✅ LOGIN : multi-quest-user',
+    '🔎 multi-quest-user: พบ 2 QUESTS',
+    '⏭️ multi-quest-user: กำลังจะทำ Quest A',
+    '▶️ multi-quest-user: กำลังทำ Quest A',
+    '⌛ multi-quest-user: Quest A 0%',
+    '⌛ multi-quest-user: Quest A 25%',
+    '⌛ multi-quest-user: Quest A 50%',
+    '⌛ multi-quest-user: Quest A 75%',
+    '⌛ multi-quest-user: Quest A 100%',
+    '🔎 multi-quest-user: พบ 1 QUESTS',
+    '⏭️ multi-quest-user: กำลังจะทำ Quest B',
+    '▶️ multi-quest-user: กำลังทำ Quest B',
+    '⌛ multi-quest-user: Quest B 0%',
+    '⌛ multi-quest-user: Quest B 25%',
+    '⌛ multi-quest-user: Quest B 50%',
+    '⌛ multi-quest-user: Quest B 75%',
+    '⌛ multi-quest-user: Quest B 100%',
+    '🔎 multi-quest-user: พบ 0 QUESTS',
+    '🔒 LOGOUT : multi-quest-user',
+  ];
+  let previousIndex = -1;
+  for (const line of expectedLines) {
+    const index = finalStatus.indexOf(line);
+    assert.ok(index > previousIndex, `${line} must appear in order`);
+    previousIndex = index;
   }
-  assert.ok(transcript.indexOf('Discord ยืนยัน DONE — Quest A')
-    < transcript.indexOf('▶️ multi-quest-user: [2/2] Quest B'));
+  assert.doesNotMatch(finalStatus, /CLAIM|DONE|ข้าม|เควสที่ยังไม่เสร็จทั้งหมด/);
+  assert.equal(finalStatus.match(/🔒 LOGOUT/g)?.length, 1);
   assert.equal(states.get('quest-a').claimed, true);
   assert.equal(states.get('quest-b').claimed, true);
 });
 
-test('pending quest inventory is chunked without dropping entries beyond the live log limit', async () => {
+test('runner counts only runnable quests and hides expired, future, blocked, unsupported and completed quests', async () => {
   const contents = [];
-  const quests = Array.from({ length: 30 }, (_, index) => ({
-    id: `console-quest-${index + 1}`,
+  let runnableCompleted = false;
+  let runnableClaimed = false;
+  const makeQuest = ({
+    id,
+    name,
+    event = 'WATCH_VIDEO',
+    startsAt = null,
+    expiresAt = null,
+    enrolled = true,
+    completed = false,
+    claimed = false,
+  }) => ({
+    id,
     config: {
-      messages: { quest_name: `Console Quest ${index + 1}` },
-      task_config: { tasks: { PLAY_ON_XBOX: { target: 60 } } },
+      messages: { quest_name: name },
+      starts_at: startsAt,
+      expires_at: expiresAt,
+      task_config: { tasks: { [event]: { target: 1 } } },
     },
-    user_status: { progress: { PLAY_ON_XBOX: { value: 0 } } },
-  }));
-  global.fetch = async (url) => {
-    if (isQuestListUrl(url)) {
-      return new Response(JSON.stringify({ quests }), {
+    user_status: {
+      enrolled_at: enrolled ? '2026-07-03T00:00:00Z' : null,
+      completed_at: completed ? '2026-07-03T00:01:00Z' : null,
+      claimed_at: claimed ? '2026-07-03T00:02:00Z' : null,
+      progress: { [event]: { value: completed ? 1 : 0 } },
+    },
+  });
+  const payload = () => ({
+    quest_enrollment_blocked_until: new Date(Date.now() + 60_000).toISOString(),
+    quests: [
+      makeQuest({
+        id: 'runnable',
+        name: 'Runnable Quest',
+        completed: runnableCompleted,
+        claimed: runnableClaimed,
+      }),
+      makeQuest({
+        id: 'expired',
+        name: 'Expired Hidden Quest',
+        expiresAt: '2020-01-01T00:00:00Z',
+      }),
+      makeQuest({
+        id: 'future',
+        name: 'Future Hidden Quest',
+        startsAt: '2099-01-01T00:00:00Z',
+      }),
+      makeQuest({
+        id: 'blocked',
+        name: 'Blocked Hidden Quest',
+        enrolled: false,
+      }),
+      makeQuest({
+        id: 'unsupported',
+        name: 'Unsupported Hidden Quest',
+        event: 'PLAY_ON_XBOX',
+      }),
+      makeQuest({
+        id: 'completed',
+        name: 'Completed Hidden Quest',
+        completed: true,
+        claimed: true,
+      }),
+    ],
+  });
+
+  global.fetch = async (url, options = {}) => {
+    const path = String(url);
+    if (isQuestListUrl(path)) {
+      return new Response(JSON.stringify(payload()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    if (path.endsWith('/video-progress')) {
+      runnableCompleted = JSON.parse(options.body).timestamp >= 1;
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    if (path.endsWith('/claim-reward')) {
+      runnableClaimed = true;
+      return new Response(JSON.stringify({ ok: true }), {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
       });
@@ -452,21 +544,140 @@ test('pending quest inventory is chunked without dropping entries beyond the liv
   };
 
   await startRunner({
-    jobKey: 'oneshot:inventory-chunks',
-    ownerId: 'owner-inventory-chunks',
-    userToken: 'token-inventory-chunks',
-    channelId: 'channel-inventory-chunks',
+    jobKey: 'oneshot:filtered-quests',
+    ownerId: 'owner-filtered-quests',
+    userToken: 'token-filtered-quests',
+    channelId: 'channel-filtered-quests',
     client: mockClient(contents),
     mode: 'oneshot',
-    accountId: 'account-inventory-chunks',
-    username: 'inventory-user',
+    accountId: 'account-filtered-quests',
+    username: 'filtered-user',
   });
 
-  await waitFor(() => getUserJobs('owner-inventory-chunks').length === 0);
-  const transcript = contents.join('\n');
-  assert.match(transcript, /เควสที่ยังไม่เสร็จทั้งหมด 30 เควส/);
-  assert.match(transcript, /1\. Console Quest 1 /);
-  assert.match(transcript, /30\. Console Quest 30 /);
+  await waitFor(() => getUserJobs('owner-filtered-quests').length === 0, 4000);
+  const finalStatus = contents.at(-1);
+  assert.match(finalStatus, /🔎 filtered-user: พบ 1 QUESTS/);
+  assert.match(finalStatus, /กำลังจะทำ Runnable Quest/);
+  assert.doesNotMatch(
+    finalStatus,
+    /Expired Hidden|Future Hidden|Blocked Hidden|Unsupported Hidden|Completed Hidden/,
+  );
+  assert.doesNotMatch(finalStatus, /ข้าม|เควสที่ยังไม่เสร็จทั้งหมด/);
+});
+
+test('runner reports existing Discord progress before the remaining checkpoints', async () => {
+  const contents = [];
+  let completed = false;
+  let claimed = false;
+  global.fetch = async (url, options = {}) => {
+    const path = String(url);
+    if (isQuestListUrl(path)) {
+      return new Response(JSON.stringify({ quests: [{
+        id: 'partial-progress',
+        config: {
+          messages: { quest_name: 'Partial Quest' },
+          task_config: { tasks: { WATCH_VIDEO: { target: 10 } } },
+        },
+        user_status: {
+          enrolled_at: '2026-07-03T00:00:00Z',
+          completed_at: completed ? '2026-07-03T00:01:00Z' : null,
+          claimed_at: claimed ? '2026-07-03T00:02:00Z' : null,
+          progress: { WATCH_VIDEO: { value: completed ? 10 : 4 } },
+        },
+      }] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    if (path.endsWith('/video-progress')) {
+      completed = JSON.parse(options.body).timestamp >= 10;
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    if (path.endsWith('/claim-reward')) {
+      claimed = true;
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    throw new Error(`Unexpected fetch: ${url}`);
+  };
+
+  await startRunner({
+    jobKey: 'oneshot:partial-progress',
+    ownerId: 'owner-partial-progress',
+    userToken: 'token-partial-progress',
+    channelId: 'channel-partial-progress',
+    client: mockClient(contents),
+    mode: 'oneshot',
+    accountId: 'account-partial-progress',
+    username: 'partial-user',
+  });
+
+  await waitFor(() => getUserJobs('owner-partial-progress').length === 0, 4000);
+  const finalStatus = contents.at(-1);
+  const progressLines = [40, 50, 75, 100].map(
+    (percent) => `⌛ partial-user: Partial Quest ${percent}%`,
+  );
+  let previousIndex = -1;
+  for (const line of progressLines) {
+    const index = finalStatus.indexOf(line);
+    assert.ok(index > previousIndex, `${line} must appear in order`);
+    previousIndex = index;
+  }
+  assert.doesNotMatch(finalStatus, /Partial Quest 0%|Partial Quest 25%/);
+});
+
+test('claim failures stay out of the channel while one-shot still logs out', async () => {
+  const contents = [];
+  global.fetch = async (url) => {
+    const path = String(url);
+    if (isQuestListUrl(path)) {
+      return new Response(JSON.stringify({ quests: [{
+        id: 'claim-failure',
+        config: {
+          messages: { quest_name: 'Silent Claim Quest' },
+          task_config: { tasks: { WATCH_VIDEO: { target: 1 } } },
+        },
+        user_status: {
+          enrolled_at: '2026-07-03T00:00:00Z',
+          completed_at: '2026-07-03T00:01:00Z',
+          claimed_at: null,
+          progress: { WATCH_VIDEO: { value: 1 } },
+        },
+      }] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    if (path.endsWith('/claim-reward')) {
+      return new Response(JSON.stringify({ message: 'Forbidden' }), {
+        status: 403,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    throw new Error(`Unexpected fetch: ${url}`);
+  };
+
+  await startRunner({
+    jobKey: 'oneshot:silent-claim-failure',
+    ownerId: 'owner-silent-claim-failure',
+    userToken: 'token-silent-claim-failure',
+    channelId: 'channel-silent-claim-failure',
+    client: mockClient(contents),
+    mode: 'oneshot',
+    accountId: 'account-silent-claim-failure',
+    username: 'silent-user',
+  });
+
+  await waitFor(() => getUserJobs('owner-silent-claim-failure').length === 0);
+  const finalStatus = contents.at(-1);
+  assert.doesNotMatch(finalStatus, /🎁|claim failed|claim error|CLAIMED|ส่ง Claim|Silent Claim Quest/i);
+  assert.match(finalStatus, /🔎 silent-user: พบ 0 QUESTS/);
+  assert.equal(finalStatus.match(/🔒 LOGOUT/g)?.length, 1);
 });
 
 test('PLAY_ON_DESKTOP switches to application_id when the first heartbeat payload makes no progress', async () => {
@@ -544,22 +755,27 @@ test('PLAY_ON_DESKTOP switches to application_id when the first heartbeat payloa
   assert.equal(claimed, true);
 });
 
-test('one-shot runner exits after the first empty quest scan', async () => {
+test('one-shot runner exits after the first empty quest scan and logs out exactly once', async () => {
+  const contents = [];
   await startRunner({
     jobKey: 'oneshot:test',
     ownerId: 'owner-one',
     userToken: 'token-one',
     channelId: 'channel-one',
-    client: mockClient(),
+    client: mockClient(contents),
     mode: 'oneshot',
     accountId: 'account-one',
     username: 'one-shot-user',
   });
 
   await waitFor(() => getUserJobs('owner-one').length === 0);
+  const finalStatus = contents.at(-1);
+  assert.match(finalStatus, /🔎 one-shot-user: พบ 0 QUESTS/);
+  assert.equal(finalStatus.match(/🔒 LOGOUT : one-shot-user/g)?.length, 1);
 });
 
 test('scheduled runner stays active after an empty scan until explicitly stopped', async () => {
+  const contents = [];
   const row = createScheduledRunner({
     ownerId: 'owner-scheduled',
     guildId: 'guild',
@@ -575,7 +791,7 @@ test('scheduled runner stays active after an empty scan until explicitly stopped
     ownerId: row.owner_id,
     userToken: 'token-scheduled',
     channelId: row.channel_id,
-    client: mockClient(),
+    client: mockClient(contents),
     mode: 'scheduled',
     scheduleId: row.id,
     accountId: row.account_id,
@@ -583,12 +799,107 @@ test('scheduled runner stays active after an empty scan until explicitly stopped
   });
 
   await waitFor(() => Boolean(getUserJobs('owner-scheduled')[0]?.nextCheckAt));
+  await waitFor(
+    () => contents.some((content) => content.includes('🔎 scheduled-user: พบ 0 QUESTS')),
+    3000,
+  );
   assert.equal(getUserJobs('owner-scheduled').length, 1);
   assert.ok(getScheduledRunner(row.id)?.next_check_at);
+  assert.match(contents.join('\n'), /🔎 scheduled-user: พบ 0 QUESTS/);
+  assert.doesNotMatch(contents.join('\n'), /🔒 LOGOUT/);
 
   assert.equal(stopScheduledJob('owner-scheduled', row.id), true);
   assert.equal(getUserJobs('owner-scheduled').length, 0);
   assert.equal(getScheduledRunner(row.id), null);
+});
+
+test('stopping a one-shot runner reports logout exactly once', async () => {
+  const contents = [];
+  await startRunner({
+    jobKey: 'oneshot:user-stop',
+    ownerId: 'owner-user-stop',
+    userToken: 'token-user-stop',
+    channelId: 'channel-user-stop',
+    client: mockClient(contents),
+    mode: 'oneshot',
+    accountId: 'account-user-stop',
+    username: 'user-stop-account',
+  });
+
+  assert.equal(stopRunner('owner-user-stop', { mode: 'oneshot' }), true);
+  await waitFor(() => contents.some((content) => content.includes('🔒 LOGOUT : user-stop-account')));
+  const finalStatus = contents.at(-1);
+  assert.equal(finalStatus.match(/🔒 LOGOUT : user-stop-account/g)?.length, 1);
+  assert.doesNotMatch(finalStatus, /STOPPED BY USER/);
+});
+
+test('one-shot runner logs out once after three attempts make no progress', async () => {
+  const contents = [];
+  let enrollAttempts = 0;
+  global.fetch = async (url) => {
+    const path = String(url);
+    if (isQuestListUrl(path)) {
+      return new Response(JSON.stringify({ quests: [{
+        id: 'no-progress',
+        config: {
+          messages: { quest_name: 'No Progress Quest' },
+          task_config: { tasks: { WATCH_VIDEO: { target: 60 } } },
+        },
+        user_status: null,
+      }] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    if (path.endsWith('/enroll')) {
+      enrollAttempts++;
+      return new Response(JSON.stringify({ message: 'Forbidden' }), {
+        status: 403,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    throw new Error(`Unexpected fetch: ${url}`);
+  };
+
+  await startRunner({
+    jobKey: 'oneshot:no-progress',
+    ownerId: 'owner-no-progress',
+    userToken: 'token-no-progress',
+    channelId: 'channel-no-progress',
+    client: mockClient(contents),
+    mode: 'oneshot',
+    accountId: 'account-no-progress',
+    username: 'no-progress-user',
+  });
+
+  await waitFor(() => getUserJobs('owner-no-progress').length === 0);
+  const finalStatus = contents.at(-1);
+  assert.equal(enrollAttempts, 3);
+  assert.equal(finalStatus.match(/🔒 LOGOUT : no-progress-user/g)?.length, 1);
+});
+
+test('one-shot runner logs out once when the Quest API fails', async () => {
+  const contents = [];
+  global.fetch = async () => new Response(
+    JSON.stringify({ unexpected: true }),
+    { status: 200, headers: { 'Content-Type': 'application/json' } },
+  );
+
+  await startRunner({
+    jobKey: 'oneshot:quest-api-error',
+    ownerId: 'owner-quest-api-error',
+    userToken: 'token-quest-api-error',
+    channelId: 'channel-quest-api-error',
+    client: mockClient(contents),
+    mode: 'oneshot',
+    accountId: 'account-quest-api-error',
+    username: 'quest-api-error-user',
+  });
+
+  await waitFor(() => getUserJobs('owner-quest-api-error').length === 0);
+  const finalStatus = contents.at(-1);
+  assert.match(finalStatus, /❌ quest-api-error-user:/);
+  assert.equal(finalStatus.match(/🔒 LOGOUT : quest-api-error-user/g)?.length, 1);
 });
 
 test('saved scheduled runners are restored with their persisted next check', async () => {
