@@ -1,10 +1,12 @@
 import { createServer } from 'http';
 import { stats } from './db.js';
+import { reportCriticalError } from './error-reporter.js';
 
 const PORT = process.env.PORT || 3000;
 let botClient = null;
 let startTime = Date.now();
 let serverStarted = false;
+let server = null;
 
 export function startDashboard(client) {
   if (client) {
@@ -14,10 +16,22 @@ export function startDashboard(client) {
   }
   if (!serverStarted) {
     serverStarted = true;
-    createServer(handleRequest).listen(PORT, () => {
+    server = createServer(handleRequest);
+    server.on('error', (error) => {
+      void reportCriticalError('Dashboard server', error);
+    });
+    server.listen(PORT, () => {
       console.log(`🌐 Dashboard พร้อมใช้งาน → port ${PORT}`);
     });
   }
+}
+
+export async function stopDashboard() {
+  if (!server) return;
+  const activeServer = server;
+  server = null;
+  serverStarted = false;
+  await new Promise((resolve) => activeServer.close(resolve));
 }
 
 function handleRequest(req, res) {

@@ -17,5 +17,7 @@ export const config = {
   logChannelId:   process.env.LOG_CHANNEL_ID ?? '',
   managerRoleId:  process.env.MANAGER_ROLE_ID ?? '',
   databasePath:   process.env.DATABASE_PATH ?? './data/quests.db',
+  databaseBackupDir: process.env.DATABASE_BACKUP_DIR ?? '',
+  databaseBackupRetention: Math.max(1, Number.parseInt(process.env.DATABASE_BACKUP_RETENTION ?? '7', 10) || 7),
   runnerTokenSecret: process.env.RUNNER_TOKEN_SECRET ?? '',
 };

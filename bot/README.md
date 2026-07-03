@@ -14,6 +14,9 @@ npm run register   # ลงทะเบียน Slash Commands (ทำครั
 npm start          # เริ่มใช้งาน
 ```
 
+Repository หลักใช้ `pnpm-lock.yaml` ส่วนโฟลเดอร์ `bot` ใช้ `bot/package-lock.json`
+อย่ารัน `npm install` ที่ root เพราะจะสร้าง `package-lock.json` ซ้ำและทำให้ตัวตรวจ Package Manager สับสน
+
 ---
 
 ## ตัวแปร Environment
@@ -28,6 +31,8 @@ npm start          # เริ่มใช้งาน
 | `LOG_CHANNEL_ID` | ห้องรับการแจ้งเตือน | ➖ |
 | `MANAGER_ROLE_ID` | Role สำหรับผู้จัดการ | ➖ |
 | `DATABASE_PATH` | ที่อยู่ไฟล์ DB (ค่าเริ่มต้น: `./data/quests.db`) | ➖ |
+| `DATABASE_BACKUP_DIR` | โฟลเดอร์ Persistent Disk สำหรับ backup SQLite รายวันเวลา 03:00 | ➖ |
+| `DATABASE_BACKUP_RETENTION` | จำนวน backup ล่าสุดที่เก็บไว้ (ค่าเริ่มต้น: `7`) | ➖ |
 | `GITHUB_TOKEN` | Fine-grained GitHub token สำหรับเพิ่ม API rate limit (Public repositories: read-only) | ➖ |
 | `RUNNER_TOKEN_SECRET` | Secret อย่างน้อย 16 ตัวอักษร สำหรับเข้ารหัส Token ของ Auto Daily Runner | ✅ สำหรับ `/run` |
 
@@ -58,6 +63,19 @@ npm start          # เริ่มใช้งาน
 Token ของ Auto Daily ถูกเข้ารหัสด้วย AES-256-GCM ก่อนเก็บใน SQLite และกู้คืนอัตโนมัติหลัง restart
 ควรตั้ง `DATABASE_PATH` ไปยัง Persistent Disk ของผู้ให้บริการ และห้ามเปลี่ยน
 `RUNNER_TOKEN_SECRET` ขณะที่ยังมี Runner ที่บันทึกอยู่ มิฉะนั้นระบบจะถอดรหัส Token เดิมไม่ได้
+
+หากตั้ง `DATABASE_BACKUP_DIR` ระบบจะสำรอง SQLite ทุกวันเวลา 03:00 ตาม `TIMEZONE`
+และลบไฟล์เก่าให้เหลือตาม `DATABASE_BACKUP_RETENTION` ตัวอย่างบน Render:
+
+```env
+DATABASE_PATH=/var/data/quests.db
+DATABASE_BACKUP_DIR=/var/data/backups
+DATABASE_BACKUP_RETENTION=7
+```
+
+Discord API requests มี timeout 15 วินาที รองรับ `Retry-After` เมื่อเจอ 429
+และ retry แบบ exponential backoff สำหรับ network/5xx สูงสุด 3 ครั้ง
+หาก Token ตอบ 401 หรือ endpoint หลักตอบ 403 ระบบจะหยุด Runner และลบ schedule ทันที
 
 สร้าง secret ที่แข็งแรงได้ด้วย:
 

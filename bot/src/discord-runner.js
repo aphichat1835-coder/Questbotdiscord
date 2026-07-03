@@ -1,10 +1,13 @@
 import 'dotenv/config';
 import { config } from './config.js';
 import {
+  addScheduleJitter,
   nextRecheckState,
   nextScheduledCheck,
   RECHECK_INTERVAL_MS,
 } from './runner-schedule.js';
+import { fetchWithRetry } from './http-retry.js';
+import { reportCriticalError } from './error-reporter.js';
 import {
   decryptRunnerToken,
   deleteScheduledRunner,
@@ -13,6 +16,21 @@ import {
 } from './scheduled-runner-store.js';
 
 const DISCORD_API = 'https://discord.com/api/v9';
+const FATAL_FORBIDDEN_PATHS = new Set(['/users/@me', '/users/@me/quests']);
+
+export class DiscordApiError extends Error {
+  constructor(status, path, data) {
+    super(`Discord API ${status}: ${JSON.stringify(data)}`);
+    this.name = 'DiscordApiError';
+    this.status = status;
+    this.path = path;
+    this.fatalAuth = status === 401 || (status === 403 && FATAL_FORBIDDEN_PATHS.has(path));
+  }
+}
+
+export function isFatalAuthError(error) {
+  return error?.fatalAuth === true;
+}
 
 // ── Build info — hardcoded fallbacks, overwritten by refreshBuildInfo() ────────
 const FALLBACK = Object.freeze({
@@ -157,15 +175,17 @@ function userHeaders(token) {
 }
 
 async function discordFetch(token, path, options = {}) {
-  const res = await fetch(`${DISCORD_API}${path}`, { headers: userHeaders(token), ...options });
+  const { headers = {}, ...requestOptions } = options;
+  const res = await fetchWithRetry(`${DISCORD_API}${path}`, {
+    ...requestOptions,
+    headers: { ...userHeaders(token), ...headers },
+  });
   if (res.status === 204) return { ok: true, status: 204 };
   const text = await res.text();
   let data;
   try { data = JSON.parse(text); } catch { data = text; }
   if (!res.ok) {
-    const err = new Error(`Discord API ${res.status}: ${JSON.stringify(data)}`);
-    err.status = res.status;
-    throw err;
+    throw new DiscordApiError(res.status, path, data);
   }
   return data;
 }
@@ -179,14 +199,14 @@ const STREAM_EVENTS = new Set(['STREAM_ON_DESKTOP', 'PLAY_ON_DESKTOP', 'PLAY_ON_
 const SKIP_EVENTS   = new Set(['ACHIEVEMENT_IN_GAME', 'ACHIEVEMENT_IN_ACTIVITY', 'PLAY_ACTIVITY',
                                 'PLAY_ON_XBOX', 'PLAY_ON_PLAYSTATION', 'progress']);
 
-export async function fetchMe(token) {
-  return discordFetch(token, '/users/@me');
+export async function fetchMe(token, signal) {
+  return discordFetch(token, '/users/@me', { signal });
 }
 
-export async function fetchQuests(token) {
+export async function fetchQuests(token, signal) {
   let raw;
   try {
-    raw = await discordFetch(token, '/users/@me/quests');
+    raw = await discordFetch(token, '/users/@me/quests', { signal });
   } catch (err) {
     if (err.status === 404) return [];
     throw err;
@@ -195,31 +215,33 @@ export async function fetchQuests(token) {
   return raw.map(normalizeQuest);
 }
 
-async function enrollQuest(token, questId) {
+async function enrollQuest(token, questId, signal) {
   // location: 1 = quest bar; required by API
   return discordFetch(token, `/quests/${questId}/enroll`, {
     method: 'POST',
     body: JSON.stringify({ location: 1 }),
+    signal,
   });
 }
 
-async function claimQuest(token, questId) {
+async function claimQuest(token, questId, signal) {
   return discordFetch(token, `/quests/${questId}/claim`, {
     method: 'POST',
     body: JSON.stringify({ location: 1, platform: 'windows' }),
+    signal,
   });
 }
 
-async function sendVideoProgress(token, questId, timestamp) {
+async function sendVideoProgress(token, questId, timestamp, signal) {
   const ts = Math.round(timestamp + Math.random() * 0.5);
   return discordFetch(token, `/quests/${questId}/video-progress`, {
-    method: 'POST', body: JSON.stringify({ timestamp: ts }),
+    method: 'POST', body: JSON.stringify({ timestamp: ts }), signal,
   });
 }
 
-async function sendHeartbeat(token, questId) {
+async function sendHeartbeat(token, questId, signal) {
   return discordFetch(token, `/quests/${questId}/heartbeat`, {
-    method: 'POST', body: JSON.stringify({}),
+    method: 'POST', body: JSON.stringify({}), signal,
   });
 }
 
@@ -279,6 +301,7 @@ function sleep(ms, signal) {
 
 // ── Job Store ─────────────────────────────────────────────────────────────────
 const jobs = new Map();
+const activeRunPromises = new Set();
 
 export function getJob(key)   { return jobs.get(key) ?? null; }
 export function listJobs()    { return [...jobs.entries()].map(([key, j]) => ({ key, ...j.summary() })); }
@@ -325,6 +348,24 @@ export function stopAllForUser(ownerId, { mode = null } = {}) {
 }
 export function stopRunner(ownerId, options = {}) {
   return stopAllForUser(ownerId, options) > 0;
+}
+
+export async function shutdownRunners(timeoutMs = 10_000) {
+  const activeJobs = [...jobs.values()];
+  for (const job of activeJobs) job.controller.abort();
+
+  let timeout;
+  try {
+    await Promise.race([
+      Promise.allSettled([...activeRunPromises]),
+      new Promise((resolve) => {
+        timeout = setTimeout(resolve, timeoutMs);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timeout);
+  }
+  return activeJobs.length;
 }
 
 // ── Runner ────────────────────────────────────────────────────────────────────
@@ -440,8 +481,12 @@ export async function startRunner({
     }
   }
 
+  function rethrowFatalAuth(error) {
+    if (isFatalAuthError(error)) throw error;
+  }
+
   async function runQuestRound() {
-    const allQuests = await fetchQuests(userToken);
+    const allQuests = await fetchQuests(userToken, signal);
     const active = allQuests.filter((quest) => !quest.completed);
     const supported = active.filter(
       (quest) => VIDEO_EVENTS.has(quest.eventName) || STREAM_EVENTS.has(quest.eventName),
@@ -453,10 +498,11 @@ export async function startRunner({
     for (const quest of unclaimed) {
       if (signal.aborted) break;
       try {
-        await claimQuest(userToken, quest.id);
+        await claimQuest(userToken, quest.id, signal);
         progressed = true;
         addLog(`🎁 ${username}: CLAIMED ${quest.name}`);
       } catch (err) {
+        rethrowFatalAuth(err);
         addLog(`⚠️ ${username}: claim failed — ${quest.name} — ${err.message}`);
       }
       await render();
@@ -486,7 +532,14 @@ export async function startRunner({
       if (!quest.enrolled) {
         addLog(`🚀 ${username}: JOIN ${quest.name}`);
         await render();
-        await enrollQuest(userToken, quest.id).catch(() => {});
+        try {
+          await enrollQuest(userToken, quest.id, signal);
+        } catch (err) {
+          rethrowFatalAuth(err);
+          addLog(`⚠️ ${username}: enroll failed — ${quest.name} — ${err.message}`);
+          await render();
+          continue;
+        }
       }
 
       addLog(`▶️ ${username}: [${idx + 1}/${supported.length}] ${quest.name} [${quest.eventName}]`);
@@ -517,13 +570,22 @@ export async function startRunner({
         speedMultiplier,
         heartbeatInterval,
       ).catch((err) => {
+        rethrowFatalAuth(err);
         runnerError = err;
         if (err.message !== 'aborted') addLog(`⚠️ ${username}: ERROR ${err.message}`);
       });
 
       if (signal.aborted || runnerError) continue;
 
-      const freshQuests = await fetchQuests(userToken).catch(() => []);
+      let freshQuests;
+      try {
+        freshQuests = await fetchQuests(userToken, signal);
+      } catch (err) {
+        rethrowFatalAuth(err);
+        addLog(`⚠️ ${username}: verify failed — ${err.message}`);
+        await render();
+        continue;
+      }
       const fresh = freshQuests.find((item) => item.id === quest.id);
       if (!fresh?.completed) {
         addLog(`⚠️ ${username}: ${quest.name} — Discord ยังไม่ยืนยันว่าเสร็จ`);
@@ -535,9 +597,10 @@ export async function startRunner({
       addLog(`✅ ${username}: ${quest.name} DONE`);
       await render();
       try {
-        await claimQuest(userToken, quest.id);
+        await claimQuest(userToken, quest.id, signal);
         addLog(`🎁 ${username}: CLAIMED ${quest.name}`);
       } catch (err) {
+        rethrowFatalAuth(err);
         addLog(`⚠️ ${username}: claim error — ${err.message}`);
       }
       await render();
@@ -546,10 +609,10 @@ export async function startRunner({
     return { attempted, progressed, supportedCount: supported.length };
   }
 
-  (async () => {
+  const runPromise = (async () => {
     try {
       if (!accountId || !initialUsername) {
-        const me = await fetchMe(userToken);
+        const me = await fetchMe(userToken, signal);
         username = me.username ?? 'unknown';
         accountId = me.id ?? accountId;
       }
@@ -588,6 +651,7 @@ export async function startRunner({
           });
         } catch (err) {
           if (err.message === 'aborted') throw err;
+          if (isFatalAuthError(err)) throw err;
           if (mode === 'oneshot') throw err;
           addLog(`⚠️ ${username}: CHECK ERROR — ${err.message}`);
           await render();
@@ -637,7 +701,9 @@ export async function startRunner({
 
         isRecheck = false;
         rechecksRemaining = 0;
-        const scheduledAt = nextScheduledCheck(new Date(), config.timezone);
+        const scheduledAt = addScheduleJitter(
+          nextScheduledCheck(new Date(), config.timezone),
+        );
         nextCheckAt = scheduledAt.toISOString();
         persistSchedule({ nextCheckAt });
         addLog(`💤 ${username}: AUTO DAILY ACTIVE`);
@@ -649,6 +715,14 @@ export async function startRunner({
       if (err.message === 'aborted') {
         addLog(`🛑 ${username}: STOPPED BY USER`);
         await render();
+      } else if (isFatalAuthError(err)) {
+        addLog(`🔐 ${username}: TOKEN INVALID — RUNNER DISABLED (${err.status})`);
+        await render();
+        if (scheduleId != null) deleteScheduledRunner(scheduleId, ownerId);
+        await reportCriticalError(
+          'Runner authentication',
+          new Error(`${username}: Discord API ${err.status}; runner disabled`),
+        );
       } else {
         addLog(`❌ ${username}: ${err.message}`);
         await render();
@@ -666,6 +740,14 @@ export async function startRunner({
       jobs.delete(jobKey);
     }
   })();
+
+  const currentJob = jobs.get(jobKey);
+  if (currentJob) currentJob.done = runPromise;
+  activeRunPromises.add(runPromise);
+  void runPromise.then(
+    () => activeRunPromises.delete(runPromise),
+    () => activeRunPromises.delete(runPromise),
+  );
 
   return { jobKey, mode, scheduleId };
 }
@@ -708,7 +790,7 @@ export async function restoreScheduledRunners(client) {
     } catch (err) {
       failed++;
       updateScheduledRunner(row.id, { lastError: `Restore failed: ${err.message}` });
-      console.error(`❌ Restore Scheduled Runner #${row.id} failed:`, err.message);
+      await reportCriticalError(`Restore Scheduled Runner #${row.id}`, err);
     }
   }
 
@@ -723,13 +805,13 @@ async function runVideoQuest(token, quest, signal, onProgress, speedMultiplier, 
   const target = quest.secondsNeeded;
   while (current < target) {
     if (signal.aborted) throw new Error('aborted');
-    await sendVideoProgress(token, quest.id, current).catch(() => null);
+    await sendVideoProgress(token, quest.id, current, signal);
     current = Math.min(current + speedMultiplier * heartbeatSecs, target);
     await onProgress(Math.floor((current / target) * 100));
     if (current >= target) break;
     await sleep(heartbeatSecs * 1000, signal);
   }
-  await sendVideoProgress(token, quest.id, target).catch(() => {});
+  await sendVideoProgress(token, quest.id, target, signal);
   await onProgress(100);
 }
 
@@ -739,7 +821,7 @@ async function runStreamQuest(token, quest, signal, onProgress, _speedMultiplier
   const startTick = Math.floor((quest.progressSecs / total) * ticks);
   for (let i = startTick; i < ticks; i++) {
     if (signal.aborted) throw new Error('aborted');
-    await sendHeartbeat(token, quest.id).catch(() => {});
+    await sendHeartbeat(token, quest.id, signal);
     await onProgress(Math.round(((i + 1) / ticks) * 100));
     await sleep(heartbeatSecs * 1000, signal);
   }

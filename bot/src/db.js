@@ -70,8 +70,31 @@ db.exec(`
 
 `);
 
-for (const col of ['guild_id TEXT', 'user_id TEXT']) {
-  try { db.exec(`ALTER TABLE quests ADD COLUMN ${col}`); } catch {}
+const questColumns = new Set(
+  db.prepare('PRAGMA table_info(quests)').all().map((column) => column.name),
+);
+for (const [name, definition] of [
+  ['guild_id', 'TEXT'],
+  ['user_id', 'TEXT'],
+]) {
+  if (!questColumns.has(name)) {
+    db.exec(`ALTER TABLE quests ADD COLUMN ${name} ${definition}`);
+  }
+}
+
+export async function backupDatabase(destination) {
+  const backupDir = path.dirname(destination);
+  if (!fs.existsSync(backupDir)) fs.mkdirSync(backupDir, { recursive: true });
+  await db.backup(destination);
+  return destination;
+}
+
+export function closeDatabase() {
+  if (db.open) db.close();
+}
+
+export function getDatabasePath() {
+  return dbPath;
 }
 
 function todayBangkok() {

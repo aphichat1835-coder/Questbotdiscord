@@ -197,6 +197,22 @@ export async function handleButton(interaction) {
 }
 
 export async function handlePanelModal(interaction) {
+  if (
+    ['panel_add_modal', 'panel_edit_modal'].includes(interaction.customId)
+    && !isManager(interaction)
+  ) {
+    return interaction.reply({
+      flags: 64,
+      content: '🔒 สิทธิ์ของคุณเปลี่ยนไป — ต้องการสิทธิ์ **Manager** ขึ้นไป',
+    });
+  }
+  if (interaction.customId === 'panel_delete_modal' && !isAdmin(interaction)) {
+    return interaction.reply({
+      flags: 64,
+      content: '🔒 สิทธิ์ของคุณเปลี่ยนไป — ต้องการสิทธิ์ **Administrator**',
+    });
+  }
+
   if (interaction.customId === 'panel_add_modal') {
     const name     = interaction.fields.getTextInputValue('name').trim();
     const deadline = interaction.fields.getTextInputValue('deadline').trim() || null;

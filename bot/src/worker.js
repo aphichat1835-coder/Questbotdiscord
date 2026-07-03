@@ -1,60 +1,73 @@
+import fs from 'node:fs/promises';
+import path from 'node:path';
 import { config } from './config.js';
+import { backupDatabase } from './db.js';
+import { reportCriticalError } from './error-reporter.js';
+import { nextDailyTime, zonedDateKey } from './runner-schedule.js';
 import { getAllQuests, getStats } from './storage.js';
 
 let client        = null;
 let checkInterval = null;
 let summaryTimeout = null;
+let backupTimeout = null;
+let workerStopping = false;
+const activeTasks = new Set();
+
+function trackTask(promise) {
+  activeTasks.add(promise);
+  void promise.then(
+    () => activeTasks.delete(promise),
+    () => activeTasks.delete(promise),
+  );
+  return promise;
+}
 
 export function startWorker(discordClient) {
   client = discordClient;
+  workerStopping = false;
   console.log('⏰ Worker เริ่มแล้ว — เช็ก deadline ทุก 1 ชั่วโมง');
 
-  checkInterval = setInterval(checkDeadlines, 60 * 60 * 1000);
-  checkDeadlines();
+  checkInterval = setInterval(() => {
+    trackTask(checkDeadlines());
+  }, 60 * 60 * 1000);
+  trackTask(checkDeadlines());
 
   scheduleDailySummary();
+  if (config.databaseBackupDir) scheduleDatabaseBackup();
 }
 
-export function stopWorker() {
+export async function stopWorker(timeoutMs = 5000) {
+  workerStopping = true;
   if (checkInterval)  { clearInterval(checkInterval);  checkInterval  = null; }
   if (summaryTimeout) { clearTimeout(summaryTimeout);  summaryTimeout = null; }
+  if (backupTimeout)  { clearTimeout(backupTimeout);   backupTimeout = null; }
+  let timeout;
+  await Promise.race([
+    Promise.allSettled([...activeTasks]),
+    new Promise((resolve) => {
+      timeout = setTimeout(resolve, timeoutMs);
+    }),
+  ]);
+  clearTimeout(timeout);
   console.log('⏰ Worker หยุดแล้ว');
 }
 
 function scheduleDailySummary() {
+  if (workerStopping) return;
   const tz       = config.timezone ?? 'Asia/Bangkok';
-  const msUntil  = msUntilNext8am(tz);
+  const msUntil  = nextDailyTime(8, new Date(), tz).getTime() - Date.now();
 
   const hrs = Math.floor(msUntil / 3600000);
   const min = Math.floor((msUntil % 3600000) / 60000);
   console.log(`📅 Daily summary จะส่งในอีก ${hrs}h ${min}m`);
 
-  summaryTimeout = setTimeout(async () => {
-    await sendDailySummary();
-    // Re-schedule daily at 8am instead of drifting with a fixed 24h interval
-    scheduleDailySummary();
+  summaryTimeout = setTimeout(() => {
+    trackTask((async () => {
+      await sendDailySummary();
+      // Re-schedule daily at 8am instead of drifting with a fixed 24h interval
+      scheduleDailySummary();
+    })());
   }, msUntil);
-}
-
-/**
- * Returns milliseconds until the next 08:00 in the given IANA timezone.
- * Uses Intl.DateTimeFormat to reliably determine the current date in that tz.
- */
-function msUntilNext8am(tz) {
-  const now     = new Date();
-  // e.g. "2026-07-02" — the current date in target tz
-  const dateStr = now.toLocaleDateString('sv-SE', { timeZone: tz });
-  // Offset in ms: (target tz time) - (UTC time)
-  const utcStr  = now.toLocaleString('en-US', { timeZone: 'UTC' });
-  const tzStr   = now.toLocaleString('en-US', { timeZone: tz });
-  const offset  = new Date(tzStr).getTime() - new Date(utcStr).getTime();
-  // UTC timestamp of today's midnight in target tz
-  const midnightUtc = new Date(dateStr + 'T00:00:00Z').getTime() - offset;
-  // UTC timestamp of 8am today in target tz
-  let next8amUtc = midnightUtc + 8 * 3600000;
-  // If 8am already passed today, aim for tomorrow
-  if (next8amUtc <= now.getTime()) next8amUtc += 24 * 3600000;
-  return next8amUtc - now.getTime();
 }
 
 async function fetchQuests() {
@@ -83,11 +96,8 @@ async function checkDeadlines() {
   try {
     const quests = await fetchQuests();
     const tz     = config.timezone ?? 'Asia/Bangkok';
-    const today  = new Date().toLocaleDateString('sv-SE', { timeZone: tz });
-
-    const tomorrow = new Date();
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    const tomorrowStr = tomorrow.toLocaleDateString('sv-SE', { timeZone: tz });
+    const today = zonedDateKey(new Date(), tz);
+    const tomorrowStr = zonedDateKey(new Date(), tz, 1);
 
     const overdue    = quests.filter((q) => !q.done && q.deadline && q.deadline < today);
     const dueToday   = quests.filter((q) => !q.done && q.deadline === today);
@@ -104,14 +114,54 @@ async function checkDeadlines() {
 
     await sendToLogChannel(`⏰ **Quest Deadline Alert** · ${today}\n\n${parts.join('\n\n')}`);
   } catch (err) {
-    console.error('[Worker] checkDeadlines error:', err.message);
+    await reportCriticalError('Deadline worker', err);
   }
+}
+
+function scheduleDatabaseBackup() {
+  if (workerStopping) return;
+  const next = nextDailyTime(3, new Date(), config.timezone);
+  const delay = next.getTime() - Date.now();
+  console.log(`💾 Database backup จะทำในอีก ${Math.floor(delay / 3600000)}h ${Math.floor((delay % 3600000) / 60000)}m`);
+
+  backupTimeout = setTimeout(() => {
+    trackTask((async () => {
+      try {
+        await runDatabaseBackup();
+      } catch (err) {
+        await reportCriticalError('Database backup', err);
+      } finally {
+        scheduleDatabaseBackup();
+      }
+    })());
+  }, delay);
+  backupTimeout.unref?.();
+}
+
+export async function runDatabaseBackup(now = new Date()) {
+  if (!config.databaseBackupDir) return null;
+
+  const timestamp = now.toISOString().replace(/[:.]/g, '-');
+  const filename = `questbot-${timestamp}.db`;
+  const destination = path.join(config.databaseBackupDir, filename);
+  await backupDatabase(destination);
+
+  const files = (await fs.readdir(config.databaseBackupDir))
+    .filter((name) => /^questbot-.*\.db$/.test(name))
+    .sort()
+    .reverse();
+  await Promise.all(
+    files.slice(config.databaseBackupRetention)
+      .map((name) => fs.unlink(path.join(config.databaseBackupDir, name))),
+  );
+  console.log(`💾 Database backup สำเร็จ → ${destination}`);
+  return destination;
 }
 
 export async function sendDailySummary() {
   if (!config.logChannelId) return;
   const tz    = config.timezone ?? 'Asia/Bangkok';
-  const today = new Date().toLocaleDateString('sv-SE', { timeZone: tz });
+  const today = zonedDateKey(new Date(), tz);
 
   try {
     const { total, done, pending, overdue } = await fetchStats();
@@ -123,6 +173,6 @@ export async function sendDailySummary() {
       overdue > 0 ? `⚠️ เกิน deadline: **${overdue}**` : `✅ ไม่มีที่เกิน deadline`,
     ].join('\n'));
   } catch (err) {
-    console.error('[Worker] sendDailySummary error:', err.message);
+    await reportCriticalError('Daily summary worker', err);
   }
 }

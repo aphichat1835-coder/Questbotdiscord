@@ -50,6 +50,29 @@ function addLocalDays({ year, month, day }, days) {
   };
 }
 
+export function nextDailyTime(hour, now = new Date(), timeZone = 'Asia/Bangkok') {
+  const local = zonedParts(now, timeZone);
+  let candidate = zonedDateTimeToUtc({ ...local, hour }, timeZone);
+  if (candidate.getTime() <= now.getTime()) {
+    candidate = zonedDateTimeToUtc({ ...addLocalDays(local, 1), hour }, timeZone);
+  }
+  return candidate;
+}
+
+export function zonedDateKey(date = new Date(), timeZone = 'Asia/Bangkok', dayOffset = 0) {
+  const local = addLocalDays(zonedParts(date, timeZone), dayOffset);
+  return [
+    String(local.year).padStart(4, '0'),
+    String(local.month).padStart(2, '0'),
+    String(local.day).padStart(2, '0'),
+  ].join('-');
+}
+
+export function addScheduleJitter(date, random = Math.random, maxJitterMs = 60_000) {
+  const jitter = Math.floor(Math.max(0, Math.min(1, random())) * maxJitterMs);
+  return new Date(date.getTime() + jitter);
+}
+
 export function nextScheduledCheck(now = new Date(), timeZone = 'Asia/Bangkok') {
   const local = zonedParts(now, timeZone);
 

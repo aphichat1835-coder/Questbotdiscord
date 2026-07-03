@@ -1,9 +1,17 @@
 import { Client, GatewayIntentBits, Collection } from 'discord.js';
 import { config } from './config.js';
-import { startWorker } from './worker.js';
-import { startDashboard } from './dashboard.js';
-import { refreshBuildInfo, restoreScheduledRunners } from './discord-runner.js';
-import './db.js';
+import { startWorker, stopWorker } from './worker.js';
+import { startDashboard, stopDashboard } from './dashboard.js';
+import {
+  refreshBuildInfo,
+  restoreScheduledRunners,
+  shutdownRunners,
+} from './discord-runner.js';
+import { closeDatabase } from './db.js';
+import {
+  reportCriticalError,
+  setErrorReporterClient,
+} from './error-reporter.js';
 
 import * as ping        from './commands/ping.js';
 import * as help        from './commands/help.js';
@@ -14,6 +22,9 @@ import * as panel       from './commands/panel.js';
 
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 client.commands = new Collection();
+setErrorReporterClient(client);
+let buildInfoInterval = null;
+let shuttingDown = false;
 
 const commands = [
   ping, help, apiStatus,
@@ -27,14 +38,21 @@ startDashboard(null);
 
 // ดึง build info ล่าสุดก่อน login และ refresh ทุก 6 ชั่วโมง
 await refreshBuildInfo();
-setInterval(refreshBuildInfo, 6 * 60 * 60 * 1000);
+buildInfoInterval = setInterval(() => {
+  void refreshBuildInfo().catch((error) => reportCriticalError('Build info refresh', error));
+}, 6 * 60 * 60 * 1000);
+buildInfoInterval.unref?.();
 
-client.once('clientReady', async () => {
+client.once('clientReady', () => {
+  void onClientReady().catch((error) => fatalShutdown('Client startup', error));
+});
+
+async function onClientReady() {
   console.log(`✅ บอทพร้อมแล้ว — logged in as ${client.user.tag}`);
   startDashboard(client);
   startWorker(client);
   await restoreScheduledRunners(client);
-});
+}
 
 client.on('interactionCreate', async (interaction) => {
   try {
@@ -72,4 +90,69 @@ client.on('interactionCreate', async (interaction) => {
   }
 });
 
-client.login(config.token);
+client.on('error', (error) => {
+  void reportCriticalError('Discord client', error);
+});
+client.on('shardError', (error, shardId) => {
+  void reportCriticalError(`Discord shard ${shardId}`, error);
+});
+client.on('warn', (message) => {
+  console.warn('⚠️ [Discord]', message);
+});
+client.on('invalidated', () => {
+  void fatalShutdown('Discord session invalidated', new Error('Discord gateway session invalidated'));
+});
+
+async function gracefulShutdown(reason, exitCode = 0) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`🧹 Graceful shutdown — ${reason}`);
+
+  clearInterval(buildInfoInterval);
+  await stopWorker();
+
+  try {
+    const stopped = await shutdownRunners();
+    console.log(`🧹 Runner stopped cleanly: ${stopped}`);
+  } catch (error) {
+    console.error('❌ Runner shutdown error:', error);
+  }
+
+  try {
+    client.destroy();
+    await stopDashboard();
+    closeDatabase();
+  } catch (error) {
+    console.error('❌ Resource shutdown error:', error);
+    exitCode = exitCode || 1;
+  }
+
+  process.exit(exitCode);
+}
+
+async function fatalShutdown(source, error) {
+  await Promise.race([
+    reportCriticalError(source, error),
+    new Promise((resolve) => setTimeout(resolve, 2000)),
+  ]).catch(() => {});
+  await gracefulShutdown(source, 1);
+}
+
+process.once('SIGTERM', () => {
+  void gracefulShutdown('SIGTERM');
+});
+process.once('SIGINT', () => {
+  void gracefulShutdown('SIGINT');
+});
+process.on('unhandledRejection', (reason) => {
+  void fatalShutdown('Unhandled rejection', reason);
+});
+process.on('uncaughtException', (error) => {
+  void fatalShutdown('Uncaught exception', error);
+});
+
+try {
+  await client.login(config.token);
+} catch (error) {
+  await fatalShutdown('Discord login', error);
+}

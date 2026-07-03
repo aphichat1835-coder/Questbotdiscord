@@ -75,7 +75,7 @@ jobs:
 
       - name: Syntax check — modules
         run: |
-          for f in src/config.js src/dashboard.js src/db.js src/discord-runner.js src/runner-schedule.js src/runner-token-crypto.js src/scheduled-runner-store.js src/storage.js src/permissions.js src/worker.js; do
+          for f in src/config.js src/dashboard.js src/db.js src/discord-runner.js src/error-reporter.js src/http-retry.js src/runner-schedule.js src/runner-token-crypto.js src/scheduled-runner-store.js src/storage.js src/permissions.js src/worker.js; do
             node --check "$f" && echo "✅ $f"
           done
 

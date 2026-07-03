@@ -59,6 +59,12 @@ export async function handleModal(interaction) {
   const mode = modalParts.length >= 3 ? modalParts[1] : 'oneshot';
   const channelId = modalParts.length >= 3 ? modalParts[2] : modalParts[1];
   const isScheduled = mode === 'scheduled';
+  if (!isManager(interaction)) {
+    return interaction.reply({
+      flags: 64,
+      content: '🔒 สิทธิ์ของคุณเปลี่ยนไป — ต้องการสิทธิ์ **Manager** ขึ้นไป',
+    });
+  }
   const raw       = interaction.fields.getTextInputValue('user_tokens');
   const tokens    = raw.split('\n').map((t) => t.trim()).filter(Boolean);
 
