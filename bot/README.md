@@ -81,6 +81,8 @@ Discord API requests มี timeout 15 วินาที รองรับ `Re
 
 - ระบบถือว่า Quest เสร็จและรายงาน `100%` เฉพาะเมื่อดึงข้อมูลใหม่แล้วพบ `completed_at`
 - ระบบ Claim รางวัลแบบเงียบ และบันทึกเวลายืนยัน `claimed_at` ไว้ให้ตรวจผ่าน `/api-status`
+- ระบบเลือกเลข platform จาก `rewards_config.platforms`; หาก Claim ไม่ได้หรือพบ CAPTCHA
+  จะปล่อยผ่านโดยไม่แจ้งเตือนและพักการลองซ้ำ เพื่อให้เจ้าของเข้ามารับรางวัลเอง
 - ระบบรายงาน 25% / 50% / 75% / 100% จาก `user_status.progress` ที่ดึงกลับจาก Discord
   ไม่ใช่การนับเวลาในเครื่อง Bot
 - ใช้ `/api-status` ดูเวลาที่ Quest API สำเร็จล่าสุด, schema/event ที่ไม่รู้จัก

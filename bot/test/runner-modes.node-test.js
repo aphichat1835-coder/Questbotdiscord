@@ -20,6 +20,7 @@ const {
   isFatalAuthError,
   normalizeQuest,
   restoreScheduledRunners,
+  selectQuestClaimPlatform,
   shutdownRunners,
   startRunner,
   stopRunner,
@@ -230,6 +231,26 @@ test('quest parser recognizes current orb reward claim status', () => {
   assert.equal(quest.claimed, true);
 });
 
+test('quest parser preserves reward platforms and selects a safe automatic claim platform', () => {
+  const quest = normalizeQuest({
+    id: 'quest-platforms',
+    config: {
+      rewards_config: { platforms: [0, 4] },
+      task_config: { tasks: { WATCH_VIDEO: { target: 60 } } },
+    },
+    user_status: {
+      progress: { WATCH_VIDEO: { value: 60 } },
+    },
+  });
+
+  assert.deepEqual(quest.rewardPlatforms, [0, 4]);
+  assert.equal(selectQuestClaimPlatform(quest), 4);
+  assert.equal(selectQuestClaimPlatform({ rewardPlatforms: [0] }), 0);
+  assert.equal(selectQuestClaimPlatform({ rewardPlatforms: [1] }), 1);
+  assert.equal(selectQuestClaimPlatform({ rewardPlatforms: [1, 2] }), null);
+  assert.equal(selectQuestClaimPlatform({}), 0);
+});
+
 test('malformed Quest API response is reported as incompatible, not as an empty quest list', async () => {
   global.fetch = async () => new Response(
     JSON.stringify({ items: [] }),
@@ -301,6 +322,21 @@ test('quest fetch checks the alternate endpoint before accepting an empty list',
   assert.equal(quests[0].id, 'quest-from-alternate');
 });
 
+test('aborted quest fetch does not become a compatibility error', async () => {
+  const before = getQuestEngineStatus();
+  const controller = new AbortController();
+  controller.abort();
+
+  await assert.rejects(
+    fetchQuests('token-aborted-fetch', controller.signal),
+    (error) => error.name === 'AbortError' && error.message === 'aborted',
+  );
+
+  const after = getQuestEngineStatus();
+  assert.equal(after.state, before.state);
+  assert.equal(after.lastError, before.lastError);
+});
+
 test('current Quest API requests use the quest-home referer', async () => {
   let referer = null;
   global.fetch = async (url, options = {}) => {
@@ -362,6 +398,7 @@ test('runner records completion and claim only after Discord returns completed_a
         id: 'quest-server-proof',
         config: {
           messages: { quest_name: 'Server Proof Quest' },
+          rewards_config: { platforms: [4] },
           task_config: { tasks: { WATCH_VIDEO: { target: 1 } } },
         },
         user_status: {
@@ -412,7 +449,7 @@ test('runner records completion and claim only after Discord returns completed_a
   assert.ok(status.lastVerifiedClaimAt);
   assert.equal(completed, true);
   assert.equal(claimed, true);
-  assert.deepEqual(claimBody, { location: 11, platform: 'windows' });
+  assert.deepEqual(claimBody, { location: 11, platform: 4 });
   assert.equal(stopRunner('owner-server-proof', { mode: 'scheduled' }), true);
 });
 
@@ -722,6 +759,72 @@ test('claim failures stay out of the channel while one-shot still logs out', asy
   assert.doesNotMatch(finalStatus, /🎁|claim failed|claim error|CLAIMED|ส่ง Claim|Silent Claim Quest/i);
   assert.match(finalStatus, /🔎 silent-user: พบ 0 QUESTS/);
   assert.equal(finalStatus.match(/🔒 LOGOUT/g)?.length, 1);
+});
+
+test('a failed or CAPTCHA-blocked claim is attempted only once while other quests continue', async () => {
+  const contents = [];
+  const states = new Map([
+    ['manual-claim', { completed: true, claimed: false }],
+    ['next-quest-a', { completed: false, claimed: false }],
+    ['next-quest-b', { completed: false, claimed: false }],
+  ]);
+  let blockedClaimAttempts = 0;
+
+  const payload = () => ({
+    quests: [...states.entries()].map(([id, state]) => ({
+      id,
+      config: {
+        messages: { quest_name: id },
+        rewards_config: { platforms: [0] },
+        task_config: { tasks: { WATCH_VIDEO: { target: 1 } } },
+      },
+      user_status: {
+        enrolled_at: '2026-07-03T00:00:00Z',
+        completed_at: state.completed ? '2026-07-03T00:01:00Z' : null,
+        claimed_at: state.claimed ? '2026-07-03T00:02:00Z' : null,
+        progress: { WATCH_VIDEO: { value: state.completed ? 1 : 0 } },
+      },
+    })),
+  });
+
+  global.fetch = async (url, options = {}) => {
+    const path = String(url);
+    if (isQuestListUrl(path)) return jsonResponse(payload());
+    const questId = [...states.keys()].find((id) => path.includes(id));
+    if (path.endsWith('/video-progress')) {
+      states.get(questId).completed = JSON.parse(options.body).timestamp >= 1;
+      return jsonResponse({ ok: true });
+    }
+    if (path.endsWith('/claim-reward')) {
+      if (questId === 'manual-claim') {
+        blockedClaimAttempts++;
+        return jsonResponse({
+          captcha_key: ['captcha-required'],
+          captcha_sitekey: 'test-site-key',
+        }, 400);
+      }
+      states.get(questId).claimed = true;
+      return jsonResponse({ claimed_at: new Date().toISOString() });
+    }
+    throw new Error(`Unexpected fetch: ${url}`);
+  };
+
+  await startRunner({
+    jobKey: 'oneshot:claim-cooldown',
+    ownerId: 'owner-claim-cooldown',
+    userToken: 'token-claim-cooldown',
+    channelId: 'channel-claim-cooldown',
+    client: mockClient(contents),
+    mode: 'oneshot',
+    accountId: 'account-claim-cooldown',
+    username: 'claim-cooldown-user',
+  });
+
+  await waitFor(() => getUserJobs('owner-claim-cooldown').length === 0, 5000);
+  assert.equal(blockedClaimAttempts, 1);
+  assert.equal(states.get('next-quest-a').claimed, true);
+  assert.equal(states.get('next-quest-b').claimed, true);
+  assert.doesNotMatch(contents.join('\n'), /captcha|claim failed|CLAIMED|ส่ง Claim/i);
 });
 
 test('PLAY_ON_DESKTOP switches to application_id when the first heartbeat payload makes no progress', async () => {

@@ -25,6 +25,7 @@ export class DiscordApiError extends Error {
     this.name = 'DiscordApiError';
     this.status = status;
     this.path = path;
+    this.data = data;
     this.fatalAuth = status === 401 || (status === 403 && FATAL_FORBIDDEN_PATHS.has(path));
   }
 }
@@ -233,6 +234,40 @@ function isRunnableQuest(quest) {
   return isSupportedEvent(quest.eventName) && !questUnavailableReason(quest);
 }
 
+export function selectQuestClaimPlatform(quest) {
+  const platforms = Array.isArray(quest?.rewardPlatforms)
+    ? quest.rewardPlatforms.filter(Number.isInteger)
+    : [];
+  if (platforms.length === 0) return 0;
+  if (platforms.includes(4)) return 4;
+  if (platforms.includes(0)) return 0;
+  if (platforms.length === 1) return platforms[0];
+  return null;
+}
+
+function isAbortFailure(error, signal) {
+  return signal?.aborted
+    || error?.name === 'AbortError'
+    || error?.message === 'aborted';
+}
+
+function abortFailure() {
+  const error = new Error('aborted');
+  error.name = 'AbortError';
+  return error;
+}
+
+function isCaptchaChallenge(error) {
+  const data = error?.data;
+  return Boolean(
+    data?.captcha_sitekey
+    || data?.captcha_service
+    || data?.captcha_rqtoken
+    || data?.captcha_rqdata
+    || data?.captcha_key,
+  );
+}
+
 const questEngineStatus = {
   lastCheckAt: null,
   lastSuccessfulCheckAt: null,
@@ -318,6 +353,7 @@ export async function fetchQuests(token, signal) {
       selectedPath = path;
       break;
     } catch (error) {
+      if (isAbortFailure(error, signal)) throw abortFailure();
       if (isFatalAuthError(error)) {
         fatalError = error;
         if (error.status === 401) {
@@ -341,6 +377,7 @@ export async function fetchQuests(token, signal) {
   }
 
   if (!selectedPath) {
+    if (signal?.aborted) throw abortFailure();
     if (fatalError) {
       recordQuestError(fatalError);
       throw fatalError;
@@ -416,18 +453,18 @@ async function enrollQuest(token, questId, signal) {
   });
 }
 
-async function claimQuest(token, questId, signal) {
+async function claimQuest(token, questId, platform, signal) {
   try {
     return await discordFetch(token, `/quests/${questId}/claim-reward`, {
       method: 'POST',
-      body: JSON.stringify({ location: 11, platform: 'windows' }),
+      body: JSON.stringify({ location: 11, platform }),
       signal,
     });
   } catch (error) {
     if (error?.status !== 404) throw error;
     return discordFetch(token, `/quests/${questId}/claim`, {
       method: 'POST',
-      body: JSON.stringify({ location: 1, platform: 'windows' }),
+      body: JSON.stringify({ location: 1, platform }),
       signal,
     });
   }
@@ -546,6 +583,11 @@ export function normalizeQuest(raw) {
   }
 
   const progress = secondsNeeded > 0 ? Math.min(100, (progressSecs / secondsNeeded) * 100) : 0;
+  const rewardPlatforms = Array.isArray(cfg.rewards_config?.platforms)
+    ? cfg.rewards_config.platforms
+      .map((platform) => Number(platform))
+      .filter(Number.isInteger)
+    : [];
 
   return {
     id:            raw.id,
@@ -556,6 +598,7 @@ export function normalizeQuest(raw) {
     progressSecs,                                 // seconds already done
     progressKey,
     applicationId: cfg.application?.id ?? null,
+    rewardPlatforms,
     autoSupported,
     startsAt: cfg.starts_at ?? null,
     expiresAt: cfg.expires_at ?? null,
@@ -697,7 +740,10 @@ export async function startRunner({
   let nextCheckAt  = initialNextCheckAt;
   let logoutReported = false;
   let countAlreadyReported = false;
+  const claimRetryAt = new Map();
   const RENDER_THROTTLE_MS = 2000; // Discord allows ~5 edits/5s; stay safe at 1/2s
+  const CLAIM_RETRY_DELAY_MS = 15 * 60 * 1000;
+  const CLAIM_LONG_RETRY_DELAY_MS = 24 * 60 * 60 * 1000;
   const logLines = [];
 
   function addLog(line) {
@@ -798,8 +844,15 @@ export async function startRunner({
   }
 
   async function claimSilently(quest) {
+    if ((claimRetryAt.get(quest.id) ?? 0) > Date.now()) return false;
+    const platform = selectQuestClaimPlatform(quest);
+    if (platform == null) {
+      claimRetryAt.set(quest.id, Date.now() + CLAIM_LONG_RETRY_DELAY_MS);
+      return false;
+    }
+
     try {
-      await claimQuest(userToken, quest.id, signal);
+      await claimQuest(userToken, quest.id, platform, signal);
       const claimed = await waitForQuestState(
         userToken,
         quest.id,
@@ -807,17 +860,23 @@ export async function startRunner({
         signal,
       );
       if (claimed) {
+        claimRetryAt.delete(quest.id);
         questEngineStatus.lastVerifiedClaimAt = new Date().toISOString();
       } else {
-        console.warn(
-          `[Runner:${jobKey}] claim not confirmed — ${quest.name} (${quest.id})`,
-        );
+        claimRetryAt.set(quest.id, Date.now() + CLAIM_RETRY_DELAY_MS);
       }
+      return Boolean(claimed);
     } catch (error) {
+      if (isAbortFailure(error, signal)) throw abortFailure();
       rethrowFatalAuth(error);
-      console.warn(
-        `[Runner:${jobKey}] claim failed — ${quest.name} (${quest.id}) — ${error.message}`,
+      const retryDelay = isCaptchaChallenge(error) || error?.status === 400
+        ? CLAIM_LONG_RETRY_DELAY_MS
+        : CLAIM_RETRY_DELAY_MS;
+      claimRetryAt.set(
+        quest.id,
+        Date.now() + retryDelay,
       );
+      return false;
     }
   }
 
