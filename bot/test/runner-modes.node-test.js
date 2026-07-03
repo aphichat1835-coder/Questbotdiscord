@@ -73,6 +73,65 @@ function isQuestListUrl(url) {
   return value.endsWith('/quests/@me') || value.endsWith('/users/@me/quests');
 }
 
+function jsonResponse(body, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
+async function startScheduledHeartbeatFailure({
+  ownerId,
+  accountId,
+  username,
+  questId,
+  questName,
+  status,
+}) {
+  const row = createScheduledRunner({
+    ownerId,
+    guildId: 'guild',
+    channelId: `channel-${ownerId}`,
+    accountId,
+    username,
+    token: `token-${ownerId}`,
+    secret: process.env.RUNNER_TOKEN_SECRET,
+  });
+  globalThis.fetch = async (url) => {
+    if (isQuestListUrl(url)) {
+      return jsonResponse({ quests: [{
+        id: questId,
+        config: {
+          application: { id: `app-${questId}` },
+          messages: { quest_name: questName },
+          task_config: { tasks: { PLAY_ON_DESKTOP: { target: 30 } } },
+        },
+        user_status: {
+          enrolled_at: '2026-07-02T00:00:00Z',
+          progress: { PLAY_ON_DESKTOP: { value: 0 } },
+        },
+      }] });
+    }
+    if (String(url).includes('/heartbeat')) {
+      return jsonResponse({ message: status === 401 ? 'Unauthorized' : 'Forbidden' }, status);
+    }
+    throw new Error(`Unexpected fetch: ${url}`);
+  };
+
+  await startRunner({
+    jobKey: `scheduled:${row.id}`,
+    ownerId: row.owner_id,
+    userToken: `token-${ownerId}`,
+    channelId: row.channel_id,
+    client: mockClient(),
+    mode: 'scheduled',
+    scheduleId: row.id,
+    accountId: row.account_id,
+    username: row.username,
+  });
+  return row;
+}
+
 test.beforeEach(() => {
   global.fetch = async (url) => {
     if (isQuestListUrl(url)) {
@@ -528,17 +587,11 @@ test('runner counts only runnable quests and hides expired, future, blocked, uns
     }
     if (path.endsWith('/video-progress')) {
       runnableCompleted = JSON.parse(options.body).timestamp >= 1;
-      return new Response(JSON.stringify({ ok: true }), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      });
+      return jsonResponse({ ok: true });
     }
     if (path.endsWith('/claim-reward')) {
       runnableClaimed = true;
-      return new Response(JSON.stringify({ ok: true }), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      });
+      return jsonResponse({ ok: true });
     }
     throw new Error(`Unexpected fetch: ${url}`);
   };
@@ -591,17 +644,11 @@ test('runner reports existing Discord progress before the remaining checkpoints'
     }
     if (path.endsWith('/video-progress')) {
       completed = JSON.parse(options.body).timestamp >= 10;
-      return new Response(JSON.stringify({ ok: true }), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      });
+      return jsonResponse({ ok: true });
     }
     if (path.endsWith('/claim-reward')) {
       claimed = true;
-      return new Response(JSON.stringify({ ok: true }), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      });
+      return jsonResponse({ ok: true });
     }
     throw new Error(`Unexpected fetch: ${url}`);
   };
@@ -654,10 +701,7 @@ test('claim failures stay out of the channel while one-shot still logs out', asy
       });
     }
     if (path.endsWith('/claim-reward')) {
-      return new Response(JSON.stringify({ message: 'Forbidden' }), {
-        status: 403,
-        headers: { 'Content-Type': 'application/json' },
-      });
+      return jsonResponse({ message: 'Forbidden' }, 403);
     }
     throw new Error(`Unexpected fetch: ${url}`);
   };
@@ -853,10 +897,7 @@ test('one-shot runner logs out once after three attempts make no progress', asyn
     }
     if (path.endsWith('/enroll')) {
       enrollAttempts++;
-      return new Response(JSON.stringify({ message: 'Forbidden' }), {
-        status: 403,
-        headers: { 'Content-Type': 'application/json' },
-      });
+      return jsonResponse({ message: 'Forbidden' }, 403);
     }
     throw new Error(`Unexpected fetch: ${url}`);
   };
@@ -1038,52 +1079,13 @@ test('403 is fatal only for identity and quest-list endpoints', () => {
 });
 
 test('a 401 from heartbeat is propagated and disables the scheduled runner', async () => {
-  const row = createScheduledRunner({
+  const row = await startScheduledHeartbeatFailure({
     ownerId: 'owner-heartbeat-unauthorized',
-    guildId: 'guild',
-    channelId: 'channel-heartbeat-unauthorized',
     accountId: 'account-heartbeat-unauthorized',
     username: 'heartbeat-unauthorized-user',
-    token: 'token-heartbeat-unauthorized',
-    secret: process.env.RUNNER_TOKEN_SECRET,
-  });
-  global.fetch = async (url) => {
-    if (isQuestListUrl(url)) {
-      return new Response(JSON.stringify({ quests: [{
-        id: 'quest-401',
-        config: {
-          application: { id: 'app-401' },
-          messages: { quest_name: 'Unauthorized Quest' },
-          task_config: { tasks: { PLAY_ON_DESKTOP: { target: 30 } } },
-        },
-        user_status: {
-          enrolled_at: '2026-07-02T00:00:00Z',
-          progress: { PLAY_ON_DESKTOP: { value: 0 } },
-        },
-      }] }), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      });
-    }
-    if (String(url).includes('/heartbeat')) {
-      return new Response(JSON.stringify({ message: 'Unauthorized' }), {
-        status: 401,
-        headers: { 'Content-Type': 'application/json' },
-      });
-    }
-    throw new Error(`Unexpected fetch: ${url}`);
-  };
-
-  await startRunner({
-    jobKey: `scheduled:${row.id}`,
-    ownerId: row.owner_id,
-    userToken: 'token-heartbeat-unauthorized',
-    channelId: row.channel_id,
-    client: mockClient(),
-    mode: 'scheduled',
-    scheduleId: row.id,
-    accountId: row.account_id,
-    username: row.username,
+    questId: 'quest-401',
+    questName: 'Unauthorized Quest',
+    status: 401,
   });
 
   await waitFor(() => getUserJobs(row.owner_id).length === 0);
@@ -1091,52 +1093,13 @@ test('a 401 from heartbeat is propagated and disables the scheduled runner', asy
 });
 
 test('an action-specific 403 stops that attempt without deleting the scheduled runner', async () => {
-  const row = createScheduledRunner({
+  const row = await startScheduledHeartbeatFailure({
     ownerId: 'owner-action-forbidden',
-    guildId: 'guild',
-    channelId: 'channel-action-forbidden',
     accountId: 'account-action-forbidden',
     username: 'action-forbidden-user',
-    token: 'token-action-forbidden',
-    secret: process.env.RUNNER_TOKEN_SECRET,
-  });
-  global.fetch = async (url) => {
-    if (isQuestListUrl(url)) {
-      return new Response(JSON.stringify({ quests: [{
-        id: 'quest-403',
-        config: {
-          application: { id: 'app-403' },
-          messages: { quest_name: 'Forbidden Quest' },
-          task_config: { tasks: { PLAY_ON_DESKTOP: { target: 30 } } },
-        },
-        user_status: {
-          enrolled_at: '2026-07-02T00:00:00Z',
-          progress: { PLAY_ON_DESKTOP: { value: 0 } },
-        },
-      }] }), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      });
-    }
-    if (String(url).includes('/heartbeat')) {
-      return new Response(JSON.stringify({ message: 'Forbidden' }), {
-        status: 403,
-        headers: { 'Content-Type': 'application/json' },
-      });
-    }
-    throw new Error(`Unexpected fetch: ${url}`);
-  };
-
-  await startRunner({
-    jobKey: `scheduled:${row.id}`,
-    ownerId: row.owner_id,
-    userToken: 'token-action-forbidden',
-    channelId: row.channel_id,
-    client: mockClient(),
-    mode: 'scheduled',
-    scheduleId: row.id,
-    accountId: row.account_id,
-    username: row.username,
+    questId: 'quest-403',
+    questName: 'Forbidden Quest',
+    status: 403,
   });
 
   await waitFor(() => Boolean(getUserJobs(row.owner_id)[0]?.nextCheckAt));
