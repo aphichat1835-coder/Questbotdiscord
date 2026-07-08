@@ -59,6 +59,15 @@ function isIgnorableInteractionError(error) {
   return error?.code === 10062 || error?.code === 40060;
 }
 
+function logDiscordError(label, error) {
+  console.error(label, {
+    code: error?.code,
+    status: error?.status,
+    message: error?.message,
+    method: error?.method,
+  });
+}
+
 // กัน handler รับ interaction เดียวกันซ้ำใน process เดียว
 const seenInteractions = new Set();
 function markInteractionSeen(id) {
@@ -97,15 +106,10 @@ client.on('interactionCreate', async (interaction) => {
     await command.execute(interaction);
   } catch (err) {
     if (isIgnorableInteractionError(err)) {
-      console.warn(`⚠️ Ignored expired/already-acknowledged interaction: ${err.code}`);
+      console.warn(`⚠️ Ignored interaction error: ${err.code} ${err.message}`);
       return;
     }
-    console.error('❌ Interaction error:', {
-      code: err.code,
-      status: err.status,
-      message: err.message,
-      method: err.method,
-    });
+    logDiscordError('❌ Interaction error:', err);
     const msg = { content: '❌ เกิดข้อผิดพลาด กรุณาลองใหม่', flags: 64 };
     try {
       if (interaction.replied || interaction.deferred) {
@@ -115,7 +119,7 @@ client.on('interactionCreate', async (interaction) => {
       }
     } catch (replyError) {
       if (!isIgnorableInteractionError(replyError)) {
-        console.error('❌ Failed to report interaction error:', replyError.message);
+        logDiscordError('❌ Failed to report interaction error:', replyError);
       }
     }
   }
