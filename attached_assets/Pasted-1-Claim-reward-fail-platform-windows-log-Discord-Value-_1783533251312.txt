@@ -1,0 +1,299 @@
+1. บัค Claim reward fail เพราะ platform: "windows"
+
+อาการใน log
+
+Discord ตอบว่า:
+
+Value "windows" is not int32.
+
+แปลว่า endpoint claim reward ต้องการ platform เป็น ตัวเลข ไม่ใช่ string "windows"
+
+แนวทางแก้
+
+อันนี้ branch Qq แก้ถูกทางแล้ว ให้ merge Qq เข้า main หรือ cherry-pick commit นี้:
+
+fix: claim quest rewards with platform enums
+
+เพราะ Qq เพิ่ม selectQuestClaimPlatform() เพื่อเลือก platform จาก rewardPlatforms เป็นเลข เช่น 4, 0, 1 ไม่ส่ง "windows" แล้ว
+
+สถานะที่ควรทำ
+
+ควรให้ main ใช้ logic แบบ Qq เป็นหลัก:
+
+const platform = selectQuestClaimPlatform(quest);
+await claimQuest(userToken, quest.id, platform, signal);
+
+และใน claimQuest() ต้องส่ง:
+
+body: JSON.stringify({ location: 11, platform })
+
+ไม่ใช่:
+
+platform: 'windows'
+2. บัค DiscordAPIError[10062]: Unknown interaction
+
+อาการใน log
+
+เกิดกับ /panel, ปุ่ม run modal, และ /api-status:
+
+DiscordAPIError[10062]: Unknown interaction
+
+จาก log มันเกิดที่:
+
+panel.js:64
+run.js:54
+api-status.js:10
+
+ซึ่งตรงกับโค้ดที่ /panel ตอบด้วย interaction.reply(payload) โดยตรง , showRunModal() ใช้ interaction.showModal(modal) , และ /api-status เริ่มด้วย interaction.deferReply()
+
+สาเหตุที่เป็นไปได้มากสุด
+
+bot ตอบ interaction ช้าเกินเวลาที่ Discord อนุญาต
+มี bot รันซ้อน 2 instance แล้วแย่งกันตอบ interaction เดียว
+interaction ถูกตอบไปแล้ว แต่โค้ดพยายาม reply/defer/showModal ซ้ำ
+ปุ่มหรือ modal เก่าถูกกดหลัง interaction หมดอายุ
+Render หรือ host restart/cold start ทำให้คำสั่งแรกตอบช้า
+
+แนวทางแก้แบบครบ
+
+2.1 กัน bot รันซ้อนก่อน
+
+อันนี้สำคัญมาก ให้เช็กใน Render/hosting ว่ามีแค่ 1 service / 1 instance / 1 process ที่ login ด้วย bot token เดียวกัน
+
+ถ้ามี 2 instance จะเกิดอาการสุ่ม ๆ เช่น:
+
+กด /panel แล้ว error
+กดปุ่มแล้ว modal ไม่เด้ง
+log ขึ้น Unknown interaction หลายครั้งติดกัน
+
+แก้: ปิด autoscale หรือ worker ซ้ำ ให้เหลือ instance เดียวก่อน
+
+2.2 เพิ่มตัวกรอง error 10062 / 40060 ใน index.js
+
+ตอนนี้ catch กลางใน index.js จะพยายามตอบกลับ error เสมอ ถ้า interaction หมดอายุแล้ว มันจะพยายาม reply ซ้ำและทำให้ log ยาวกว่าเดิม
+
+ให้เพิ่ม helper:
+
+function isIgnorableInteractionError(error) {
+  return error?.code === 10062 || error?.code === 40060;
+}
+
+แล้วแก้ catch เป็นแนวนี้:
+
+} catch (err) {
+  if (isIgnorableInteractionError(err)) {
+    console.warn(`⚠️ Ignored expired/already-acknowledged interaction: ${err.code}`);
+    return;
+  }
+
+  console.error('❌ Interaction error:', err);
+
+  const msg = { content: '❌ เกิดข้อผิดพลาด กรุณาลองใหม่', flags: 64 };
+
+  try {
+    if (interaction.replied || interaction.deferred) {
+      await interaction.followUp(msg);
+    } else {
+      await interaction.reply(msg);
+    }
+  } catch (replyError) {
+    if (!isIgnorableInteractionError(replyError)) {
+      console.error('❌ Failed to report interaction error:', replyError);
+    }
+  }
+}
+
+10062 = interaction หมดอายุ/หาไม่เจอ
+40060 = interaction นี้ถูกตอบไปแล้ว
+
+2.3 แก้ /panel ให้ defer ก่อน แล้วค่อย edit
+
+ตอนนี้ sendPanel() ถ้าไม่ใช่ update จะใช้ interaction.reply(payload) ทันที
+
+ถ้าเครื่องช้า/cold start มีโอกาสเลย 3 วิ ให้แก้เป็น:
+
+export async function execute(interaction) {
+  await interaction.deferReply({ flags: 64 });
+  await sendPanel(interaction, false);
+}
+
+export async function sendPanel(interaction, isUpdate = false) {
+  // build embed เหมือนเดิม
+
+  const payload = { embeds: [embed], components: [row1] };
+
+  if (isUpdate) {
+    return interaction.update(payload);
+  }
+
+  if (interaction.deferred || interaction.replied) {
+    return interaction.editReply(payload);
+  }
+
+  return interaction.reply(payload);
+}
+
+หลักคือ slash command ให้ตอบรับเร็วที่สุดก่อน แล้วค่อยสร้าง panel
+
+2.4 ปุ่มที่เปิด Modal ห้าม deferReply ก่อน
+
+อันนี้สำคัญ: ถ้าจะ showModal() ต้องเป็น response แรกของ interaction ห้าม defer ก่อน
+
+ใน showRunModal() ตอนนี้เรียก interaction.showModal(modal) ตรง ๆ ถูกหลักแล้ว แต่ต้องทำให้ก่อนหน้านั้นไม่มีงานหนัก
+
+ตรง panel:run มีแค่เช็ก permission แล้วเรียก modal ถือว่าโอเค
+
+ให้เพิ่ม try/catch เฉพาะ showModal:
+
+export async function showRunModal(interaction, mode = 'scheduled') {
+  const modal = new ModalBuilder()
+    .setCustomId(`run_modal:${mode}:${interaction.channelId}`)
+    .setTitle(mode === 'scheduled' ? '🤖 AUTO DAILY QUEST' : '🔥 AUTO QUEST LOGIN');
+
+  modal.addComponents(/* เหมือนเดิม */);
+
+  try {
+    await interaction.showModal(modal);
+  } catch (error) {
+    if (error?.code === 10062 || error?.code === 40060) return;
+    throw error;
+  }
+}
+3. Warning ephemeral deprecated
+
+อาการใน log
+
+Warning: Supplying "ephemeral" for interaction response options is deprecated. Utilize flags instead.
+
+ใน index.js ยังมี:
+
+const msg = { content: '❌ เกิดข้อผิดพลาด กรุณาลองใหม่', ephemeral: true };
+
+อยู่ใน catch กลาง
+
+แนวทางแก้
+
+เปลี่ยนเป็น:
+
+const msg = { content: '❌ เกิดข้อผิดพลาด กรุณาลองใหม่', flags: 64 };
+
+หรือถ้าอยากสวยกว่า ให้ import:
+
+import { Client, GatewayIntentBits, Collection, MessageFlags } from 'discord.js';
+
+แล้วใช้:
+
+flags: MessageFlags.Ephemeral
+
+ตอนนี้หลายไฟล์ใช้ flags: 64 แล้ว เช่น run.js ใช้กับ permission reply และ deferReply อยู่แล้ว
+
+4. Warning Electron/Chrome fetch failed
+
+อาการใน log
+
+Electron/Chrome fetch failed — could not parse Electron/Chrome version — ใช้ fallback
+
+ในโค้ด Qq ตัว parser ตอนนี้อ่าน release ล่าสุดของ Electron แล้วหา pattern แบบนี้เท่านั้น:
+
+const cm = (data.body ?? '').match(/Chromium\s+`([0-9.]+)`/i);
+
+ถ้า release note เปลี่ยน format ก็ parse ไม่เจอ แล้ว warning
+
+แนวทางแก้
+
+มี 2 ทาง เลือกทางใดทางหนึ่ง:
+
+ทางที่แนะนำ: อย่าดึง Electron ล่าสุดมาใช้กับ Discord headers
+
+เพราะ Electron latest ไม่ได้แปลว่าตรงกับ Discord client เสมอไป ให้ใช้ fallback ที่นิ่งกว่า แล้ว auto-fetch เฉพาะ buildNumber พอ
+
+แก้ refreshBuildInfo() ให้ไม่เรียก _fetchElectronInfo() หรือให้เรียกแล้วถ้า fail ไม่ต้องเตือนทุก 6 ชั่วโมง
+
+ข้อดี: ลด warning และลดความเสี่ยง headers เพี้ยน
+
+อีกทาง: ทำ parser ให้ยืดหยุ่นขึ้น
+
+เปลี่ยน regex เป็นรองรับหลาย format:
+
+const body = data.body ?? '';
+const cm =
+  body.match(/Chromium\s+`?v?([0-9.]+)`?/i) ||
+  body.match(/Chrome\s+`?v?([0-9.]+)`?/i) ||
+  body.match(/chromium_version["':\s]+([0-9.]+)/i);
+
+แล้วถ้า parse ไม่ได้ ให้ fallback เงียบ ๆ:
+
+if (!electronVersion || !chromeVersion) {
+  return null;
+}
+
+จากนั้น refreshBuildInfo() ค่อยเช็กว่า electronResult.value มีค่าจริงไหมก่อนอัปเดต
+
+5. Claim CAPTCHA / claim fail ไม่ควร spam
+
+อันนี้ Qq แก้ดีแล้ว เพราะเพิ่ม isCaptchaChallenge() ตรวจ field เช่น captcha_sitekey, captcha_rqtoken, captcha_key
+
+แนวทางที่ควรรักษาไว้:
+
+เจอ CAPTCHA → ไม่ต้อง retry ถี่
+ไม่ต้องแจ้งใน channel
+ไม่ควรถือว่า runner พัง
+ควรข้ามไปทำ quest อื่นต่อ
+ให้เจ้าของไป claim เองถ้าจำเป็น
+
+ควรเพิ่ม log แบบเบา ๆ แทนถ้าอยาก debug:
+
+console.warn(`[Runner:${jobKey}] claim skipped/cooldown — ${quest.name} (${quest.id})`);
+
+แต่อย่า log token หรือข้อมูล raw sensitive
+
+6. กัน interaction ซ้ำด้วย interaction.id
+
+ถ้า host หรือ event handler ซ้ำ จะมีโอกาสตอบ interaction เดิมซ้ำ ให้เพิ่ม memory guard ใน index.js
+
+const seenInteractions = new Set();
+
+function markInteractionSeen(id) {
+  if (seenInteractions.has(id)) return false;
+  seenInteractions.add(id);
+  setTimeout(() => seenInteractions.delete(id), 60_000).unref?.();
+  return true;
+}
+
+แล้วใน client.on('interactionCreate') ใส่บนสุด:
+
+client.on('interactionCreate', async (interaction) => {
+  if (!markInteractionSeen(interaction.id)) return;
+
+  try {
+    // handler เดิม
+  } catch (err) {
+    // catch เดิมที่แก้แล้ว
+  }
+});
+
+อันนี้ช่วยกันเคส handler ซ้ำใน process เดียว แต่ถ้ามี 2 instance คนละเครื่อง ต้องแก้ที่ hosting ด้วย
+
+7. ควร redacted log ให้มากขึ้น
+
+ใน log มี interaction callback URL ยาว ๆ จาก Discord โผล่มาทั้งเส้น ถึงมันมักหมดอายุเร็ว แต่ไม่ควรเก็บ raw URL แบบเต็มใน production log
+
+แนวทางแก้:
+
+function redactDiscordError(error) {
+  if (!error) return error;
+  if (error.url) error.url = '[redacted discord interaction callback url]';
+  if (error.requestBody) error.requestBody = '[redacted request body]';
+  return error;
+}
+
+หรือเวลา console.error ให้ log เฉพาะ:
+
+console.error('❌ Interaction error:', {
+  code: err.code,
+  status: err.status,
+  message: err.message,
+  method: err.method,
+});
+
+ไม่ต้อง dump object ทั้งก้อน

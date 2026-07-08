@@ -1,0 +1,100 @@
+2026-07-04T11:19:04.874156311Z [Runner:661415152146710558:oneshot:1783158186903] claim failed — GearUP LAG-FREE (1516628515209089125) — Discord API 400: {"message":"Invalid Form Body","code":50035,"errors":{"platform":{"_errors":[{"code":"NUMBER_TYPE_COERCE","message":"Value \"windows\" is not int32."}]}}}
+2026-07-04T11:19:17.183004571Z [Runner:661415152146710558:oneshot:1783158186903] claim failed — TNT The Fight (1520115809693864037) — Discord API 400: {"message":"Invalid Form Body","code":50035,"errors":{"platform":{"_errors":[{"code":"NUMBER_TYPE_COERCE","message":"Value \"windows\" is not int32."}]}}}
+2026-07-04T11:19:28.449460516Z [Runner:661415152146710558:oneshot:1783158186903] claim failed — Hero Wars: Alliance Mobile (1516908293681844456) — Discord API 400: {"message":"Invalid Form Body","code":50035,"errors":{"platform":{"_errors":[{"code":"NUMBER_TYPE_COERCE","message":"Value \"windows\" is not int32."}]}}}
+2026-07-04T11:20:26.085979611Z [Runner:661415152146710558:oneshot:1783158186903] claim failed — RuneScape: Dragonwilds (1517307281123971183) — Discord API 400: {"message":"Invalid Form Body","code":50035,"errors":{"platform":{"_errors":[{"code":"NUMBER_TYPE_COERCE","message":"Value \"windows\" is not int32."}]}}}
+2026-07-04T15:23:58.351936172Z 🔄 Build info — Client: 1.0.9267 | Build: 573494 | Chrome: 150.0.7871.46 | Electron: 43.0.0
+2026-07-04T21:23:58.305008898Z 🔄 Build info — Client: 1.0.9267 | Build: 573494 | Chrome: 150.0.7871.46 | Electron: 43.0.0
+2026-07-05T01:00:00.009388846Z 📅 Daily summary จะส่งในอีก 23h 59m
+2026-07-05T03:23:58.379092544Z 🔄 Build info — Client: 1.0.9267 | Build: 573494 | Chrome: 150.0.7871.46 | Electron: 43.0.0
+2026-07-05T09:23:58.527028407Z 🔄 Build info — Client: 1.0.9267 | Build: 573494 | Chrome: 150.0.7871.46 | Electron: 43.0.0
+2026-07-05T15:23:58.33265769Z 🔄 Build info — Client: 1.0.9267 | Build: 573494 | Chrome: 150.0.7871.46 | Electron: 43.0.0
+2026-07-05T18:28:50.072304079Z [Runner:661415152146710558:oneshot:1783276104013] claim failed — FIFA World Cup™ - Game (1521604131435843767) — Discord API 400: {"message":"Invalid Form Body","code":50035,"errors":{"platform":{"_errors":[{"code":"NUMBER_TYPE_COERCE","message":"Value \"windows\" is not int32."}]}}}
+2026-07-05T21:23:58.502069653Z 🔄 Build info — Client: 1.0.9267 | Build: 573494 | Chrome: 150.0.7871.46 | Electron: 43.0.0
+2026-07-06T01:00:00.046514528Z 📅 Daily summary จะส่งในอีก 23h 59m
+2026-07-06T02:05:16.015899457Z [Runner:1379555525360095363:oneshot:1783303490142] claim failed — FIFA World Cup™ - Game (1521604131435843767) — Discord API 400: {"message":"Invalid Form Body","code":50035,"errors":{"platform":{"_errors":[{"code":"NUMBER_TYPE_COERCE","message":"Value \"windows\" is not int32."}]}}}
+2026-07-06T03:23:58.495796432Z 🔄 Build info — Client: 1.0.9267 | Build: 573494 | Chrome: 150.0.7871.46 | Electron: 43.0.0
+2026-07-06T09:23:58.328632841Z 🔄 Build info — Client: 1.0.9267 | Build: 573494 | Chrome: 150.0.7871.46 | Electron: 43.0.0
+2026-07-06T15:23:58.555565012Z 🔄 Build info — Client: 1.0.9267 | Build: 573574 ✨ | Chrome: 150.0.7871.46 | Electron: 43.0.0
+2026-07-06T21:23:58.512664241Z 🔄 Build info — Client: 1.0.9267 | Build: 573863 ✨ | Chrome: 150.0.7871.46 | Electron: 43.0.0
+2026-07-07T01:00:00.018346823Z 📅 Daily summary จะส่งในอีก 23h 59m
+2026-07-07T03:23:58.330940491Z 🔄 Build info — Client: 1.0.9267 | Build: 574039 ✨ | Chrome: 150.0.7871.46 | Electron: 43.0.0
+2026-07-07T09:23:58.396475687Z 🔄 Build info — Client: 1.0.9267 | Build: 574074 ✨ | Chrome: 150.0.7871.46 | Electron: 43.0.0
+2026-07-07T15:23:58.613082233Z 🔄 Build info — Client: 1.0.9267 | Build: 574101 ✨ | Chrome: 150.0.7871.46 | Electron: 43.0.0
+2026-07-07T21:23:58.548772886Z ⚠️  Electron/Chrome fetch failed — could not parse Electron/Chrome version — ใช้ fallback
+2026-07-07T21:23:58.548783437Z 🔄 Build info — Client: 1.0.9267 | Build: 574508 ✨ | Chrome: 150.0.7871.46 | Electron: 43.0.0
+2026-07-08T01:00:00.03731102Z 📅 Daily summary จะส่งในอีก 23h 59m
+2026-07-08T02:30:09.121759561Z ❌ Interaction error: DiscordAPIError[10062]: Unknown interaction
+2026-07-08T02:30:09.123511131Z     at handleErrors (/opt/render/project/src/bot/node_modules/@discordjs/rest/dist/index.js:762:13)
+2026-07-08T02:30:09.123520361Z     at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+2026-07-08T02:30:09.123524681Z     at async BurstHandler.runRequest (/opt/render/project/src/bot/node_modules/@discordjs/rest/dist/index.js:866:23)
+2026-07-08T02:30:09.123527861Z     at async _REST.request (/opt/render/project/src/bot/node_modules/@discordjs/rest/dist/index.js:1307:22)
+2026-07-08T02:30:09.123531841Z     at async ChatInputCommandInteraction.reply (/opt/render/project/src/bot/node_modules/discord.js/src/structures/interfaces/InteractionResponses.js:193:22)
+2026-07-08T02:30:09.123534941Z     at async sendPanel (file:///opt/render/project/src/bot/src/commands/panel.js:64:17)
+2026-07-08T02:30:09.123538121Z     at async Module.execute (file:///opt/render/project/src/bot/src/commands/panel.js:38:3)
+2026-07-08T02:30:09.123541232Z     at async Client.<anonymous> (file:///opt/render/project/src/bot/src/index.js:81:5) {
+2026-07-08T02:30:09.123545002Z   requestBody: { files: [], json: { type: 4, data: [Object] } },
+2026-07-08T02:30:09.123548082Z   rawError: { message: 'Unknown interaction', code: 10062 },
+2026-07-08T02:30:09.123551182Z   code: 10062,
+2026-07-08T02:30:09.123554302Z   status: 404,
+2026-07-08T02:30:09.123558032Z   method: 'POST',
+2026-07-08T02:30:09.123561912Z   url: 'https://discord.com/api/v10/interactions/1524013867984879678/aW50ZXJhY3Rpb246MTUyNDAxMzg2Nzk4NDg3OTY3ODpRZkRwT0ZoejEwZDRPdGI5eU9td3VXNk1yS0NMOHpVSDZnaUowRlZLUGdvZFNMSTU0SWg1eGJXR1N3ZXdCVFJSanpYSUFGVU0zU0JsMzFYOU9PU2o4VnNMQVZuRXpFNzcyUHdyTERDNzVON25IZ1plaHZpUmhPYnExNWJITFF3Zg/callback?with_response=false'
+2026-07-08T02:30:09.123572902Z }
+2026-07-08T02:30:09.124999497Z (node:85) Warning: Supplying "ephemeral" for interaction response options is deprecated. Utilize flags instead.
+2026-07-08T02:30:09.126027184Z ❌ Interaction error: DiscordAPIError[10062]: Unknown interaction
+2026-07-08T02:30:09.126045655Z     at handleErrors (/opt/render/project/src/bot/node_modules/@discordjs/rest/dist/index.js:762:13)
+2026-07-08T02:30:09.126050664Z     at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+2026-07-08T02:30:09.126054685Z     at async BurstHandler.runRequest (/opt/render/project/src/bot/node_modules/@discordjs/rest/dist/index.js:866:23)
+2026-07-08T02:30:09.126057855Z     at async _REST.request (/opt/render/project/src/bot/node_modules/@discordjs/rest/dist/index.js:1307:22)
+2026-07-08T02:30:09.126061265Z     at async ChatInputCommandInteraction.reply (/opt/render/project/src/bot/node_modules/discord.js/src/structures/interfaces/InteractionResponses.js:193:22)
+2026-07-08T02:30:09.126064635Z     at async sendPanel (file:///opt/render/project/src/bot/src/commands/panel.js:64:17)
+2026-07-08T02:30:09.126068245Z     at async Module.execute (file:///opt/render/project/src/bot/src/commands/panel.js:38:3)
+2026-07-08T02:30:09.126070855Z     at async Client.<anonymous> (file:///opt/render/project/src/bot/src/index.js:81:5) {
+2026-07-08T02:30:09.126073745Z   requestBody: { files: [], json: { type: 4, data: [Object] } },
+2026-07-08T02:30:09.126075695Z   rawError: { message: 'Unknown interaction', code: 10062 },
+2026-07-08T02:30:09.126077645Z   code: 10062,
+2026-07-08T02:30:09.126079685Z   status: 404,
+2026-07-08T02:30:09.126082235Z   method: 'POST',
+2026-07-08T02:30:09.126086985Z   url: 'https://discord.com/api/v10/interactions/1524012807023235294/aW50ZXJhY3Rpb246MTUyNDAxMjgwNzAyMzIzNTI5NDpUeFBMQUpHN3N5SWxHNDBXaWt1clFMTWdDYUpzUGJBNUtiVTlrYmZwamlwd2hLOVZBUGpjR0NFTUgwYTAzOURtQVpneFRPeWJSSnA3WnBFUkI2UmNnbmR3UlpYUWhuZEkzUEluZkl3ZjV2VnI0ejdRejZvQnB4NzVKaVUyYjEzVA/callback?with_response=false'
+2026-07-08T02:30:09.126090455Z }
+2026-07-08T02:30:09.141414118Z ❌ [Discord client] DiscordAPIError[10062]: Unknown interaction
+2026-07-08T02:30:09.141435048Z     at handleErrors (/opt/render/project/src/bot/node_modules/@discordjs/rest/dist/index.js:762:13)
+2026-07-08T02:30:09.141438868Z     at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+2026-07-08T02:30:09.141442388Z     at async BurstHandler.runRequest (/opt/render/project/src/bot/node_modules/@discordjs/rest/dist/index.js:866:23)
+2026-07-08T02:30:09.141444768Z     at async _REST.request (/opt/render/project/src/bot/node_modules/@discordjs/rest/dist/index.js:1307:22)
+2026-07-08T02:30:09.141448008Z     at async ButtonInteraction.showModal (/opt/render/project/src/bot/node_modules/discord.js/src/structures/interfaces/InteractionResponses.js:399:22)
+2026-07-08T02:30:09.141450528Z     at async showRunModal (file:///opt/render/project/src/bot/src/commands/run.js:54:3)
+2026-07-08T02:30:09.184491145Z ❌ [Discord client] DiscordAPIError[10062]: Unknown interaction
+2026-07-08T02:30:09.184515566Z     at handleErrors (/opt/render/project/src/bot/node_modules/@discordjs/rest/dist/index.js:762:13)
+2026-07-08T02:30:09.184520856Z     at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+2026-07-08T02:30:09.184525626Z     at async BurstHandler.runRequest (/opt/render/project/src/bot/node_modules/@discordjs/rest/dist/index.js:866:23)
+2026-07-08T02:30:09.184529386Z     at async _REST.request (/opt/render/project/src/bot/node_modules/@discordjs/rest/dist/index.js:1307:22)
+2026-07-08T02:30:09.184534336Z     at async ButtonInteraction.showModal (/opt/render/project/src/bot/node_modules/discord.js/src/structures/interfaces/InteractionResponses.js:399:22)
+2026-07-08T02:30:09.184552906Z     at async showRunModal (file:///opt/render/project/src/bot/src/commands/run.js:54:3)
+2026-07-08T02:30:09.204506188Z ❌ Interaction error: DiscordAPIError[10062]: Unknown interaction
+2026-07-08T02:30:09.204528588Z     at handleErrors (/opt/render/project/src/bot/node_modules/@discordjs/rest/dist/index.js:762:13)
+2026-07-08T02:30:09.204534199Z     at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+2026-07-08T02:30:09.204539019Z     at async BurstHandler.runRequest (/opt/render/project/src/bot/node_modules/@discordjs/rest/dist/index.js:866:23)
+2026-07-08T02:30:09.204543129Z     at async _REST.request (/opt/render/project/src/bot/node_modules/@discordjs/rest/dist/index.js:1307:22)
+2026-07-08T02:30:09.204548259Z     at async ChatInputCommandInteraction.deferReply (/opt/render/project/src/bot/node_modules/discord.js/src/structures/interfaces/InteractionResponses.js:122:22)
+2026-07-08T02:30:09.204552219Z     at async Module.execute (file:///opt/render/project/src/bot/src/commands/api-status.js:10:3)
+2026-07-08T02:30:09.204556049Z     at async Client.<anonymous> (file:///opt/render/project/src/bot/src/index.js:81:5) {
+2026-07-08T02:30:09.204559839Z   requestBody: { files: undefined, json: { type: 5, data: [Object] } },
+2026-07-08T02:30:09.204564149Z   rawError: { message: 'Unknown interaction', code: 10062 },
+2026-07-08T02:30:09.204568039Z   code: 10062,
+2026-07-08T02:30:09.204572359Z   status: 404,
+2026-07-08T02:30:09.204577109Z   method: 'POST',
+2026-07-08T02:30:09.204581Z   url: 'https://discord.com/api/v10/interactions/1524012882218713199/aW50ZXJhY3Rpb246MTUyNDAxMjg4MjIxODcxMzE5OTp5bFhHN01iYXk0WnBiUnhWVTZpWlI1Y2JJNjh4MWdEN1BtbXdBU20yclJjSlg0Nm04aTZ4Z2cxYWRDWmxNQWd4RU5YUzIwVjBBRkNwMFlyVlk0VFJZNVVuSExJdFRuYm04aVhlR1NHMkdCbkkwY0x5WmVmbGVRWmVZTXhLSjdSNQ/callback?with_response=false'
+2026-07-08T02:30:09.20458354Z }
+2026-07-08T02:30:09.2297589Z ❌ [Discord client] DiscordAPIError[10062]: Unknown interaction
+2026-07-08T02:30:09.229782811Z     at handleErrors (/opt/render/project/src/bot/node_modules/@discordjs/rest/dist/index.js:762:13)
+2026-07-08T02:30:09.229787561Z     at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+2026-07-08T02:30:09.229791291Z     at async BurstHandler.runRequest (/opt/render/project/src/bot/node_modules/@discordjs/rest/dist/index.js:866:23)
+2026-07-08T02:30:09.229794081Z     at async _REST.request (/opt/render/project/src/bot/node_modules/@discordjs/rest/dist/index.js:1307:22)
+2026-07-08T02:30:09.229797751Z     at async ButtonInteraction.showModal (/opt/render/project/src/bot/node_modules/discord.js/src/structures/interfaces/InteractionResponses.js:399:22)
+2026-07-08T02:30:09.229800571Z     at async showRunModal (file:///opt/render/project/src/bot/src/commands/run.js:54:3)
+2026-07-08T03:23:58.512944669Z 🔄 Build info — Client: 1.0.9267 | Build: 574751 ✨ | Chrome: 150.0.7871.46 | Electron: 43.0.0
+2026-07-08T03:23:58.512944699Z ⚠️  Electron/Chrome fetch failed — could not parse Electron/Chrome version — ใช้ fallback
+2026-07-08T09:23:58.468342841Z ⚠️  Electron/Chrome fetch failed — could not parse Electron/Chrome version — ใช้ fallback
+2026-07-08T09:23:58.468425563Z 🔄 Build info — Client: 1.0.9267 | Build: 574793 ✨ | Chrome: 150.0.7871.46 | Electron: 43.0.0
+2026-07-08T15:23:58.418182792Z ⚠️  Electron/Chrome fetch failed — could not parse Electron/Chrome version — ใช้ fallback
+2026-07-08T15:23:58.418217402Z 🔄 Build info — Client: 1.0.9267 | Build: 574859 ✨ | Chrome: 150.0.7871.46 | Electron: 43.0.0

@@ -80,9 +80,13 @@ async function _fetchElectronInfo() {
   if (!res.ok) throw new Error(`GitHub API ${res.status}`);
   const data = await res.json();
   const electronVersion = data.tag_name?.replace(/^v/, '');
-  const cm = (data.body ?? '').match(/Chromium\s+`([0-9.]+)`/i);
+  const body = data.body ?? '';
+  const cm =
+    body.match(/Chromium\s+`?v?([0-9.]+)`?/i) ||
+    body.match(/Chrome\s+`?v?([0-9.]+)`?/i) ||
+    body.match(/chromium_version["':\s]+([0-9.]+)/i);
   const chromeVersion = cm?.[1];
-  if (!electronVersion || !chromeVersion) throw new Error('could not parse Electron/Chrome version');
+  if (!electronVersion || !chromeVersion) return null;
   return { electronVersion, chromeVersion };
 }
 
@@ -106,10 +110,10 @@ export async function refreshBuildInfo() {
     console.warn(`⚠️  build number fetch failed — ${buildResult.reason?.message} — ใช้ fallback ${live.buildNumber}`);
   }
 
-  if (electronResult.status === 'fulfilled') {
+  if (electronResult.status === 'fulfilled' && electronResult.value) {
     live.electronVersion = electronResult.value.electronVersion;
     live.chromeVersion   = electronResult.value.chromeVersion;
-  } else {
+  } else if (electronResult.status === 'rejected') {
     console.warn(`⚠️  Electron/Chrome fetch failed — ${electronResult.reason?.message} — ใช้ fallback`);
   }
 

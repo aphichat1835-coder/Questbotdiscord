@@ -54,7 +54,23 @@ async function onClientReady() {
   await restoreScheduledRunners(client);
 }
 
+// interaction หมดอายุ (10062) หรือถูกตอบไปแล้ว (40060) — ไม่ต้อง retry
+function isIgnorableInteractionError(error) {
+  return error?.code === 10062 || error?.code === 40060;
+}
+
+// กัน handler รับ interaction เดียวกันซ้ำใน process เดียว
+const seenInteractions = new Set();
+function markInteractionSeen(id) {
+  if (seenInteractions.has(id)) return false;
+  seenInteractions.add(id);
+  setTimeout(() => seenInteractions.delete(id), 60_000).unref?.();
+  return true;
+}
+
 client.on('interactionCreate', async (interaction) => {
+  if (!markInteractionSeen(interaction.id)) return;
+
   try {
     if (interaction.isModalSubmit()) {
       if (interaction.customId.startsWith('run_modal:')) return run.handleModal(interaction);
@@ -80,12 +96,27 @@ client.on('interactionCreate', async (interaction) => {
     if (!command) return;
     await command.execute(interaction);
   } catch (err) {
-    console.error('❌ Interaction error:', err);
-    const msg = { content: '❌ เกิดข้อผิดพลาด กรุณาลองใหม่', ephemeral: true };
-    if (interaction.replied || interaction.deferred) {
-      await interaction.followUp(msg).catch(() => {});
-    } else {
-      await interaction.reply(msg).catch(() => {});
+    if (isIgnorableInteractionError(err)) {
+      console.warn(`⚠️ Ignored expired/already-acknowledged interaction: ${err.code}`);
+      return;
+    }
+    console.error('❌ Interaction error:', {
+      code: err.code,
+      status: err.status,
+      message: err.message,
+      method: err.method,
+    });
+    const msg = { content: '❌ เกิดข้อผิดพลาด กรุณาลองใหม่', flags: 64 };
+    try {
+      if (interaction.replied || interaction.deferred) {
+        await interaction.followUp(msg);
+      } else {
+        await interaction.reply(msg);
+      }
+    } catch (replyError) {
+      if (!isIgnorableInteractionError(replyError)) {
+        console.error('❌ Failed to report interaction error:', replyError.message);
+      }
     }
   }
 });

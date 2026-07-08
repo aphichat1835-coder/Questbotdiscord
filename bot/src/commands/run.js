@@ -51,7 +51,12 @@ export async function showRunModal(interaction, mode = 'scheduled') {
     ),
   );
 
-  await interaction.showModal(modal);
+  try {
+    await interaction.showModal(modal);
+  } catch (error) {
+    if (error?.code === 10062 || error?.code === 40060) return;
+    throw error;
+  }
 }
 
 export async function handleModal(interaction) {

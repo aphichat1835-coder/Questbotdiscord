@@ -35,6 +35,7 @@ function truncate(rows) {
 }
 
 export async function execute(interaction) {
+  await interaction.deferReply({ flags: 64 });
   await sendPanel(interaction, false);
 }
 
@@ -60,8 +61,9 @@ export async function sendPanel(interaction, isUpdate = false) {
   );
 
   const payload = { embeds: [embed], components: [row1] };
-  if (isUpdate) await interaction.update(payload);
-  else          await interaction.reply(payload);
+  if (isUpdate) return interaction.update(payload);
+  if (interaction.deferred || interaction.replied) return interaction.editReply(payload);
+  return interaction.reply(payload);
 }
 
 export async function handleButton(interaction) {
