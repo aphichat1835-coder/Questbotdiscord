@@ -7,7 +7,7 @@ import {
   StringSelectMenuBuilder,
 } from 'discord.js';
 import { config } from '../config.js';
-import { stopScheduledJobAndWait } from '../runner-control.js';
+import { stopScheduledJobAndWaitDetailed } from '../runner-control.js';
 import { listScheduledRunners } from '../scheduled-runner-store.js';
 
 export const data = new SlashCommandBuilder()
@@ -90,15 +90,39 @@ async function finishUpdate(interaction, payload, deferred) {
   throw new Error('Interaction does not support update or editReply');
 }
 
+async function replyUnknownAction(interaction) {
+  const payload = {
+    flags: 64,
+    content: 'ℹ️ ปุ่มควบคุมนี้หมดอายุหรือไม่รองรับแล้ว กรุณาใช้ `/stop` เพื่อเปิดแผงใหม่',
+  };
+  if (interaction.replied || interaction.deferred) return interaction.followUp(payload);
+  return interaction.reply(payload);
+}
+
+function summarizeStopResults(results) {
+  const accepted = results.filter((item) => item.accepted).length;
+  const completed = results.filter((item) => item.accepted && item.cleanupComplete).length;
+  return { accepted, completed, pending: accepted - completed };
+}
+
 async function stopRows(ownerId, rows) {
   const results = await Promise.all(
-    rows.map((row) => stopScheduledJobAndWait(ownerId, row.id)),
+    rows.map((row) => stopScheduledJobAndWaitDetailed(ownerId, row.id)),
   );
-  return results.filter(Boolean).length;
+  return summarizeStopResults(results);
+}
+
+function stopNotice(result, scope = '') {
+  if (result.accepted === 0) return 'ℹ️ ไม่พบ Runner ที่เลือก';
+  const label = scope ? `${scope} ` : '';
+  if (result.pending > 0) {
+    return `🛑 รับคำสั่งหยุด${label}แล้ว **${result.accepted}** token · ยัง Cleanup อยู่ **${result.pending}** token`;
+  }
+  return `✅ หยุดและ Cleanup ${label}เสร็จแล้ว **${result.completed}** token`;
 }
 
 export async function execute(interaction) {
-  await interaction.reply({
+  return interaction.reply({
     ...stopPanelPayload(interaction.user.id),
     flags: 64,
   });
@@ -111,12 +135,12 @@ export async function handleSelect(interaction) {
   );
   const rows = listScheduledRunners(interaction.user.id)
     .filter((row) => selectedIds.has(row.id));
-  const stopped = await stopRows(interaction.user.id, rows);
-
-  const notice = stopped > 0
-    ? `✅ หยุดและ Cleanup แล้ว **${stopped}** token`
-    : 'ℹ️ ไม่พบ Runner ที่เลือก';
-  return finishUpdate(interaction, stopPanelPayload(interaction.user.id, notice), deferred);
+  const result = await stopRows(interaction.user.id, rows);
+  return finishUpdate(
+    interaction,
+    stopPanelPayload(interaction.user.id, stopNotice(result)),
+    deferred,
+  );
 }
 
 export async function handleButton(interaction) {
@@ -128,16 +152,13 @@ export async function handleButton(interaction) {
   if (action === 'all') {
     const deferred = await acknowledgeForCleanup(interaction);
     const rows = listScheduledRunners(interaction.user.id);
-    const stopped = await stopRows(interaction.user.id, rows);
-    const notice = stopped > 0
-      ? `✅ หยุดและ Cleanup Auto Daily Runner แล้ว **${stopped}** token`
-      : 'ℹ️ ไม่มี Auto Daily Runner ที่กำลังทำงาน';
+    const result = await stopRows(interaction.user.id, rows);
     return finishUpdate(
       interaction,
-      stopPanelPayload(interaction.user.id, notice),
+      stopPanelPayload(interaction.user.id, stopNotice(result, 'Auto Daily Runner')),
       deferred,
     );
   }
 
-  return undefined;
+  return replyUnknownAction(interaction);
 }
