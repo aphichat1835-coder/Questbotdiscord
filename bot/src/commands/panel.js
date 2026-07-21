@@ -5,7 +5,8 @@ import {
   EmbedBuilder,
   SlashCommandBuilder,
 } from 'discord.js';
-import { getUserJobs, stopRunner } from '../discord-runner.js';
+import { getUserJobs } from '../discord-runner.js';
+import { stopRunnerAndWait } from '../runner-control.js';
 import { isManager } from '../permissions.js';
 import { showRunModal } from './run.js';
 
@@ -66,9 +67,9 @@ async function handleRunButton(interaction) {
 async function handleStopButton(interaction) {
   await interaction.deferReply({ flags: 64 });
   const jobs = getUserJobs(interaction.user.id, { mode: 'oneshot' });
-  const stopped = await stopRunner(interaction.user.id, { mode: 'oneshot' });
+  const stopped = await stopRunnerAndWait(interaction.user.id, { mode: 'oneshot' });
   const content = stopped
-    ? `🛑 หยุด One-shot Runner แล้ว **${jobs.length}** token`
+    ? `🛑 หยุด One-shot Runner และรอ Cleanup แล้ว **${jobs.length}** token`
     : 'ℹ️ ไม่มี One-shot Runner ที่กำลังทำงาน';
   return interaction.editReply(content);
 }

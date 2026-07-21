@@ -7,7 +7,10 @@ import {
   StringSelectMenuBuilder,
 } from 'discord.js';
 import { config } from '../config.js';
-import { stopScheduledJob } from '../discord-runner.js';
+import {
+  stopAllForUserAndWait,
+  stopScheduledJobAndWait,
+} from '../runner-control.js';
 import { listScheduledRunners } from '../scheduled-runner-store.js';
 
 export const data = new SlashCommandBuilder()
@@ -81,18 +84,19 @@ export async function execute(interaction) {
 }
 
 export async function handleSelect(interaction) {
+  await interaction.deferUpdate();
   const stopped = [];
   for (const rawId of interaction.values) {
     const id = Number(rawId);
     if (!Number.isInteger(id)) continue;
     const row = listScheduledRunners(interaction.user.id).find((item) => item.id === id);
-    if (row && stopScheduledJob(interaction.user.id, id)) stopped.push(row.username);
+    if (row && await stopScheduledJobAndWait(interaction.user.id, id)) stopped.push(row.username);
   }
 
   const notice = stopped.length
-    ? `✅ หยุดแล้ว: **${stopped.join(', ')}**`
+    ? `✅ หยุดและ Cleanup แล้ว: **${stopped.join(', ')}**`
     : 'ℹ️ ไม่พบ Runner ที่เลือก';
-  await interaction.update(stopPanelPayload(interaction.user.id, notice));
+  await interaction.editReply(stopPanelPayload(interaction.user.id, notice));
 }
 
 export async function handleButton(interaction) {
@@ -102,10 +106,16 @@ export async function handleButton(interaction) {
   }
 
   if (action === 'all') {
+    await interaction.deferUpdate();
     const rows = listScheduledRunners(interaction.user.id);
-    for (const row of rows) stopScheduledJob(interaction.user.id, row.id);
-    return interaction.update(
-      stopPanelPayload(interaction.user.id, `✅ หยุด Auto Daily Runner ทั้งหมด **${rows.length}** token แล้ว`),
+    const stopped = await stopAllForUserAndWait(interaction.user.id, { mode: 'scheduled' });
+    return interaction.editReply(
+      stopPanelPayload(
+        interaction.user.id,
+        `✅ หยุดและ Cleanup Auto Daily Runner แล้ว **${stopped || rows.length}** token`,
+      ),
     );
   }
+
+  return undefined;
 }

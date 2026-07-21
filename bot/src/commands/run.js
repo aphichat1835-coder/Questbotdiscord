@@ -9,6 +9,7 @@ import {
   findUserJobByAccount,
   getUserJobs,
 } from '../discord-runner.js';
+import { isAccountStopping } from '../runner-control.js';
 import { isManager } from '../permissions.js';
 import {
   createScheduledRunner,
@@ -62,33 +63,36 @@ export async function showRunModal(interaction, mode = 'scheduled') {
 export async function handleModal(interaction) {
   const modalParts = interaction.customId.split(':');
   const mode = modalParts.length >= 3 ? modalParts[1] : 'oneshot';
-  const channelId = modalParts.length >= 3 ? modalParts[2] : modalParts[1];
+  const channelId = interaction.channelId ?? (modalParts.length >= 3 ? modalParts[2] : modalParts[1]);
   const isScheduled = mode === 'scheduled';
+  if (!['scheduled', 'oneshot'].includes(mode)) {
+    return interaction.reply({ flags: 64, content: '❌ Runner mode ไม่ถูกต้อง กรุณาเปิด Modal ใหม่' });
+  }
   if (!isManager(interaction)) {
     return interaction.reply({
       flags: 64,
       content: '🔒 สิทธิ์ของคุณเปลี่ยนไป — ต้องการสิทธิ์ **Manager** ขึ้นไป',
     });
   }
-  const raw       = interaction.fields.getTextInputValue('user_tokens');
-  const tokens    = raw.split('\n').map((t) => t.trim()).filter(Boolean);
 
+  const raw = interaction.fields.getTextInputValue('user_tokens');
+  const tokens = [...new Set(raw.split('\n').map((token) => token.trim()).filter(Boolean))];
   if (!tokens.length) {
     return interaction.reply({ flags: 64, content: '❌ ไม่พบ token กรุณาใส่อย่างน้อย 1 token' });
   }
 
   await interaction.deferReply(isScheduled ? {} : { flags: 64 });
 
-  const ownerId    = interaction.user.id;
-  const existing   = getUserJobs(ownerId);
-  const persisted  = listScheduledRunners(ownerId);
+  const ownerId = interaction.user.id;
+  const existing = getUserJobs(ownerId);
+  const persisted = listScheduledRunners(ownerId);
   const runningScheduledIds = new Set(
     existing.filter((job) => job.scheduleId != null).map((job) => job.scheduleId),
   );
   const offlineScheduled = persisted.filter((row) => !runningScheduledIds.has(row.id)).length;
-  const usedSlots  = existing.length + offlineScheduled;
-  const freeSlots  = Math.max(0, 10 - usedSlots);
-  const toRun      = tokens.slice(0, freeSlots);
+  const usedSlots = existing.length + offlineScheduled;
+  const freeSlots = Math.max(0, 10 - usedSlots);
+  const toRun = tokens.slice(0, freeSlots);
 
   if (!toRun.length) {
     return interaction.editReply('⚠️ มี Runner ทำงานอยู่เต็มแล้ว (สูงสุด 10 token) ใช้ 🛑 STOP ALL ก่อน');
@@ -104,6 +108,10 @@ export async function handleModal(interaction) {
       continue;
     }
 
+    if (isAccountStopping(ownerId, me.id)) {
+      results.push(`⏳ **${me.username}** กำลังหยุดและ Cleanup กรุณาลองใหม่อีกครั้ง`);
+      continue;
+    }
     if (findUserJobByAccount(ownerId, me.id) || findScheduledRunner(ownerId, me.id)) {
       results.push(`⚠️ **${me.username}** มี Runner ทำงานอยู่แล้ว`);
       continue;
@@ -141,9 +149,9 @@ export async function handleModal(interaction) {
       results.push(isScheduled
         ? `🤖 เริ่มระบบอัตโนมัติรายวัน: **${me.username}**\n   ตรวจทันที และตรวจประจำเวลา **00:00 / 08:00 / 16:00 น.**`
         : `✅ เริ่ม Quest auto : **${me.username}**`);
-    } catch (err) {
+    } catch (error) {
       if (schedule) deleteScheduledRunner(schedule.id, ownerId);
-      results.push(`❌ เริ่ม **${me.username}** ไม่สำเร็จ — ${err.message}`);
+      results.push(`❌ เริ่ม **${me.username}** ไม่สำเร็จ — ${error.message}`);
     }
   }
 
@@ -155,5 +163,5 @@ export async function handleModal(interaction) {
     results.push('ใช้คำสั่ง `/stop` เพื่อเลือกหยุด Runner ที่ต้องการ');
   }
 
-  await interaction.editReply(results.join('\n'));
+  return interaction.editReply(results.join('\n'));
 }
