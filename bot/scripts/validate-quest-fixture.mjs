@@ -1,0 +1,49 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+
+process.env.DISCORD_BOT_TOKEN ??= 'fixture-bot-token';
+process.env.DISCORD_CLIENT_ID ??= 'fixture-client-id';
+process.env.DISCORD_GUILD_ID ??= 'fixture-guild-id';
+process.env.OWNER_ID ??= 'fixture-owner-id';
+process.env.RUNNER_TOKEN_SECRET ??= 'fixture-secret-at-least-16-chars';
+process.env.DATABASE_PATH ??= ':memory:';
+
+const fixtureUrl = new URL('../fixtures/quest-api.sample.json', import.meta.url);
+const raw = JSON.parse(await fs.readFile(fixtureUrl, 'utf8'));
+assert.equal(raw.fixture_version, 1, 'Unsupported fixture_version');
+assert.ok(raw.response && Array.isArray(raw.response.quests), 'Fixture must contain response.quests[]');
+assert.ok(raw.response.quests.length >= 3, 'Fixture must cover video, game and completed Quest shapes');
+
+const { normalizeQuest } = await import('../src/discord-runner.js');
+const normalized = raw.response.quests.map(normalizeQuest);
+const byId = new Map(normalized.map((quest) => [quest.id, quest]));
+
+const video = byId.get('fixture-video-quest');
+assert.ok(video, 'Missing video fixture');
+assert.equal(video.eventName, 'WATCH_VIDEO');
+assert.equal(video.secondsNeeded, 60);
+assert.equal(video.progressSecs, 15);
+assert.equal(video.progress, 25);
+assert.deepEqual(video.rewardPlatforms, [0, 4]);
+assert.deepEqual(video.schemaIssues, []);
+
+const game = byId.get('fixture-game-quest');
+assert.ok(game, 'Missing game fixture');
+assert.equal(game.eventName, 'PLAY_ON_DESKTOP');
+assert.equal(game.progressKey, 'desktop_task');
+assert.equal(game.applicationId, 'fixture-game-app');
+assert.equal(Math.floor(game.progress), 33);
+assert.deepEqual(game.schemaIssues, []);
+
+const completed = byId.get('fixture-completed-quest');
+assert.ok(completed, 'Missing completed fixture');
+assert.equal(completed.completed, true);
+assert.equal(completed.claimed, true);
+assert.equal(completed.progress, 100);
+
+const serialized = JSON.stringify(raw);
+for (const forbidden of ['Authorization', 'token_ciphertext', 'token_salt', 'email', 'cookie']) {
+  assert.equal(serialized.toLowerCase().includes(forbidden.toLowerCase()), false, `Fixture contains forbidden field: ${forbidden}`);
+}
+
+console.log(`Quest schema fixture valid: ${normalized.length} Quest shapes`);
