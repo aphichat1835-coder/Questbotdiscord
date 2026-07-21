@@ -1067,7 +1067,7 @@ test('saved scheduled runners are restored with their persisted next check', asy
   stopScheduledJob('owner-restored', row.id);
 });
 
-test('/run replies ephemerally and starts a persisted scheduled runner', async () => {
+test('/run replies publicly and starts a persisted scheduled runner', async () => {
   let deferOptions = null;
   let replyContent = null;
   global.fetch = async (url) => {
@@ -1101,7 +1101,7 @@ test('/run replies ephemerally and starts a persisted scheduled runner', async (
     },
   });
 
-  assert.deepEqual(deferOptions, { flags: 64 });
+  assert.deepEqual(deferOptions, {});
   assert.match(replyContent, /AUTO DAILY QUEST/);
   await waitFor(() => Boolean(getUserJobs('owner-command')[0]?.nextCheckAt));
 
