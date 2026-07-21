@@ -19,10 +19,8 @@ jobs:
     runs-on: ubuntu-latest
     env:
       TARGET_SHA: 697f8351744e723eff8cc76e0c4a006e3addc147
-      SONAR_PROJECT: aphichat1835-coder_neverdie-quest-helper
-      SONAR_PR: '3'
     steps:
-      - name: Capture checks and Sonar status
+      - name: Capture external check runs and annotations
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
@@ -31,7 +29,6 @@ jobs:
           import json
           import os
           import time
-          import urllib.parse
           import urllib.request
 
           headers = {
@@ -40,8 +37,8 @@ jobs:
               'X-GitHub-Api-Version': '2022-11-28',
           }
 
-          def read_json(url, custom_headers=None):
-              request = urllib.request.Request(url, headers=custom_headers or headers)
+          def read_json(url):
+              request = urllib.request.Request(url, headers=headers)
               with urllib.request.urlopen(request, timeout=30) as response:
                   return json.load(response)
 
@@ -68,22 +65,10 @@ jobs:
                       f"{check['output']['annotations_url']}?per_page=100"
                   )
 
-          params = urllib.parse.urlencode({
-              'projectKey': os.environ['SONAR_PROJECT'],
-              'pullRequest': os.environ['SONAR_PR'],
-          })
-          sonar = read_json(
-              f'https://sonarcloud.io/api/qualitygates/project_status?{params}',
-              {},
-          )
-
-          for filename, payload in {
-              'latest-quality-checks.json': checks,
-              'latest-quality-annotations.json': annotations,
-              'latest-sonar-gate.json': sonar,
-          }.items():
-              with open(filename, 'w', encoding='utf-8') as handle:
-                  json.dump(payload, handle, indent=2, ensure_ascii=False)
+          with open('latest-quality-checks.json', 'w', encoding='utf-8') as handle:
+              json.dump(checks, handle, indent=2, ensure_ascii=False)
+          with open('latest-quality-annotations.json', 'w', encoding='utf-8') as handle:
+              json.dump(annotations, handle, indent=2, ensure_ascii=False)
           PY
 
       - name: Upload latest quality evidence
@@ -93,6 +78,5 @@ jobs:
           path: |
             latest-quality-checks.json
             latest-quality-annotations.json
-            latest-sonar-gate.json
           if-no-files-found: error
           retention-days: 1
