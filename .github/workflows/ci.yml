@@ -1,5 +1,8 @@
 name: CI
 
+permissions:
+  contents: write
+
 on:
   workflow_dispatch:
   pull_request:
@@ -11,6 +14,8 @@ jobs:
   repository-shape:
     name: Repository shape
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -27,12 +32,11 @@ jobs:
   bot-checks:
     name: Bot checks
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: bot
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event_name == 'push' && github.ref_name || '' }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v6
@@ -42,18 +46,25 @@ jobs:
           cache-dependency-path: bot/package-lock.json
 
       - name: Resolve upgraded dependencies
+        working-directory: bot
         run: npm install --no-fund --no-audit
 
-      - name: Upload generated lockfile
-        uses: actions/upload-artifact@v4
-        with:
-          name: upgraded-package-lock
-          path: bot/package-lock.json
-          if-no-files-found: error
-          retention-days: 7
+      - name: Commit generated lockfile once
+        if: github.event_name == 'push' && github.ref == 'refs/heads/ss'
+        run: |
+          if git diff --quiet -- bot/package-lock.json; then
+            echo "Lockfile already current"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add bot/package-lock.json
+          git commit -m "lock upgraded bot dependencies"
+          git push origin HEAD:ss
 
       - name: Run bot unit tests
         id: tests
+        working-directory: bot
         shell: bash
         run: |
           set +e
@@ -66,13 +77,15 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: bot-test-output
+          name: bot-test-output-${{ github.run_id }}
           path: bot/test-output.log
           if-no-files-found: error
           retention-days: 7
 
       - name: Syntax check all source modules
+        working-directory: bot
         run: npm run check
 
       - name: Production dependency audit
+        working-directory: bot
         run: npm audit --omit=dev --audit-level=high
