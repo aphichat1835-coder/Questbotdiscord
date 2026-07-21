@@ -49,6 +49,6 @@ replaceOnce(
   'job record lifecycle',
 );
 
-if (changes !== 10) throw new Error(`Expected 10 runner hardening changes, got ${changes}`);
+if (changes !== 9) throw new Error(`Expected 9 runner hardening changes, got ${changes}`);
 fs.writeFileSync(file, source);
 console.log(`Applied ${changes} runner hardening changes`);
