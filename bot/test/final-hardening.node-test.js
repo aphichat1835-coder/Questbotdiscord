@@ -1,18 +1,15 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
-import os from 'node:os';
-import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 import Database from 'better-sqlite3';
-import { appendSafeSuffix } from '../src/path-safety.js';
 import { fetchInputUrl } from './fetch-input.js';
 
 process.env.DISCORD_BOT_TOKEN = 'test-bot-token';
 process.env.DISCORD_CLIENT_ID = 'test-client';
 process.env.DISCORD_GUILD_ID = 'test-guild';
 process.env.OWNER_ID = 'test-owner';
-process.env.DATABASE_PATH = `/tmp/questbot-final-hardening-${process.pid}.db`;
+process.env.DATABASE_PATH = './test/.tmp/final-hardening-main.db';
 process.env.RUNNER_TOKEN_SECRET = 'final-hardening-test-secret-123456';
 
 const runCommand = await import('../src/commands/run.js');
@@ -60,9 +57,11 @@ test.after(async () => {
   deleteAllScheduledRunners('test-owner');
   closeDatabase();
   await Promise.all([
-    fs.rm(process.env.DATABASE_PATH, { force: true }),
-    fs.rm(`${process.env.DATABASE_PATH}-wal`, { force: true }),
-    fs.rm(`${process.env.DATABASE_PATH}-shm`, { force: true }),
+    fs.rm('./test/.tmp/final-hardening-main.db', { force: true }),
+    fs.rm('./test/.tmp/final-hardening-main.db-wal', { force: true }),
+    fs.rm('./test/.tmp/final-hardening-main.db-shm', { force: true }),
+    fs.rm('./test/.tmp/final-hardening-legacy.db', { force: true }),
+    fs.rm('./data/backups/pre-tracker-removal.db', { force: true }),
   ]);
 });
 
@@ -196,8 +195,10 @@ test('unknown stop controls receive a safe reply', async () => {
 });
 
 test('legacy database migration preserves scheduled runners and creates a readable backup', async () => {
-  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'questbot-migration-'));
-  const databasePath = path.join(tempDir, 'legacy.db');
+  await fs.mkdir('./test/.tmp', { recursive: true });
+  await fs.rm('./test/.tmp/final-hardening-legacy.db', { force: true });
+  await fs.rm('./data/backups/pre-tracker-removal.db', { force: true });
+  const databasePath = './test/.tmp/final-hardening-legacy.db';
   const legacy = new Database(databasePath);
   legacy.exec(`
     CREATE TABLE quests (id INTEGER PRIMARY KEY, name TEXT NOT NULL);
@@ -254,10 +255,12 @@ test('legacy database migration preserves scheduled runners and creates a readab
   assert.equal(migrated.prepare('SELECT COUNT(*) AS count FROM scheduled_runners').get().count, 1);
   migrated.close();
 
-  const backupPath = appendSafeSuffix(databasePath, '.pre-tracker-removal.bak');
-  const backup = new Database(backupPath, { readonly: true });
+  const backup = new Database('./data/backups/pre-tracker-removal.db', { readonly: true });
   assert.equal(backup.prepare('SELECT COUNT(*) AS count FROM quests').get().count, 1);
   assert.equal(backup.prepare('SELECT COUNT(*) AS count FROM scheduled_runners').get().count, 1);
   backup.close();
-  await fs.rm(tempDir, { recursive: true, force: true });
+  await Promise.all([
+    fs.rm('./test/.tmp/final-hardening-legacy.db', { force: true }),
+    fs.rm('./data/backups/pre-tracker-removal.db', { force: true }),
+  ]);
 });

@@ -7,7 +7,7 @@ process.env.DISCORD_BOT_TOKEN = 'test-bot-token';
 process.env.DISCORD_CLIENT_ID = 'test-client';
 process.env.DISCORD_GUILD_ID = 'test-guild';
 process.env.OWNER_ID = 'test-owner';
-process.env.DATABASE_PATH = `/tmp/questbot-runner-modes-${process.pid}.db`;
+process.env.DATABASE_PATH = './test/.tmp/runner-modes.db';
 process.env.DATABASE_BACKUP_ENABLED = 'true';
 process.env.DATABASE_BACKUP_RETENTION = '2';
 process.env.RUNNER_TOKEN_SECRET = 'runner-mode-test-secret-123456';
@@ -34,7 +34,7 @@ const {
 } = await import('../src/scheduled-runner-store.js');
 const runCommand = await import('../src/commands/run.js');
 const stopCommand = await import('../src/commands/stop.js');
-const { backupDatabase, clearAllDatabaseBackupSlots } = await import('../src/db.js');
+const { backupDatabaseSlot, clearAllDatabaseBackupSlots } = await import('../src/db.js');
 const { redactSensitive } = await import('../src/error-reporter.js');
 const { runDatabaseBackup } = await import('../src/worker.js');
 
@@ -1247,12 +1247,13 @@ test('critical error redaction removes token-like secrets', () => {
   assert.match(safe, /REDACTED/);
 });
 
-test('database backup creates a readable SQLite snapshot', async () => {
-  const destination = `/tmp/questbot-backup-${process.pid}-${Date.now()}.db`;
-  await backupDatabase(destination);
+test('database backup slot creates a readable SQLite snapshot', async () => {
+  await clearAllDatabaseBackupSlots();
+  const destination = await backupDatabaseSlot(0);
   const stat = await fs.stat(destination);
   assert.ok(stat.size > 0);
-  await fs.unlink(destination);
+  assert.equal(destination, './data/backups/questbot-slot-1.db');
+  await clearAllDatabaseBackupSlots();
 });
 
 test('scheduled database backups rotate through the configured fixed slots', async () => {

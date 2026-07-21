@@ -1,9 +1,7 @@
 import Database from 'better-sqlite3';
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import 'dotenv/config';
-import { appendSafeSuffix, resolveContainedPath } from './path-safety.js';
 
 const dbPath = process.env.DATABASE_PATH ?? './data/quests.db';
 if (dbPath !== ':memory:') {
@@ -38,18 +36,14 @@ db.exec(`
     ON scheduled_runners(owner_id);
 `);
 
-const LEGACY_BACKUP_SUFFIX = '.pre-tracker-removal.bak';
-const BACKUP_DIRECTORY_PATH = fileURLToPath(new URL('../data/backups/', import.meta.url));
-const BACKUP_SLOT_1_PATH = fileURLToPath(new URL('../data/backups/questbot-slot-1.db', import.meta.url));
-const BACKUP_SLOT_2_PATH = fileURLToPath(new URL('../data/backups/questbot-slot-2.db', import.meta.url));
-const BACKUP_SLOT_3_PATH = fileURLToPath(new URL('../data/backups/questbot-slot-3.db', import.meta.url));
-const BACKUP_SLOT_4_PATH = fileURLToPath(new URL('../data/backups/questbot-slot-4.db', import.meta.url));
-const BACKUP_SLOT_5_PATH = fileURLToPath(new URL('../data/backups/questbot-slot-5.db', import.meta.url));
-const BACKUP_SLOT_6_PATH = fileURLToPath(new URL('../data/backups/questbot-slot-6.db', import.meta.url));
-const BACKUP_SLOT_7_PATH = fileURLToPath(new URL('../data/backups/questbot-slot-7.db', import.meta.url));
-
 export const DATABASE_BACKUP_SLOT_COUNT = 7;
 let legacyMigrationBackupPath = null;
+
+function ensureBackupDirectory() {
+  if (!fs.existsSync('./data/backups')) {
+    fs.mkdirSync('./data/backups', { recursive: true });
+  }
+}
 
 function tableExists(name) {
   return Boolean(db.prepare(
@@ -71,39 +65,30 @@ function dropLegacyTables(existing) {
   if (existing.includes('quests')) db.exec('DROP TABLE IF EXISTS quests');
 }
 
-export async function backupDatabase(destination) {
-  const absoluteDestination = path.resolve(destination);
-  const backupDir = path.dirname(absoluteDestination);
-  const safeDestination = resolveContainedPath(backupDir, path.basename(absoluteDestination));
-  if (!fs.existsSync(backupDir)) fs.mkdirSync(backupDir, { recursive: true });
-  await db.backup(safeDestination);
-  return safeDestination;
-}
-
 export async function backupDatabaseSlot(slotIndex) {
-  fs.mkdirSync(BACKUP_DIRECTORY_PATH, { recursive: true });
+  ensureBackupDirectory();
   switch (slotIndex) {
     case 0:
-      await db.backup(BACKUP_SLOT_1_PATH);
-      return BACKUP_SLOT_1_PATH;
+      await db.backup('./data/backups/questbot-slot-1.db');
+      return './data/backups/questbot-slot-1.db';
     case 1:
-      await db.backup(BACKUP_SLOT_2_PATH);
-      return BACKUP_SLOT_2_PATH;
+      await db.backup('./data/backups/questbot-slot-2.db');
+      return './data/backups/questbot-slot-2.db';
     case 2:
-      await db.backup(BACKUP_SLOT_3_PATH);
-      return BACKUP_SLOT_3_PATH;
+      await db.backup('./data/backups/questbot-slot-3.db');
+      return './data/backups/questbot-slot-3.db';
     case 3:
-      await db.backup(BACKUP_SLOT_4_PATH);
-      return BACKUP_SLOT_4_PATH;
+      await db.backup('./data/backups/questbot-slot-4.db');
+      return './data/backups/questbot-slot-4.db';
     case 4:
-      await db.backup(BACKUP_SLOT_5_PATH);
-      return BACKUP_SLOT_5_PATH;
+      await db.backup('./data/backups/questbot-slot-5.db');
+      return './data/backups/questbot-slot-5.db';
     case 5:
-      await db.backup(BACKUP_SLOT_6_PATH);
-      return BACKUP_SLOT_6_PATH;
+      await db.backup('./data/backups/questbot-slot-6.db');
+      return './data/backups/questbot-slot-6.db';
     case 6:
-      await db.backup(BACKUP_SLOT_7_PATH);
-      return BACKUP_SLOT_7_PATH;
+      await db.backup('./data/backups/questbot-slot-7.db');
+      return './data/backups/questbot-slot-7.db';
     default:
       throw new RangeError(`Database backup slot is out of range: ${slotIndex}`);
   }
@@ -112,31 +97,33 @@ export async function backupDatabaseSlot(slotIndex) {
 export async function clearInactiveDatabaseBackupSlots(retention) {
   const keep = Math.max(1, Math.min(DATABASE_BACKUP_SLOT_COUNT, retention));
   const removals = [];
-  if (keep < 7) removals.push(fs.promises.rm(BACKUP_SLOT_7_PATH, { force: true }));
-  if (keep < 6) removals.push(fs.promises.rm(BACKUP_SLOT_6_PATH, { force: true }));
-  if (keep < 5) removals.push(fs.promises.rm(BACKUP_SLOT_5_PATH, { force: true }));
-  if (keep < 4) removals.push(fs.promises.rm(BACKUP_SLOT_4_PATH, { force: true }));
-  if (keep < 3) removals.push(fs.promises.rm(BACKUP_SLOT_3_PATH, { force: true }));
-  if (keep < 2) removals.push(fs.promises.rm(BACKUP_SLOT_2_PATH, { force: true }));
+  if (keep < 7) removals.push(fs.promises.rm('./data/backups/questbot-slot-7.db', { force: true }));
+  if (keep < 6) removals.push(fs.promises.rm('./data/backups/questbot-slot-6.db', { force: true }));
+  if (keep < 5) removals.push(fs.promises.rm('./data/backups/questbot-slot-5.db', { force: true }));
+  if (keep < 4) removals.push(fs.promises.rm('./data/backups/questbot-slot-4.db', { force: true }));
+  if (keep < 3) removals.push(fs.promises.rm('./data/backups/questbot-slot-3.db', { force: true }));
+  if (keep < 2) removals.push(fs.promises.rm('./data/backups/questbot-slot-2.db', { force: true }));
   await Promise.all(removals);
 }
 
 export async function clearAllDatabaseBackupSlots() {
   await Promise.all([
-    fs.promises.rm(BACKUP_SLOT_1_PATH, { force: true }),
-    fs.promises.rm(BACKUP_SLOT_2_PATH, { force: true }),
-    fs.promises.rm(BACKUP_SLOT_3_PATH, { force: true }),
-    fs.promises.rm(BACKUP_SLOT_4_PATH, { force: true }),
-    fs.promises.rm(BACKUP_SLOT_5_PATH, { force: true }),
-    fs.promises.rm(BACKUP_SLOT_6_PATH, { force: true }),
-    fs.promises.rm(BACKUP_SLOT_7_PATH, { force: true }),
+    fs.promises.rm('./data/backups/questbot-slot-1.db', { force: true }),
+    fs.promises.rm('./data/backups/questbot-slot-2.db', { force: true }),
+    fs.promises.rm('./data/backups/questbot-slot-3.db', { force: true }),
+    fs.promises.rm('./data/backups/questbot-slot-4.db', { force: true }),
+    fs.promises.rm('./data/backups/questbot-slot-5.db', { force: true }),
+    fs.promises.rm('./data/backups/questbot-slot-6.db', { force: true }),
+    fs.promises.rm('./data/backups/questbot-slot-7.db', { force: true }),
   ]);
 }
 
 async function createLegacyMigrationBackup() {
   if (dbPath === ':memory:') return null;
-  const destination = appendSafeSuffix(dbPath, LEGACY_BACKUP_SUFFIX);
-  return backupDatabase(destination);
+  ensureBackupDirectory();
+  await fs.promises.rm('./data/backups/pre-tracker-removal.db', { force: true });
+  await db.backup('./data/backups/pre-tracker-removal.db');
+  return './data/backups/pre-tracker-removal.db';
 }
 
 async function migrateLegacyTracker() {
