@@ -5,7 +5,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 import Database from 'better-sqlite3';
-import { resolveContainedPath } from '../src/path-safety.js';
+import { appendSafeSuffix } from '../src/path-safety.js';
 import { fetchInputUrl } from './fetch-input.js';
 
 process.env.DISCORD_BOT_TOKEN = 'test-bot-token';
@@ -254,10 +254,7 @@ test('legacy database migration preserves scheduled runners and creates a readab
   assert.equal(migrated.prepare('SELECT COUNT(*) AS count FROM scheduled_runners').get().count, 1);
   migrated.close();
 
-  const backups = (await fs.readdir(tempDir))
-    .filter((name) => name.includes('.pre-tracker-removal-') && name.endsWith('.bak'));
-  assert.equal(backups.length, 1);
-  const backupPath = resolveContainedPath(tempDir, backups[0]);
+  const backupPath = appendSafeSuffix(databasePath, '.pre-tracker-removal.bak');
   const backup = new Database(backupPath, { readonly: true });
   assert.equal(backup.prepare('SELECT COUNT(*) AS count FROM quests').get().count, 1);
   assert.equal(backup.prepare('SELECT COUNT(*) AS count FROM scheduled_runners').get().count, 1);

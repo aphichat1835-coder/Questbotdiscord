@@ -66,13 +66,13 @@ Enroll, Claim, Video Progress และ Heartbeat ไม่ถูก Retry แ�
 
 ## ฐานข้อมูล
 
-ระบบใช้เฉพาะตาราง `scheduled_runners` สำหรับ Auto Daily เมื่อพบตาราง Tracker เก่า ระบบจะสำรองไฟล์ฐานข้อมูลก่อนแล้วจึงลบตารางเก่าอัตโนมัติ
+ระบบใช้เฉพาะตาราง `scheduled_runners` สำหรับ Auto Daily เมื่อพบตาราง Tracker เก่า ระบบจะสำรองไฟล์ฐานข้อมูลก่อนแล้วจึงลบตารางเก่าอัตโนมัติ การสำรองรายวันใช้ Slot คงที่ใน `bot/data/backups` สูงสุด 7 ไฟล์ จึงไม่รับ Path จาก Environment และไม่สะสมไฟล์ไม่สิ้นสุด
 
 แนะนำบน Hosting:
 
 ```env
 DATABASE_PATH=/var/data/quests.db
-DATABASE_BACKUP_DIR=/var/data/backups
+DATABASE_BACKUP_ENABLED=true
 DATABASE_BACKUP_RETENTION=7
 HEALTH_STATUS_TOKEN=เปลี่ยนเป็นรหัสยาวและสุ่ม
 ```

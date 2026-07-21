@@ -8,7 +8,7 @@ process.env.DISCORD_CLIENT_ID = 'test-client';
 process.env.DISCORD_GUILD_ID = 'test-guild';
 process.env.OWNER_ID = 'test-owner';
 process.env.DATABASE_PATH = `/tmp/questbot-runner-modes-${process.pid}.db`;
-process.env.DATABASE_BACKUP_DIR = `/tmp/questbot-runner-backups-${process.pid}`;
+process.env.DATABASE_BACKUP_ENABLED = 'true';
 process.env.DATABASE_BACKUP_RETENTION = '2';
 process.env.RUNNER_TOKEN_SECRET = 'runner-mode-test-secret-123456';
 
@@ -34,7 +34,7 @@ const {
 } = await import('../src/scheduled-runner-store.js');
 const runCommand = await import('../src/commands/run.js');
 const stopCommand = await import('../src/commands/stop.js');
-const { backupDatabase } = await import('../src/db.js');
+const { backupDatabase, clearAllDatabaseBackupSlots } = await import('../src/db.js');
 const { redactSensitive } = await import('../src/error-reporter.js');
 const { runDatabaseBackup } = await import('../src/worker.js');
 
@@ -1255,16 +1255,19 @@ test('database backup creates a readable SQLite snapshot', async () => {
   await fs.unlink(destination);
 });
 
-test('scheduled database backups retain only the configured number of snapshots', async () => {
-  await fs.rm(process.env.DATABASE_BACKUP_DIR, { recursive: true, force: true });
-  await runDatabaseBackup(new Date('2026-07-01T03:00:00Z'));
-  await runDatabaseBackup(new Date('2026-07-02T03:00:00Z'));
-  await runDatabaseBackup(new Date('2026-07-03T03:00:00Z'));
+test('scheduled database backups rotate through the configured fixed slots', async () => {
+  await clearAllDatabaseBackupSlots();
+  const first = await runDatabaseBackup(new Date('2026-07-01T03:00:00Z'));
+  const second = await runDatabaseBackup(new Date('2026-07-02T03:00:00Z'));
+  const third = await runDatabaseBackup(new Date('2026-07-03T03:00:00Z'));
 
-  const backups = (await fs.readdir(process.env.DATABASE_BACKUP_DIR))
-    .filter((name) => name.endsWith('.db'));
-  assert.equal(backups.length, 2);
-  await fs.rm(process.env.DATABASE_BACKUP_DIR, { recursive: true, force: true });
+  assert.notEqual(first, second);
+  assert.equal(first, third);
+  for (const destination of new Set([first, second])) {
+    const stat = await fs.stat(destination);
+    assert.ok(stat.size > 0);
+  }
+  await clearAllDatabaseBackupSlots();
 });
 
 test('run modal rechecks permissions when the modal is submitted', async () => {
