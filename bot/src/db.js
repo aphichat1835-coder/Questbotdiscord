@@ -38,20 +38,17 @@ db.exec(`
     ON scheduled_runners(owner_id);
 `);
 
-const LEGACY_TABLES = ['quest_logs', 'guild_settings', 'quests'];
 const LEGACY_BACKUP_SUFFIX = '.pre-tracker-removal.bak';
-const BACKUP_DIRECTORY_URL = new URL('../data/backups/', import.meta.url);
-const BACKUP_SLOT_URLS = Object.freeze([
-  new URL('questbot-slot-1.db', BACKUP_DIRECTORY_URL),
-  new URL('questbot-slot-2.db', BACKUP_DIRECTORY_URL),
-  new URL('questbot-slot-3.db', BACKUP_DIRECTORY_URL),
-  new URL('questbot-slot-4.db', BACKUP_DIRECTORY_URL),
-  new URL('questbot-slot-5.db', BACKUP_DIRECTORY_URL),
-  new URL('questbot-slot-6.db', BACKUP_DIRECTORY_URL),
-  new URL('questbot-slot-7.db', BACKUP_DIRECTORY_URL),
-]);
+const BACKUP_DIRECTORY_PATH = fileURLToPath(new URL('../data/backups/', import.meta.url));
+const BACKUP_SLOT_1_PATH = fileURLToPath(new URL('../data/backups/questbot-slot-1.db', import.meta.url));
+const BACKUP_SLOT_2_PATH = fileURLToPath(new URL('../data/backups/questbot-slot-2.db', import.meta.url));
+const BACKUP_SLOT_3_PATH = fileURLToPath(new URL('../data/backups/questbot-slot-3.db', import.meta.url));
+const BACKUP_SLOT_4_PATH = fileURLToPath(new URL('../data/backups/questbot-slot-4.db', import.meta.url));
+const BACKUP_SLOT_5_PATH = fileURLToPath(new URL('../data/backups/questbot-slot-5.db', import.meta.url));
+const BACKUP_SLOT_6_PATH = fileURLToPath(new URL('../data/backups/questbot-slot-6.db', import.meta.url));
+const BACKUP_SLOT_7_PATH = fileURLToPath(new URL('../data/backups/questbot-slot-7.db', import.meta.url));
 
-export const DATABASE_BACKUP_SLOT_COUNT = BACKUP_SLOT_URLS.length;
+export const DATABASE_BACKUP_SLOT_COUNT = 7;
 let legacyMigrationBackupPath = null;
 
 function tableExists(name) {
@@ -60,11 +57,18 @@ function tableExists(name) {
   ).get(name));
 }
 
-function backupSlotUrl(slotIndex) {
-  if (!Number.isInteger(slotIndex) || slotIndex < 0 || slotIndex >= BACKUP_SLOT_URLS.length) {
-    throw new RangeError(`Database backup slot is out of range: ${slotIndex}`);
-  }
-  return BACKUP_SLOT_URLS[slotIndex];
+function existingLegacyTables() {
+  const tables = [];
+  if (tableExists('quest_logs')) tables.push('quest_logs');
+  if (tableExists('guild_settings')) tables.push('guild_settings');
+  if (tableExists('quests')) tables.push('quests');
+  return tables;
+}
+
+function dropLegacyTables(existing) {
+  if (existing.includes('quest_logs')) db.exec('DROP TABLE IF EXISTS quest_logs');
+  if (existing.includes('guild_settings')) db.exec('DROP TABLE IF EXISTS guild_settings');
+  if (existing.includes('quests')) db.exec('DROP TABLE IF EXISTS quests');
 }
 
 export async function backupDatabase(destination) {
@@ -77,23 +81,56 @@ export async function backupDatabase(destination) {
 }
 
 export async function backupDatabaseSlot(slotIndex) {
-  fs.mkdirSync(BACKUP_DIRECTORY_URL, { recursive: true });
-  const destination = fileURLToPath(backupSlotUrl(slotIndex));
-  await db.backup(destination);
-  return destination;
+  fs.mkdirSync(BACKUP_DIRECTORY_PATH, { recursive: true });
+  switch (slotIndex) {
+    case 0:
+      await db.backup(BACKUP_SLOT_1_PATH);
+      return BACKUP_SLOT_1_PATH;
+    case 1:
+      await db.backup(BACKUP_SLOT_2_PATH);
+      return BACKUP_SLOT_2_PATH;
+    case 2:
+      await db.backup(BACKUP_SLOT_3_PATH);
+      return BACKUP_SLOT_3_PATH;
+    case 3:
+      await db.backup(BACKUP_SLOT_4_PATH);
+      return BACKUP_SLOT_4_PATH;
+    case 4:
+      await db.backup(BACKUP_SLOT_5_PATH);
+      return BACKUP_SLOT_5_PATH;
+    case 5:
+      await db.backup(BACKUP_SLOT_6_PATH);
+      return BACKUP_SLOT_6_PATH;
+    case 6:
+      await db.backup(BACKUP_SLOT_7_PATH);
+      return BACKUP_SLOT_7_PATH;
+    default:
+      throw new RangeError(`Database backup slot is out of range: ${slotIndex}`);
+  }
 }
 
 export async function clearInactiveDatabaseBackupSlots(retention) {
   const keep = Math.max(1, Math.min(DATABASE_BACKUP_SLOT_COUNT, retention));
-  await Promise.all(
-    BACKUP_SLOT_URLS.slice(keep).map((slotUrl) => fs.promises.rm(slotUrl, { force: true })),
-  );
+  const removals = [];
+  if (keep < 7) removals.push(fs.promises.rm(BACKUP_SLOT_7_PATH, { force: true }));
+  if (keep < 6) removals.push(fs.promises.rm(BACKUP_SLOT_6_PATH, { force: true }));
+  if (keep < 5) removals.push(fs.promises.rm(BACKUP_SLOT_5_PATH, { force: true }));
+  if (keep < 4) removals.push(fs.promises.rm(BACKUP_SLOT_4_PATH, { force: true }));
+  if (keep < 3) removals.push(fs.promises.rm(BACKUP_SLOT_3_PATH, { force: true }));
+  if (keep < 2) removals.push(fs.promises.rm(BACKUP_SLOT_2_PATH, { force: true }));
+  await Promise.all(removals);
 }
 
 export async function clearAllDatabaseBackupSlots() {
-  await Promise.all(
-    BACKUP_SLOT_URLS.map((slotUrl) => fs.promises.rm(slotUrl, { force: true })),
-  );
+  await Promise.all([
+    fs.promises.rm(BACKUP_SLOT_1_PATH, { force: true }),
+    fs.promises.rm(BACKUP_SLOT_2_PATH, { force: true }),
+    fs.promises.rm(BACKUP_SLOT_3_PATH, { force: true }),
+    fs.promises.rm(BACKUP_SLOT_4_PATH, { force: true }),
+    fs.promises.rm(BACKUP_SLOT_5_PATH, { force: true }),
+    fs.promises.rm(BACKUP_SLOT_6_PATH, { force: true }),
+    fs.promises.rm(BACKUP_SLOT_7_PATH, { force: true }),
+  ]);
 }
 
 async function createLegacyMigrationBackup() {
@@ -103,12 +140,12 @@ async function createLegacyMigrationBackup() {
 }
 
 async function migrateLegacyTracker() {
-  const existing = LEGACY_TABLES.filter(tableExists);
+  const existing = existingLegacyTables();
   if (!existing.length) return;
 
   legacyMigrationBackupPath = await createLegacyMigrationBackup();
   db.transaction(() => {
-    for (const table of existing) db.exec(`DROP TABLE IF EXISTS ${table}`);
+    dropLegacyTables(existing);
     db.pragma('user_version = 2');
   })();
 
