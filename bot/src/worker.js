@@ -1,11 +1,13 @@
-import fs from 'node:fs/promises';
-import path from 'node:path';
 import { config } from './config.js';
-import { backupDatabase } from './db.js';
+import {
+  backupDatabaseSlot,
+  clearInactiveDatabaseBackupSlots,
+  DATABASE_BACKUP_SLOT_COUNT,
+} from './db.js';
 import { reportCriticalError } from './error-reporter.js';
-import { resolveContainedPath } from './path-safety.js';
 import { nextDailyTime } from './runner-schedule.js';
 
+const MILLISECONDS_PER_DAY = 24 * 60 * 60 * 1000;
 let backupTimeout = null;
 let workerStopping = false;
 const activeTasks = new Set();
@@ -21,8 +23,8 @@ function trackTask(promise) {
 
 export function startWorker() {
   workerStopping = false;
-  if (!config.databaseBackupDir) {
-    console.log('💾 Database backup scheduler disabled — DATABASE_BACKUP_DIR is empty');
+  if (!config.databaseBackupEnabled) {
+    console.log('💾 Database backup scheduler disabled — DATABASE_BACKUP_ENABLED is false');
     return;
   }
   scheduleDatabaseBackup();
@@ -48,7 +50,7 @@ export async function stopWorker(timeoutMs = 5000) {
 }
 
 function scheduleDatabaseBackup() {
-  if (workerStopping || !config.databaseBackupDir) return;
+  if (workerStopping || !config.databaseBackupEnabled) return;
   const next = nextDailyTime(3, new Date(), config.timezone);
   const delay = Math.max(0, next.getTime() - Date.now());
   console.log(`💾 Database backup scheduled in ${Math.floor(delay / 3600000)}h ${Math.floor((delay % 3600000) / 60000)}m`);
@@ -67,29 +69,22 @@ function scheduleDatabaseBackup() {
   backupTimeout.unref?.();
 }
 
-function isBackupFile(name) {
-  return name.startsWith('questbot-') && name.endsWith('.db');
+function normalizedRetention() {
+  return Math.min(DATABASE_BACKUP_SLOT_COUNT, config.databaseBackupRetention);
+}
+
+function backupSlotForDate(now, retention) {
+  const dayNumber = Math.floor(now.getTime() / MILLISECONDS_PER_DAY);
+  return ((dayNumber % retention) + retention) % retention;
 }
 
 export async function runDatabaseBackup(now = new Date()) {
-  if (!config.databaseBackupDir) return null;
-  const backupDir = path.resolve(config.databaseBackupDir);
-  await fs.mkdir(backupDir, { recursive: true });
+  if (!config.databaseBackupEnabled) return null;
+  const retention = normalizedRetention();
+  const slotIndex = backupSlotForDate(now, retention);
+  const destination = await backupDatabaseSlot(slotIndex);
+  await clearInactiveDatabaseBackupSlots(retention);
 
-  const timestamp = now.toISOString().replace(/[:.]/g, '-');
-  const filename = `questbot-${timestamp}.db`;
-  const destination = resolveContainedPath(backupDir, filename);
-  await backupDatabase(destination);
-
-  const files = (await fs.readdir(backupDir))
-    .filter(isBackupFile)
-    .sort()
-    .reverse();
-  const expiredFiles = files.slice(config.databaseBackupRetention);
-  await Promise.all(
-    expiredFiles.map((name) => fs.unlink(resolveContainedPath(backupDir, name))),
-  );
-
-  console.log(`💾 Database backup completed → ${destination}`);
+  console.log(`💾 Database backup completed → slot ${slotIndex + 1}/${retention}`);
   return destination;
 }
