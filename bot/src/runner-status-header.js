@@ -29,9 +29,9 @@ function withPayloadContent(payload, content) {
  * @returns {string[] | null} Parsed lines, or null for unsupported content.
  */
 function readCodeBlockLines(content) {
-  const text = String(content ?? '');
-  if (!text.startsWith('```\n') || !text.endsWith('\n```')) return null;
-  return text.slice(4, -4).split('\n');
+  if (typeof content !== 'string') return null;
+  if (!content.startsWith('```\n') || !content.endsWith('\n```')) return null;
+  return content.slice(4, -4).split('\n');
 }
 
 /**
