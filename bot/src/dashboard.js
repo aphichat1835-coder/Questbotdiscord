@@ -1,4 +1,6 @@
+import { timingSafeEqual } from 'node:crypto';
 import { createServer } from 'node:http';
+import { config } from './config.js';
 import { getQuestEngineStatus, listJobs } from './discord-runner.js';
 import { listScheduledRunners } from './scheduled-runner-store.js';
 import { reportCriticalError } from './error-reporter.js';
@@ -28,7 +30,7 @@ export async function stopDashboard() {
   await new Promise((resolve) => activeServer.close(resolve));
 }
 
-function statusPayload() {
+export function detailedStatusPayload() {
   const jobs = listJobs();
   const quest = getQuestEngineStatus();
   return {
@@ -57,17 +59,31 @@ function sendJson(res, statusCode, body) {
   res.end(JSON.stringify(body));
 }
 
+export function hasStatusAccess(authorization, expected = config.healthStatusToken) {
+  if (!expected || typeof authorization !== 'string') return false;
+  if (!authorization.startsWith('Bearer ')) return false;
+  const supplied = authorization.slice(7);
+  const expectedBuffer = Buffer.from(expected);
+  const suppliedBuffer = Buffer.from(supplied);
+  return expectedBuffer.length === suppliedBuffer.length
+    && timingSafeEqual(expectedBuffer, suppliedBuffer);
+}
+
 function handleRequest(req, res) {
   const pathname = new URL(req.url, 'http://localhost').pathname;
-  if (pathname === '/healthz' || pathname === '/api/status') {
-    const payload = statusPayload();
+  if (pathname === '/healthz') {
+    const ok = botClient?.isReady() ?? false;
+    return sendJson(res, ok ? 200 : 503, { ok });
+  }
+
+  if (pathname === '/api/status') {
+    if (!config.healthStatusToken) return sendJson(res, 404, { error: 'not_found' });
+    if (!hasStatusAccess(req.headers.authorization)) {
+      return sendJson(res, 401, { error: 'unauthorized' });
+    }
+    const payload = detailedStatusPayload();
     return sendJson(res, payload.ok ? 200 : 503, payload);
   }
 
-  res.writeHead(200, {
-    'Content-Type': 'text/plain; charset=utf-8',
-    'Cache-Control': 'no-store',
-    'X-Content-Type-Options': 'nosniff',
-  });
-  res.end('NeverDie Quest Bot health endpoint: /healthz\n');
+  return sendJson(res, 404, { error: 'not_found' });
 }

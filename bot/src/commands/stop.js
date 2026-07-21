@@ -7,10 +7,7 @@ import {
   StringSelectMenuBuilder,
 } from 'discord.js';
 import { config } from '../config.js';
-import {
-  stopAllForUserAndWait,
-  stopScheduledJobAndWait,
-} from '../runner-control.js';
+import { stopScheduledJobAndWait } from '../runner-control.js';
 import { listScheduledRunners } from '../scheduled-runner-store.js';
 
 export const data = new SlashCommandBuilder()
@@ -93,6 +90,13 @@ async function finishUpdate(interaction, payload, deferred) {
   throw new Error('Interaction does not support update or editReply');
 }
 
+async function stopRows(ownerId, rows) {
+  const results = await Promise.all(
+    rows.map((row) => stopScheduledJobAndWait(ownerId, row.id)),
+  );
+  return results.filter(Boolean).length;
+}
+
 export async function execute(interaction) {
   await interaction.reply({
     ...stopPanelPayload(interaction.user.id),
@@ -102,16 +106,15 @@ export async function execute(interaction) {
 
 export async function handleSelect(interaction) {
   const deferred = await acknowledgeForCleanup(interaction);
-  const stopped = [];
-  for (const rawId of interaction.values) {
-    const id = Number(rawId);
-    if (!Number.isInteger(id)) continue;
-    const row = listScheduledRunners(interaction.user.id).find((item) => item.id === id);
-    if (row && await stopScheduledJobAndWait(interaction.user.id, id)) stopped.push(row.username);
-  }
+  const selectedIds = new Set(
+    interaction.values.map(Number).filter(Number.isInteger),
+  );
+  const rows = listScheduledRunners(interaction.user.id)
+    .filter((row) => selectedIds.has(row.id));
+  const stopped = await stopRows(interaction.user.id, rows);
 
-  const notice = stopped.length
-    ? `✅ หยุดและ Cleanup แล้ว: **${stopped.join(', ')}**`
+  const notice = stopped > 0
+    ? `✅ หยุดและ Cleanup แล้ว **${stopped}** token`
     : 'ℹ️ ไม่พบ Runner ที่เลือก';
   return finishUpdate(interaction, stopPanelPayload(interaction.user.id, notice), deferred);
 }
@@ -125,13 +128,13 @@ export async function handleButton(interaction) {
   if (action === 'all') {
     const deferred = await acknowledgeForCleanup(interaction);
     const rows = listScheduledRunners(interaction.user.id);
-    const stopped = await stopAllForUserAndWait(interaction.user.id, { mode: 'scheduled' });
+    const stopped = await stopRows(interaction.user.id, rows);
+    const notice = stopped > 0
+      ? `✅ หยุดและ Cleanup Auto Daily Runner แล้ว **${stopped}** token`
+      : 'ℹ️ ไม่มี Auto Daily Runner ที่กำลังทำงาน';
     return finishUpdate(
       interaction,
-      stopPanelPayload(
-        interaction.user.id,
-        `✅ หยุดและ Cleanup Auto Daily Runner แล้ว **${stopped || rows.length}** token`,
-      ),
+      stopPanelPayload(interaction.user.id, notice),
       deferred,
     );
   }

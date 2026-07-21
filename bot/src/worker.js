@@ -11,7 +11,10 @@ const activeTasks = new Set();
 
 function trackTask(promise) {
   activeTasks.add(promise);
-  void promise.finally(() => activeTasks.delete(promise));
+  void promise.then(
+    () => activeTasks.delete(promise),
+    () => activeTasks.delete(promise),
+  );
   return promise;
 }
 
@@ -36,6 +39,7 @@ export async function stopWorker(timeoutMs = 5000) {
     Promise.allSettled([...activeTasks]),
     new Promise((resolve) => {
       timeout = setTimeout(resolve, timeoutMs);
+      timeout.unref?.();
     }),
   ]);
   clearTimeout(timeout);

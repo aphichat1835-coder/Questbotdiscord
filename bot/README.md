@@ -19,6 +19,7 @@ npm start
 - `DATABASE_PATH` — ค่าเริ่มต้น `./data/quests.db`
 - `DATABASE_BACKUP_DIR`, `DATABASE_BACKUP_RETENTION` — ระบบสำรองฐานข้อมูล
 - `GITHUB_TOKEN` — เพิ่ม GitHub API rate limit สำหรับข้อมูล Discord build
+- `HEALTH_STATUS_TOKEN` — รหัส Bearer สำหรับ HTTP `/api/status`; หากไม่ตั้ง Endpoint นี้จะปิด
 
 ## การทำงาน
 
@@ -42,18 +43,19 @@ npm start
 DATABASE_PATH=/var/data/quests.db
 DATABASE_BACKUP_DIR=/var/data/backups
 DATABASE_BACKUP_RETENTION=7
+HEALTH_STATUS_TOKEN=เปลี่ยนเป็นรหัสยาวและสุ่ม
 ```
 
 ## Health check
 
-- `/healthz`
-- `/api/status` ของ HTTP server
-- Slash command `/api-status` สำหรับรายละเอียดภายใน Discord
+- `GET /healthz` — เปิดสาธารณะและตอบเพียง `{ "ok": true|false }`
+- `GET /api/status` — รายละเอียด Runner/API ต้องส่ง `Authorization: Bearer <HEALTH_STATUS_TOKEN>`
+- Slash command `/api-status` — รายละเอียดส่วนตัวภายใน Discord
 
 ## ทดสอบ
 
 ```bash
 npm test
-find src -name '*.js' -print0 | xargs -0 -n1 node --check
+npm run check
 npm audit --omit=dev --audit-level=high
 ```
