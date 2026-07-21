@@ -1,7 +1,11 @@
 import { timingSafeEqual } from 'node:crypto';
 import { createServer } from 'node:http';
 import { config } from './config.js';
-import { getQuestEngineStatus, listJobs } from './discord-runner.js';
+import {
+  getQuestEngineStatus,
+  listJobs,
+  listQuestEngineStatuses,
+} from './discord-runner.js';
 import { listScheduledRunners } from './scheduled-runner-store.js';
 import { reportCriticalError } from './error-reporter.js';
 
@@ -30,9 +34,35 @@ export async function stopDashboard() {
   await new Promise((resolve) => activeServer.close(resolve));
 }
 
+function statusSnapshot(status) {
+  return {
+    key: status.key,
+    ownerId: status.ownerId,
+    accountId: status.accountId,
+    username: status.username,
+    jobKey: status.jobKey,
+    mode: status.mode,
+    lifecycle: status.lifecycle,
+    state: status.state,
+    questCount: status.questCount,
+    supportedCount: status.supportedCount,
+    excludedCount: status.excludedCount,
+    lastCheckAt: status.lastCheckAt,
+    lastSuccessfulCheckAt: status.lastSuccessfulCheckAt,
+    lastVerifiedProgressAt: status.lastVerifiedProgressAt,
+    lastVerifiedCompletionAt: status.lastVerifiedCompletionAt,
+    lastVerifiedClaimAt: status.lastVerifiedClaimAt,
+    questListPath: status.questListPath,
+    unknownEvents: status.unknownEvents,
+    schemaIssues: status.schemaIssues,
+    lastError: status.lastError,
+  };
+}
+
 export function detailedStatusPayload() {
   const jobs = listJobs();
   const quest = getQuestEngineStatus();
+  const accountStatuses = listQuestEngineStatuses().map(statusSnapshot);
   return {
     ok: botClient?.isReady() ?? false,
     uptimeSeconds: Math.floor((Date.now() - startedAt) / 1000),
@@ -44,8 +74,8 @@ export function detailedStatusPayload() {
       persisted: listScheduledRunners().length,
     },
     questApi: {
-      state: quest.state,
-      lastSuccessfulCheckAt: quest.lastSuccessfulCheckAt,
+      aggregate: statusSnapshot(quest),
+      accounts: accountStatuses,
     },
   };
 }
