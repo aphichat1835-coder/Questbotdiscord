@@ -80,12 +80,145 @@ function tokenCheckFailure(error, tokenIndex) {
   return `${prefix} ตรวจไม่สำเร็จ — ติดต่อ Discord ไม่ได้`;
 }
 
+function parseModalContext(interaction) {
+  const parts = interaction.customId.split(':');
+  const explicitMode = parts.length >= 3;
+  const mode = explicitMode ? parts[1] : 'oneshot';
+  const modalChannelId = explicitMode ? parts[2] : parts[1];
+  return {
+    mode,
+    channelId: interaction.channelId ?? modalChannelId,
+    isScheduled: mode === 'scheduled',
+    valid: mode === 'scheduled' || mode === 'oneshot',
+  };
+}
+
+function parseTokens(interaction) {
+  const raw = interaction.fields.getTextInputValue('user_tokens');
+  return [...new Set(raw.split('\n').map((token) => token.trim()).filter(Boolean))];
+}
+
+function availableRunnerSlots(ownerId) {
+  const existing = getUserJobs(ownerId, { includeStopping: true });
+  const persisted = listScheduledRunners(ownerId);
+  const runningScheduledIds = new Set(
+    existing.filter((job) => job.scheduleId != null).map((job) => job.scheduleId),
+  );
+  const offlineScheduled = persisted.filter((row) => !runningScheduledIds.has(row.id)).length;
+  return Math.max(0, 10 - existing.length - offlineScheduled);
+}
+
+async function inspectToken(token, tokenIndex) {
+  try {
+    const account = await fetchMe(token);
+    if (!account?.id) {
+      return { error: `❌ Token ลำดับที่ ${tokenIndex + 1} ไม่คืนข้อมูลบัญชีที่ใช้งานได้` };
+    }
+    return { account };
+  } catch (error) {
+    return { error: tokenCheckFailure(error, tokenIndex) };
+  }
+}
+
+function accountConflict(ownerId, account) {
+  if (isAccountStopping(ownerId, account.id)) {
+    return `⏳ **${account.username}** กำลังหยุดและ Cleanup กรุณาลองใหม่อีกครั้ง`;
+  }
+  if (findUserJobByAccount(ownerId, account.id) || findScheduledRunner(ownerId, account.id)) {
+    return `⚠️ **${account.username}** มี Runner ทำงานอยู่แล้ว`;
+  }
+  return null;
+}
+
+function createSchedule(context, token, account) {
+  if (!context.isScheduled) return null;
+  return createScheduledRunner({
+    ownerId: context.ownerId,
+    guildId: context.interaction.guildId,
+    channelId: context.channelId,
+    accountId: account.id,
+    username: account.username,
+    token,
+    secret: config.runnerTokenSecret,
+  });
+}
+
+function runnerSuccessLine(isScheduled, username) {
+  if (isScheduled) {
+    return `🤖 เริ่มระบบอัตโนมัติรายวัน: **${username}**\n   ตรวจทันที และตรวจประจำเวลา **00:00 / 08:00 / 16:00 น.**`;
+  }
+  return `✅ เริ่ม Quest auto : **${username}**`;
+}
+
+async function startAccountRunner(context, token, account) {
+  let schedule = null;
+  try {
+    schedule = createSchedule(context, token, account);
+    const jobKey = context.isScheduled
+      ? `scheduled:${schedule.id}`
+      : `${context.ownerId}:oneshot:${context.nextStartIndex()}`;
+    await startRunner({
+      jobKey,
+      ownerId: context.ownerId,
+      userToken: token,
+      channelId: context.channelId,
+      client: context.interaction.client,
+      mode: context.isScheduled ? 'scheduled' : 'oneshot',
+      scheduleId: schedule?.id ?? null,
+      accountId: account.id,
+      username: account.username,
+    });
+    return { started: true, line: runnerSuccessLine(context.isScheduled, account.username) };
+  } catch (error) {
+    if (schedule) deleteScheduledRunner(schedule.id, context.ownerId);
+    return { started: false, line: `❌ เริ่ม **${account.username}** ไม่สำเร็จ — ${error.message}` };
+  }
+}
+
+async function processTokens(context, tokens, freeSlots) {
+  const results = [];
+  let started = 0;
+  let inspected = 0;
+
+  for (const [tokenIndex, token] of tokens.entries()) {
+    if (started >= freeSlots) break;
+    inspected++;
+
+    const inspection = await inspectToken(token, tokenIndex);
+    if (inspection.error) {
+      results.push(inspection.error);
+      continue;
+    }
+
+    const conflict = accountConflict(context.ownerId, inspection.account);
+    if (conflict) {
+      results.push(conflict);
+      continue;
+    }
+
+    const outcome = await startAccountRunner(context, token, inspection.account);
+    results.push(outcome.line);
+    if (outcome.started) started++;
+  }
+
+  return { results, inspected };
+}
+
+function finalizeResults(results, tokens, inspected, isScheduled) {
+  const skipped = tokens.length - inspected;
+  if (skipped > 0) results.push(`⚠️ ข้าม ${skipped} token เพราะช่อง Runner เต็ม`);
+
+  const scheduledStarted = isScheduled && results.some((line) => line.startsWith('🤖'));
+  if (scheduledStarted) {
+    results.unshift('**🚀 NEVERDIE AUTO DAILY QUEST เปิดใช้งานแล้ว**');
+    results.push('ใช้คำสั่ง `/stop` เพื่อเลือกหยุด Runner ที่ต้องการ');
+  }
+  return results.join('\n');
+}
+
 export async function handleModal(interaction) {
-  const modalParts = interaction.customId.split(':');
-  const mode = modalParts.length >= 3 ? modalParts[1] : 'oneshot';
-  const channelId = interaction.channelId ?? (modalParts.length >= 3 ? modalParts[2] : modalParts[1]);
-  const isScheduled = mode === 'scheduled';
-  if (!['scheduled', 'oneshot'].includes(mode)) {
+  const modal = parseModalContext(interaction);
+  if (!modal.valid) {
     return interaction.reply({ flags: 64, content: '❌ Runner mode ไม่ถูกต้อง กรุณาเปิด Modal ใหม่' });
   }
   if (!isManager(interaction)) {
@@ -95,104 +228,25 @@ export async function handleModal(interaction) {
     });
   }
 
-  const raw = interaction.fields.getTextInputValue('user_tokens');
-  const tokens = [...new Set(raw.split('\n').map((token) => token.trim()).filter(Boolean))];
+  const tokens = parseTokens(interaction);
   if (!tokens.length) {
     return interaction.reply({ flags: 64, content: '❌ ไม่พบ token กรุณาใส่อย่างน้อย 1 token' });
   }
 
-  await interaction.deferReply(isScheduled ? {} : { flags: 64 });
-
+  await interaction.deferReply(modal.isScheduled ? {} : { flags: 64 });
   const ownerId = interaction.user.id;
-  const existing = getUserJobs(ownerId, { includeStopping: true });
-  const persisted = listScheduledRunners(ownerId);
-  const runningScheduledIds = new Set(
-    existing.filter((job) => job.scheduleId != null).map((job) => job.scheduleId),
-  );
-  const offlineScheduled = persisted.filter((row) => !runningScheduledIds.has(row.id)).length;
-  const usedSlots = existing.length + offlineScheduled;
-  const freeSlots = Math.max(0, 10 - usedSlots);
-
+  const freeSlots = availableRunnerSlots(ownerId);
   if (freeSlots === 0) {
     return interaction.editReply('⚠️ มี Runner ทำงานหรือกำลัง Cleanup เต็มแล้ว (สูงสุด 10 token) ใช้ 🛑 STOP ALL ก่อน');
   }
 
-  const results = [];
-  let started = 0;
-  let inspected = 0;
   let startIndex = Date.now();
-
-  for (const [tokenIndex, token] of tokens.entries()) {
-    if (started >= freeSlots) break;
-    inspected++;
-
-    let me;
-    try {
-      me = await fetchMe(token);
-    } catch (error) {
-      results.push(tokenCheckFailure(error, tokenIndex));
-      continue;
-    }
-    if (!me?.id) {
-      results.push(`❌ Token ลำดับที่ ${tokenIndex + 1} ไม่คืนข้อมูลบัญชีที่ใช้งานได้`);
-      continue;
-    }
-
-    if (isAccountStopping(ownerId, me.id)) {
-      results.push(`⏳ **${me.username}** กำลังหยุดและ Cleanup กรุณาลองใหม่อีกครั้ง`);
-      continue;
-    }
-    if (findUserJobByAccount(ownerId, me.id) || findScheduledRunner(ownerId, me.id)) {
-      results.push(`⚠️ **${me.username}** มี Runner ทำงานอยู่แล้ว`);
-      continue;
-    }
-
-    let schedule = null;
-    try {
-      if (isScheduled) {
-        schedule = createScheduledRunner({
-          ownerId,
-          guildId: interaction.guildId,
-          channelId,
-          accountId: me.id,
-          username: me.username,
-          token,
-          secret: config.runnerTokenSecret,
-        });
-      }
-
-      const jobKey = isScheduled
-        ? `scheduled:${schedule.id}`
-        : `${ownerId}:oneshot:${startIndex++}`;
-      await startRunner({
-        jobKey,
-        ownerId,
-        userToken: token,
-        channelId,
-        client: interaction.client,
-        mode: isScheduled ? 'scheduled' : 'oneshot',
-        scheduleId: schedule?.id ?? null,
-        accountId: me.id,
-        username: me.username,
-      });
-      started++;
-
-      results.push(isScheduled
-        ? `🤖 เริ่มระบบอัตโนมัติรายวัน: **${me.username}**\n   ตรวจทันที และตรวจประจำเวลา **00:00 / 08:00 / 16:00 น.**`
-        : `✅ เริ่ม Quest auto : **${me.username}**`);
-    } catch (error) {
-      if (schedule) deleteScheduledRunner(schedule.id, ownerId);
-      results.push(`❌ เริ่ม **${me.username}** ไม่สำเร็จ — ${error.message}`);
-    }
-  }
-
-  const skipped = tokens.length - inspected;
-  if (skipped > 0) results.push(`⚠️ ข้าม ${skipped} token เพราะช่อง Runner เต็ม`);
-
-  if (isScheduled && results.some((line) => line.startsWith('🤖'))) {
-    results.unshift('**🚀 NEVERDIE AUTO DAILY QUEST เปิดใช้งานแล้ว**');
-    results.push('ใช้คำสั่ง `/stop` เพื่อเลือกหยุด Runner ที่ต้องการ');
-  }
-
-  return interaction.editReply(results.join('\n'));
+  const context = {
+    ...modal,
+    interaction,
+    ownerId,
+    nextStartIndex: () => startIndex++,
+  };
+  const { results, inspected } = await processTokens(context, tokens, freeSlots);
+  return interaction.editReply(finalizeResults(results, tokens, inspected, modal.isScheduled));
 }
