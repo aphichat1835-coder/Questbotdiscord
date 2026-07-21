@@ -6,7 +6,7 @@ import {
   SlashCommandBuilder,
 } from 'discord.js';
 import { getUserJobs } from '../discord-runner.js';
-import { stopRunnerAndWait } from '../runner-control.js';
+import { stopRunnerAndWaitDetailed } from '../runner-control.js';
 import { isManager } from '../permissions.js';
 import { showRunModal } from './run.js';
 
@@ -66,11 +66,14 @@ async function handleRunButton(interaction) {
 
 async function handleStopButton(interaction) {
   await interaction.deferReply({ flags: 64 });
-  const jobs = getUserJobs(interaction.user.id, { mode: 'oneshot' });
-  const stopped = await stopRunnerAndWait(interaction.user.id, { mode: 'oneshot' });
-  const content = stopped
-    ? `🛑 หยุด One-shot Runner และรอ Cleanup แล้ว **${jobs.length}** token`
-    : 'ℹ️ ไม่มี One-shot Runner ที่กำลังทำงาน';
+  const result = await stopRunnerAndWaitDetailed(interaction.user.id, { mode: 'oneshot' });
+
+  let content = 'ℹ️ ไม่มี One-shot Runner ที่กำลังทำงาน';
+  if (result.accepted > 0 && result.pending > 0) {
+    content = `🛑 รับคำสั่งหยุดแล้ว **${result.accepted}** token · ยัง Cleanup อยู่ **${result.pending}** token`;
+  } else if (result.completed > 0) {
+    content = `🛑 หยุด One-shot Runner และ Cleanup เสร็จแล้ว **${result.completed}** token`;
+  }
   return interaction.editReply(content);
 }
 
@@ -85,12 +88,4 @@ export async function handleButton(interaction) {
   };
   if (interaction.replied || interaction.deferred) return interaction.followUp(payload);
   return interaction.reply(payload);
-}
-
-// Compatibility tombstone for old tests/imports. index.js no longer routes legacy modals here.
-export async function handlePanelModal(interaction) {
-  return interaction.reply({
-    flags: 64,
-    content: 'ℹ️ สิทธิ์ของคุณเปลี่ยนไป — Modal รุ่นเก่าถูกปิดใช้งานแล้ว กรุณาใช้ `/panel` ใหม่',
-  });
 }
