@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import 'dotenv/config';
 import { appendSafeSuffix, resolveContainedPath } from './path-safety.js';
 
@@ -38,12 +39,32 @@ db.exec(`
 `);
 
 const LEGACY_TABLES = ['quest_logs', 'guild_settings', 'quests'];
+const LEGACY_BACKUP_SUFFIX = '.pre-tracker-removal.bak';
+const BACKUP_DIRECTORY_URL = new URL('../data/backups/', import.meta.url);
+const BACKUP_SLOT_URLS = Object.freeze([
+  new URL('questbot-slot-1.db', BACKUP_DIRECTORY_URL),
+  new URL('questbot-slot-2.db', BACKUP_DIRECTORY_URL),
+  new URL('questbot-slot-3.db', BACKUP_DIRECTORY_URL),
+  new URL('questbot-slot-4.db', BACKUP_DIRECTORY_URL),
+  new URL('questbot-slot-5.db', BACKUP_DIRECTORY_URL),
+  new URL('questbot-slot-6.db', BACKUP_DIRECTORY_URL),
+  new URL('questbot-slot-7.db', BACKUP_DIRECTORY_URL),
+]);
+
+export const DATABASE_BACKUP_SLOT_COUNT = BACKUP_SLOT_URLS.length;
 let legacyMigrationBackupPath = null;
 
 function tableExists(name) {
   return Boolean(db.prepare(
     "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
   ).get(name));
+}
+
+function backupSlotUrl(slotIndex) {
+  if (!Number.isInteger(slotIndex) || slotIndex < 0 || slotIndex >= BACKUP_SLOT_URLS.length) {
+    throw new RangeError(`Database backup slot is out of range: ${slotIndex}`);
+  }
+  return BACKUP_SLOT_URLS[slotIndex];
 }
 
 export async function backupDatabase(destination) {
@@ -55,13 +76,29 @@ export async function backupDatabase(destination) {
   return safeDestination;
 }
 
+export async function backupDatabaseSlot(slotIndex) {
+  fs.mkdirSync(BACKUP_DIRECTORY_URL, { recursive: true });
+  const destination = fileURLToPath(backupSlotUrl(slotIndex));
+  await db.backup(destination);
+  return destination;
+}
+
+export async function clearInactiveDatabaseBackupSlots(retention) {
+  const keep = Math.max(1, Math.min(DATABASE_BACKUP_SLOT_COUNT, retention));
+  await Promise.all(
+    BACKUP_SLOT_URLS.slice(keep).map((slotUrl) => fs.promises.rm(slotUrl, { force: true })),
+  );
+}
+
+export async function clearAllDatabaseBackupSlots() {
+  await Promise.all(
+    BACKUP_SLOT_URLS.map((slotUrl) => fs.promises.rm(slotUrl, { force: true })),
+  );
+}
+
 async function createLegacyMigrationBackup() {
   if (dbPath === ':memory:') return null;
-  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-  const destination = appendSafeSuffix(
-    dbPath,
-    `.pre-tracker-removal-${timestamp}.bak`,
-  );
+  const destination = appendSafeSuffix(dbPath, LEGACY_BACKUP_SUFFIX);
   return backupDatabase(destination);
 }
 
