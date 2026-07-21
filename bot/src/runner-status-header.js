@@ -15,20 +15,16 @@ function readCodeBlockLines(content) {
   return text.slice(4, -4).split('\n');
 }
 
-function readQuestCounts(status) {
-  if (!status || status.state === 'unknown') {
-    return { total: null, runnable: null };
-  }
-  return {
-    total: Number.isInteger(status.questCount) ? status.questCount : null,
-    runnable: Number.isInteger(status.supportedCount) ? status.supportedCount : null,
-  };
+function readTotalQuestCount(status) {
+  if (!status || status.state === 'unknown') return null;
+  return Number.isInteger(status.questCount) ? status.questCount : null;
 }
 
 export function formatRunnerStatusContent(content, state = {}, status = null) {
   const lines = readCodeBlockLines(content);
   if (!lines) return content;
 
+  let receivedQuestCount = false;
   const activityLines = [];
   for (const line of lines) {
     if (line.startsWith('✅ LOGIN : ')) {
@@ -42,6 +38,7 @@ export function formatRunnerStatusContent(content, state = {}, status = null) {
     const runnableMatch = line.match(/^🔎 .+: พบ (\d+) QUESTS$/);
     if (runnableMatch) {
       state.runnableQuestCount = Number(runnableMatch[1]);
+      receivedQuestCount = true;
       continue;
     }
     if (line) activityLines.push(line);
@@ -49,9 +46,12 @@ export function formatRunnerStatusContent(content, state = {}, status = null) {
 
   if (!state.loginLine) return content;
 
-  const counts = readQuestCounts(status);
-  if (counts.total != null) state.totalQuestCount = counts.total;
-  if (counts.runnable != null) state.runnableQuestCount = counts.runnable;
+  // เก็บจำนวน Quest ทั้งหมดเฉพาะตอน Runner ส่งบรรทัดจำนวนของตัวเอง
+  // เพื่อไม่ให้ Runner หลาย Token นำสถานะล่าสุดของกันและกันมาเขียนทับระหว่าง Progress update
+  if (receivedQuestCount) {
+    const totalQuestCount = readTotalQuestCount(status);
+    if (totalQuestCount != null) state.totalQuestCount = totalQuestCount;
+  }
 
   const totalText = state.totalQuestCount ?? 'กำลังตรวจสอบ...';
   const runnableText = state.runnableQuestCount ?? 'กำลังตรวจสอบ...';
