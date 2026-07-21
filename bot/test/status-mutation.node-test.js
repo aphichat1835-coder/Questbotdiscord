@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { fetchInputUrl } from './fetch-input.js';
 
 process.env.DISCORD_BOT_TOKEN = 'test-bot-token';
 process.env.DISCORD_CLIENT_ID = 'test-client';
@@ -143,12 +144,15 @@ test('verified mutation never retries deterministic client errors', async () => 
 });
 
 test('fetchQuests writes independent status snapshots for concurrent accounts', async () => {
+  const payloadByToken = new Map([
+    ['token-a', questPayload('quest-a', 'WATCH_VIDEO', 60, 15)],
+    ['token-b', questPayload('quest-b', 'PLAY_ON_DESKTOP', 900, 300)],
+  ]);
   globalThis.fetch = async (url, options = {}) => {
-    const token = options.headers?.Authorization;
-    if (!String(url).endsWith('/quests/@me')) throw new Error(`Unexpected URL: ${url}`);
-    const payload = token === 'token-a'
-      ? questPayload('quest-a', 'WATCH_VIDEO', 60, 15)
-      : questPayload('quest-b', 'PLAY_ON_DESKTOP', 900, 300);
+    const requestUrl = fetchInputUrl(url);
+    if (!requestUrl.endsWith('/quests/@me')) throw new Error(`Unexpected URL: ${requestUrl}`);
+    const payload = payloadByToken.get(options.headers?.Authorization);
+    if (!payload) throw new Error('Unexpected authorization in test request');
     return new Response(JSON.stringify(payload), {
       status: 200,
       headers: { 'Content-Type': 'application/json' },
