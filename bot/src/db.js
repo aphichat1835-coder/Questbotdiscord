@@ -46,24 +46,30 @@ function tableExists(name) {
   ).get(name));
 }
 
-function createLegacyMigrationBackup() {
-  if (dbPath === ':memory:' || !fs.existsSync(dbPath)) return null;
+export async function backupDatabase(destination) {
+  const absoluteDestination = path.resolve(destination);
+  const backupDir = path.dirname(absoluteDestination);
+  const safeDestination = resolveContainedPath(backupDir, path.basename(absoluteDestination));
+  if (!fs.existsSync(backupDir)) fs.mkdirSync(backupDir, { recursive: true });
+  await db.backup(safeDestination);
+  return safeDestination;
+}
+
+async function createLegacyMigrationBackup() {
+  if (dbPath === ':memory:') return null;
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
   const destination = appendSafeSuffix(
     dbPath,
     `.pre-tracker-removal-${timestamp}.bak`,
   );
-  fs.copyFileSync(dbPath, destination);
-  return destination;
+  return backupDatabase(destination);
 }
 
-function migrateLegacyTracker() {
+async function migrateLegacyTracker() {
   const existing = LEGACY_TABLES.filter(tableExists);
   if (!existing.length) return;
 
-  db.pragma('wal_checkpoint(TRUNCATE)');
-  legacyMigrationBackupPath = createLegacyMigrationBackup();
-
+  legacyMigrationBackupPath = await createLegacyMigrationBackup();
   db.transaction(() => {
     for (const table of existing) db.exec(`DROP TABLE IF EXISTS ${table}`);
     db.pragma('user_version = 2');
@@ -75,16 +81,7 @@ function migrateLegacyTracker() {
   );
 }
 
-migrateLegacyTracker();
-
-export async function backupDatabase(destination) {
-  const absoluteDestination = path.resolve(destination);
-  const backupDir = path.dirname(absoluteDestination);
-  const safeDestination = resolveContainedPath(backupDir, path.basename(absoluteDestination));
-  if (!fs.existsSync(backupDir)) fs.mkdirSync(backupDir, { recursive: true });
-  await db.backup(safeDestination);
-  return safeDestination;
-}
+await migrateLegacyTracker();
 
 export function closeDatabase() {
   if (db.open) db.close();
