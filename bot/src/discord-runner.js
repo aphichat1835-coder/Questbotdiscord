@@ -768,6 +768,12 @@ export async function shutdownRunners(timeoutMs = 10_000) {
 
 // ── Runner ────────────────────────────────────────────────────────────────────
 
+function nextOneShotState(noProgressRounds, outcome) {
+  if (outcome.supportedCount === 0) return { stop: true, noProgressRounds };
+  const nextRounds = outcome.progressed ? 0 : noProgressRounds + 1;
+  return { stop: nextRounds >= 3, noProgressRounds: nextRounds };
+}
+
 export async function startRunner({
   jobKey,
   ownerId,
@@ -1145,12 +1151,6 @@ export async function startRunner({
       });
       return { attempted: false, progressed: false, supportedCount: 0 };
     }
-  }
-
-  function nextOneShotState(noProgressRounds, outcome) {
-    if (outcome.supportedCount === 0) return { stop: true, noProgressRounds };
-    const nextRounds = outcome.progressed ? 0 : noProgressRounds + 1;
-    return { stop: nextRounds >= 3, noProgressRounds: nextRounds };
   }
 
   async function waitForVerificationRecheck(state, outcome) {
