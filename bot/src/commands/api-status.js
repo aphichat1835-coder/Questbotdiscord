@@ -13,9 +13,9 @@ export const data = new SlashCommandBuilder()
   .setDescription('เช็กสถานะระบบ ฐานข้อมูล และผลตรวจ Quest API แยกตามบัญชี');
 
 const STATUS_COLORS = Object.freeze({
-  error: 15548997,
-  warning: 16705372,
-  healthy: 5763719,
+  error: '#ED4245',
+  warning: '#FEE75C',
+  healthy: '#57F287',
 });
 
 function discordTime(iso) {
