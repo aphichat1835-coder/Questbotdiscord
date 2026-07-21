@@ -91,6 +91,6 @@ export async function handleButton(interaction) {
 export async function handlePanelModal(interaction) {
   return interaction.reply({
     flags: 64,
-    content: 'ℹ️ สิทธิ์และระบบเปลี่ยนไป — Modal รุ่นเก่าถูกปิดใช้งานแล้ว กรุณาใช้ `/panel` ใหม่',
+    content: 'ℹ️ สิทธิ์ของคุณเปลี่ยนไป — Modal รุ่นเก่าถูกปิดใช้งานแล้ว กรุณาใช้ `/panel` ใหม่',
   });
 }
