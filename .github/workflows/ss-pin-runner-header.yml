@@ -29,100 +29,79 @@ jobs:
           from pathlib import Path
 
           def replace_once(text, old, new, label):
-              if text.count(old) != 1:
-                  raise SystemExit(f'{label}: expected exactly one match, found {text.count(old)}')
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{label}: expected exactly one match, found {count}')
               return text.replace(old, new, 1)
 
           runner_path = Path('bot/src/discord-runner.js')
           runner = runner_path.read_text(encoding='utf-8')
 
-          runner = replace_once(
-              runner,
-              """  let logoutReported = false;
-          let countAlreadyReported = false;
-          const claimRetryAt = new Map();""",
-              """  let logoutReported = false;
-          let countAlreadyReported = false;
-          let totalQuestCount = null;
-          let runnableQuestCount = null;
-          const claimRetryAt = new Map();""",
-              'runner state',
-          )
+          old = "  let logoutReported = false;\n  let countAlreadyReported = false;\n  const claimRetryAt = new Map();"
+          new = "  let logoutReported = false;\n  let countAlreadyReported = false;\n  let totalQuestCount = null;\n  let runnableQuestCount = null;\n  const claimRetryAt = new Map();"
+          runner = replace_once(runner, old, new, 'runner state')
 
-          runner = replace_once(
-              runner,
-              """      const visibleLines = [...logLines];
-              let content = '```\\n' + visibleLines.join('\\n') + '\\n```';
-              while (content.length > 1950 && visibleLines.length > 1) {
-                visibleLines.shift();
-                content = '```\\n' + visibleLines.join('\\n') + '\\n```';
-              }""",
-              """      const headerLines = [
-                `✅ LOGIN : ${username}`,
-                mode === 'scheduled'
-                  ? '🤖 AUTO DAILY ENABLED — CHECK 00:00 / 08:00 / 16:00'
-                  : null,
-                `🔍 ตรวจพบ Quest ทั้งหมด : ${totalQuestCount ?? 'กำลังตรวจสอบ...'}`,
-                `⚙️ Quest ที่ระบบทำได้ : ${runnableQuestCount ?? 'กำลังตรวจสอบ...'}`,
-                '────────────────────────',
-              ].filter(Boolean);
-              const visibleLines = [...logLines];
-              const buildContent = () => '```\\n'
-                + [...headerLines, ...visibleLines].join('\\n')
-                + '\\n```';
-              let content = buildContent();
-              while (content.length > 1950 && visibleLines.length > 1) {
-                visibleLines.shift();
-                content = buildContent();
-              }""",
-              'status rendering',
+          old = (
+              "      const visibleLines = [...logLines];\n"
+              "      let content = '```\\n' + visibleLines.join('\\n') + '\\n```';\n"
+              "      while (content.length > 1950 && visibleLines.length > 1) {\n"
+              "        visibleLines.shift();\n"
+              "        content = '```\\n' + visibleLines.join('\\n') + '\\n```';\n"
+              "      }"
           )
-
-          runner = replace_once(
-              runner,
-              """  async function reportRunnableCount(count) {
-              addLog(`🔎 ${username}: พบ ${count} QUESTS`);
-              await render();
-            }""",
-              """  async function reportQuestCounts(allQuests, runnableCount) {
-              totalQuestCount = allQuests.filter((quest) => !quest.completed).length;
-              runnableQuestCount = runnableCount;
-              await render();
-            }""",
-              'quest count reporting',
+          new = (
+              "      const headerLines = [\n"
+              "        `✅ LOGIN : ${username}`,\n"
+              "        mode === 'scheduled'\n"
+              "          ? '🤖 AUTO DAILY ENABLED — CHECK 00:00 / 08:00 / 16:00'\n"
+              "          : null,\n"
+              "        `🔍 ตรวจพบ Quest ทั้งหมด : ${totalQuestCount ?? 'กำลังตรวจสอบ...'}`,\n"
+              "        `⚙️ Quest ที่ระบบทำได้ : ${runnableQuestCount ?? 'กำลังตรวจสอบ...'}`,\n"
+              "        '────────────────────────',\n"
+              "      ].filter(Boolean);\n"
+              "      const visibleLines = [...logLines];\n"
+              "      const buildContent = () => '```\\n'\n"
+              "        + [...headerLines, ...visibleLines].join('\\n')\n"
+              "        + '\\n```';\n"
+              "      let content = buildContent();\n"
+              "      while (content.length > 1950 && visibleLines.length > 1) {\n"
+              "        visibleLines.shift();\n"
+              "        content = buildContent();\n"
+              "      }"
           )
+          runner = replace_once(runner, old, new, 'status rendering')
 
-          runner = replace_once(
-              runner,
-              """    if (!countAlreadyReported) {
-                await reportRunnableCount(runnable.length);
-              }""",
-              """    if (!countAlreadyReported) {
-                await reportQuestCounts(allQuests, runnable.length);
-              }""",
-              'initial count update',
+          old = (
+              "  async function reportRunnableCount(count) {\n"
+              "    addLog(`🔎 ${username}: พบ ${count} QUESTS`);\n"
+              "    await render();\n"
+              "  }"
           )
-
-          runner = replace_once(
-              runner,
-              """    await reportRunnableCount(supportedRemaining);
-              countAlreadyReported = true;""",
-              """    await reportQuestCounts(latestQuests, supportedRemaining);
-              countAlreadyReported = true;""",
-              'remaining count update',
+          new = (
+              "  async function reportQuestCounts(allQuests, runnableCount) {\n"
+              "    totalQuestCount = allQuests.filter((quest) => !quest.completed).length;\n"
+              "    runnableQuestCount = runnableCount;\n"
+              "    await render();\n"
+              "  }"
           )
+          runner = replace_once(runner, old, new, 'quest count reporting')
 
-          runner = replace_once(
-              runner,
-              """      addLog(`✅ LOGIN : ${username}`);
-              if (mode === 'scheduled') {
-                addLog(`🤖 AUTO DAILY ENABLED — CHECK 00:00 / 08:00 / 16:00`);
-              }
-              await render();""",
-              """      await render();""",
-              'login header initialization',
+          old = "    if (!countAlreadyReported) {\n      await reportRunnableCount(runnable.length);\n    }"
+          new = "    if (!countAlreadyReported) {\n      await reportQuestCounts(allQuests, runnable.length);\n    }"
+          runner = replace_once(runner, old, new, 'initial count update')
+
+          old = "    await reportRunnableCount(supportedRemaining);\n    countAlreadyReported = true;"
+          new = "    await reportQuestCounts(latestQuests, supportedRemaining);\n    countAlreadyReported = true;"
+          runner = replace_once(runner, old, new, 'remaining count update')
+
+          old = (
+              "      addLog(`✅ LOGIN : ${username}`);\n"
+              "      if (mode === 'scheduled') {\n"
+              "        addLog(`🤖 AUTO DAILY ENABLED — CHECK 00:00 / 08:00 / 16:00`);\n"
+              "      }\n"
+              "      await render();"
           )
-
+          runner = replace_once(runner, old, "      await render();", 'login header initialization')
           runner_path.write_text(runner, encoding='utf-8')
 
           index_path = Path('bot/src/index.js')
@@ -143,10 +122,10 @@ jobs:
 
           test_path = Path('bot/test/runner-modes.node-test.js')
           test_text = test_path.read_text(encoding='utf-8')
-          test_text = test_text.replace(
-              '🔎 scheduled-user: พบ 0 QUESTS',
-              '⚙️ Quest ที่ระบบทำได้ : 0',
-          )
+          old_count = '🔎 scheduled-user: พบ 0 QUESTS'
+          if test_text.count(old_count) != 2:
+              raise SystemExit(f'scheduled count assertion: expected 2 matches, found {test_text.count(old_count)}')
+          test_text = test_text.replace(old_count, '⚙️ Quest ที่ระบบทำได้ : 0')
           marker = "  assert.match(contents.join('\\n'), /⚙️ Quest ที่ระบบทำได้ : 0/);\n"
           if test_text.count(marker) != 1:
               raise SystemExit(f'runner header assertion marker count: {test_text.count(marker)}')
