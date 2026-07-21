@@ -43,90 +43,27 @@ const FALLBACK = Object.freeze({
   nativeBuildNumber: 47491,
 });
 
-let live = { ...FALLBACK };
+let live = {
+  clientVersion: process.env.DISCORD_CLIENT_VERSION?.trim() || FALLBACK.clientVersion,
+  chromeVersion: process.env.DISCORD_CHROME_VERSION?.trim() || FALLBACK.chromeVersion,
+  electronVersion: process.env.DISCORD_ELECTRON_VERSION?.trim() || FALLBACK.electronVersion,
+  buildNumber: Number.parseInt(process.env.DISCORD_BUILD_NUMBER ?? '', 10) || FALLBACK.buildNumber,
+  nativeBuildNumber: Number.parseInt(process.env.DISCORD_NATIVE_BUILD_NUMBER ?? '', 10) || FALLBACK.nativeBuildNumber,
+};
+const clientLocale = process.env.DISCORD_LOCALE?.trim() || 'en-US';
+const clientTimezone = process.env.DISCORD_TIMEZONE?.trim() || config.timezone;
 
 // ── Auto-fetch helpers ─────────────────────────────────────────────────────────
 
-function _githubHeaders() {
-  const token = process.env.GITHUB_TOKEN?.trim();
-
-  return {
-    Accept: 'application/vnd.github+json',
-    'X-GitHub-Api-Version': '2022-11-28',
-    'User-Agent': 'NeverDieQuestBot/1.0',
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
-  };
-}
-
-async function _fetchBuildNumber() {
-  // Discord-Datamining commits — message format: "2 July 2026 - Build 572700 (...)"
-  const res = await fetch(
-    'https://api.github.com/repos/Discord-Datamining/Discord-Datamining/commits?per_page=1',
-    { headers: _githubHeaders(), signal: AbortSignal.timeout(8000) },
-  );
-  if (!res.ok) throw new Error(`GitHub API ${res.status}`);
-  const [commit] = await res.json();
-  const m = commit?.commit?.message?.match(/Build (\d+)/);
-  if (!m) throw new Error('build number not found in commit message');
-  return parseInt(m[1], 10);
-}
-
-async function _fetchElectronInfo() {
-  // Latest stable Electron release — body lists "Chromium `x.x.x.x`"
-  const res = await fetch(
-    'https://api.github.com/repos/electron/electron/releases/latest',
-    { headers: _githubHeaders(), signal: AbortSignal.timeout(8000) },
-  );
-  if (!res.ok) throw new Error(`GitHub API ${res.status}`);
-  const data = await res.json();
-  const electronVersion = data.tag_name?.replace(/^v/, '');
-  const body = data.body ?? '';
-  const cm =
-    body.match(/Chromium\s+`?v?([0-9.]+)`?/i) ||
-    body.match(/Chrome\s+`?v?([0-9.]+)`?/i) ||
-    body.match(/chromium_version["':\s]+([0-9.]+)/i);
-  const chromeVersion = cm?.[1];
-  if (!electronVersion || !chromeVersion) return null;
-  return { electronVersion, chromeVersion };
-}
-
-
 /**
- * Fetch the latest build number + Electron/Chrome versions.
- * Falls back to hardcoded values if any fetch fails.
- * Safe to call multiple times — just updates the `live` object in-place.
+ * Keep one coherent client profile for the whole process. Override all related
+ * values together through Environment Variables after verifying a Discord update.
  */
 export async function refreshBuildInfo() {
-  const [buildResult, electronResult] = await Promise.allSettled([
-    _fetchBuildNumber(),
-    _fetchElectronInfo(),
-  ]);
-
-  const prev = { ...live };
-
-  if (buildResult.status === 'fulfilled') {
-    live.buildNumber = buildResult.value;
-  } else {
-    console.warn(`⚠️  build number fetch failed — ${buildResult.reason?.message} — ใช้ fallback ${live.buildNumber}`);
-  }
-
-  if (electronResult.status === 'fulfilled' && electronResult.value) {
-    live.electronVersion = electronResult.value.electronVersion;
-    live.chromeVersion   = electronResult.value.chromeVersion;
-  } else if (electronResult.status === 'rejected') {
-    console.warn(`⚠️  Electron/Chrome fetch failed — ${electronResult.reason?.message} — ใช้ fallback`);
-  }
-
-  const buildChanged    = live.buildNumber    !== prev.buildNumber;
-  const electronChanged = live.electronVersion !== prev.electronVersion;
-
   console.log(
-    `🔄 Build info — ` +
-    `Client: ${live.clientVersion} | ` +
-    `Build: ${live.buildNumber}${buildChanged ? ' ✨' : ''} | ` +
-    `Chrome: ${live.chromeVersion} | ` +
-    `Electron: ${live.electronVersion}${electronChanged ? ' ✨' : ''}`,
+    `🔄 Client profile — Client: ${live.clientVersion} | Build: ${live.buildNumber} | Chrome: ${live.chromeVersion} | Electron: ${live.electronVersion}`,
   );
+  return { ...live, locale: clientLocale, timezone: clientTimezone };
 }
 
 // ── Dynamic header builders (always read from `live`) ─────────────────────────
@@ -145,7 +82,7 @@ function buildSuperProperties() {
     os_version: '10.0.22631',
     os_arch: 'x64',
     app_arch: 'x64',
-    system_locale: 'en-US',
+    system_locale: clientLocale,
     browser_user_agent: ua,
     browser_version: live.chromeVersion,
     client_build_number: live.buildNumber,
@@ -164,10 +101,10 @@ function userHeaders(token, path = '') {
     'User-Agent': ua,
     'X-Super-Properties': buildSuperProperties(),
     'X-Debug-Options': 'bugReporterEnabled',
-    'X-Discord-Locale': 'en-US',
-    'X-Discord-Timezone': 'Asia/Bangkok',
+    'X-Discord-Locale': clientLocale,
+    'X-Discord-Timezone': clientTimezone,
     'Accept': '*/*',
-    'Accept-Language': 'en-US,en;q=0.9',
+    'Accept-Language': `${clientLocale},en;q=0.9`,
     'Accept-Encoding': 'gzip, deflate, br, zstd',
     'Referer': path.startsWith('/quests/')
       ? 'https://discord.com/quest-home'
@@ -649,9 +586,13 @@ const activeRunPromises = new Set();
 
 export function getJob(key)   { return jobs.get(key) ?? null; }
 export function listJobs()    { return [...jobs.entries()].map(([key, j]) => ({ key, ...j.summary() })); }
-export function getUserJobs(ownerId, { mode = null } = {}) {
+export function getUserJobs(ownerId, { mode = null, includeStopping = false } = {}) {
   return [...jobs.entries()]
-    .filter(([, job]) => job.ownerId === ownerId && (!mode || job.mode === mode))
+    .filter(([, job]) => (
+      job.ownerId === ownerId
+      && (!mode || job.mode === mode)
+      && (includeStopping || job.lifecycle !== 'stopping')
+    ))
     .map(([key, job]) => ({ key, ...job.summary() }));
 }
 
@@ -667,8 +608,10 @@ export function findUserJobByAccount(ownerId, accountId) {
 export function stopJob(ownerId, key, { removeSchedule = true } = {}) {
   const job = jobs.get(key);
   if (!job || job.ownerId !== ownerId) return false;
-  job.controller.abort();
-  jobs.delete(key);
+  if (job.lifecycle !== 'stopping') {
+    job.lifecycle = 'stopping';
+    job.controller.abort();
+  }
   if (removeSchedule && job.scheduleId != null) {
     deleteScheduledRunner(job.scheduleId, ownerId);
   }
@@ -813,21 +756,25 @@ export async function startRunner({
     await flush();
   }
 
-  jobs.set(jobKey, {
+  const jobRecord = {
     ownerId,
     accountId,
     mode,
     scheduleId,
     controller,
+    lifecycle: 'running',
+    done: null,
     summary: () => ({
       username,
       accountId,
       mode,
       scheduleId,
+      lifecycle: jobRecord.lifecycle,
       nextCheckAt,
       status: logLines.at(-1) ?? '',
     }),
-  });
+  };
+  jobs.set(jobKey, jobRecord);
 
   const clearPendingRender = () => {
     if (pendingTimer) {
