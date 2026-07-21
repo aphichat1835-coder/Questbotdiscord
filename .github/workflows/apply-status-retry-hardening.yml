@@ -48,8 +48,21 @@ jobs:
           set +e
           node scripts/apply-status-retry-hardening.mjs 2>&1 | tee codemod-output.log
           status=${PIPESTATUS[0]}
-          echo "exit_code=$status" >> "$GITHUB_OUTPUT"
-          exit "$status"
+          if (( status )); then
+            echo "exit_code=$status" >> "$GITHUB_OUTPUT"
+            exit "$status"
+          fi
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('src/discord-runner.js')
+          source = path.read_text()
+          needle = "  const statusContext = currentQuestStatusContext();\n  recordQuestSuccess("
+          if source.count(needle) != 1:
+              raise SystemExit(f'Expected one duplicate status context anchor, found {source.count(needle)}')
+          source = source.replace(needle, "  recordQuestSuccess(", 1)
+          path.write_text(source)
+          PY
+          echo "exit_code=0" >> "$GITHUB_OUTPUT"
 
       - name: Upload codemod diagnostics
         if: always()
