@@ -12,7 +12,9 @@
     "dev": "node --watch src/index.js",
     "register": "node src/register-commands.js",
     "test": "node --test test/*.node-test.js",
-    "check": "find src -name '*.js' -print0 | xargs -0 -n1 node --check"
+    "check": "find src scripts -name '*.js' -o -name '*.mjs' | xargs -n1 node --check",
+    "validate:quest-fixture": "node scripts/validate-quest-fixture.mjs",
+    "smoke:quest": "node scripts/smoke-quest-api.mjs"
   },
   "dependencies": {
     "better-sqlite3": "^12.11.1",
