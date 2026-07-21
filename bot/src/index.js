@@ -3,6 +3,7 @@ import { config } from './config.js';
 import { startWorker, stopWorker } from './worker.js';
 import { startDashboard, stopDashboard } from './dashboard.js';
 import {
+  getQuestEngineStatus,
   refreshBuildInfo,
   restoreScheduledRunners,
   shutdownRunners,
@@ -23,7 +24,7 @@ import * as panel       from './commands/panel.js';
 
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 client.commands = new Collection();
-installPersistentRunnerStatusHeaders(client);
+installPersistentRunnerStatusHeaders(client, getQuestEngineStatus);
 setErrorReporterClient(client);
 let buildInfoInterval = null;
 let shuttingDown = false;
