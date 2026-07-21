@@ -35,9 +35,7 @@ export function formatRunnerStatusContent(content, state = {}, status = null) {
       state.modeLine = line;
       continue;
     }
-    const runnableMatch = line.match(/^🔎 .+: พบ (\d+) QUESTS$/);
-    if (runnableMatch) {
-      state.runnableQuestCount = Number(runnableMatch[1]);
+    if (/^🔎 .+: พบ \d+ QUESTS$/.test(line)) {
       receivedQuestCount = true;
       continue;
     }
@@ -54,12 +52,10 @@ export function formatRunnerStatusContent(content, state = {}, status = null) {
   }
 
   const totalText = state.totalQuestCount ?? 'กำลังตรวจสอบ...';
-  const runnableText = state.runnableQuestCount ?? 'กำลังตรวจสอบ...';
   const headerLines = [
     state.loginLine,
     state.modeLine,
     `🔍 ตรวจพบ Quest ทั้งหมด : ${totalText}`,
-    `⚙️ Quest ที่ระบบทำได้ : ${runnableText}`,
     '────────────────────────',
   ].filter(Boolean);
 
