@@ -4,6 +4,15 @@ permissions:
   contents: write
 
 on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - bot/scripts/apply-status-retry-hardening.mjs
+      - bot/src/quest-status-store.js
+      - bot/src/mutation-retry.js
+      - bot/test/status-mutation.node-test.js
+      - .github/workflows/apply-status-retry-hardening.yml
   push:
     branches: [ss]
     paths:
@@ -43,6 +52,7 @@ jobs:
           npm audit --omit=dev --audit-level=high
 
       - name: Commit hardened Runner
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         run: |
           if git diff --quiet -- bot/src/discord-runner.js; then
             echo "Runner already hardened"
