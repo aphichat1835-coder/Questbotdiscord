@@ -17,12 +17,11 @@ test('runner headers stay pinned while activity lines rotate', () => {
   ].join('\n'), state, {
     state: 'compatible',
     questCount: 5,
-    supportedCount: 3,
   });
 
   assert.match(first, /^```\n✅ LOGIN : example-user\n🤖 AUTO DAILY ENABLED/);
-  assert.match(first, /🔍 ตรวจพบ Quest ทั้งหมด : 5/);
-  assert.match(first, /⚙️ Quest ที่ระบบทำได้ : 3\n─+/);
+  assert.match(first, /🔍 ตรวจพบ Quest ทั้งหมด : 5\n─+/);
+  assert.doesNotMatch(first, /⚙️ Quest ที่ระบบทำได้/);
 
   const activity = Array.from({ length: 40 }, (_, index) => `⌛ Quest A ${index}%`);
   const updated = formatRunnerStatusContent([
@@ -33,12 +32,11 @@ test('runner headers stay pinned while activity lines rotate', () => {
   ].join('\n'), state, {
     state: 'compatible',
     questCount: 4,
-    supportedCount: 2,
   });
 
   assert.match(updated, /^```\n✅ LOGIN : example-user\n🤖 AUTO DAILY ENABLED/);
-  assert.match(updated, /🔍 ตรวจพบ Quest ทั้งหมด : 4/);
-  assert.match(updated, /⚙️ Quest ที่ระบบทำได้ : 2\n─+/);
+  assert.match(updated, /🔍 ตรวจพบ Quest ทั้งหมด : 4\n─+/);
+  assert.doesNotMatch(updated, /⚙️ Quest ที่ระบบทำได้/);
   assert.ok(updated.length <= 1950);
   assert.doesNotMatch(updated, /Quest ทั้งหมด : 5/);
 });
@@ -71,7 +69,6 @@ test('installed wrapper only reformats runner status messages', async () => {
   let status = {
     state: 'compatible',
     questCount: 6,
-    supportedCount: 4,
   };
   const getStatus = () => status;
 
@@ -88,31 +85,29 @@ test('installed wrapper only reformats runner status messages', async () => {
   });
   assert.match(sentPayloads[1].content, /✅ LOGIN : example-user/);
   assert.match(sentPayloads[1].content, /🔍 ตรวจพบ Quest ทั้งหมด : 6/);
-  assert.match(sentPayloads[1].content, /⚙️ Quest ที่ระบบทำได้ : 4/);
+  assert.doesNotMatch(sentPayloads[1].content, /⚙️ Quest ที่ระบบทำได้/);
   assert.match(sentPayloads[1].content, /────────────────────────/);
 
   status = {
     state: 'compatible',
     questCount: 5,
-    supportedCount: 3,
   };
   await runnerMessage.edit({
     content: '```\n⌛ example-user: Quest A 25%\n🔎 example-user: พบ 3 QUESTS\n```',
   });
   assert.match(editedPayloads[0].content, /^```\n✅ LOGIN : example-user/);
   assert.match(editedPayloads[0].content, /🔍 ตรวจพบ Quest ทั้งหมด : 5/);
-  assert.match(editedPayloads[0].content, /⚙️ Quest ที่ระบบทำได้ : 3/);
+  assert.doesNotMatch(editedPayloads[0].content, /⚙️ Quest ที่ระบบทำได้/);
   assert.match(editedPayloads[0].content, /⌛ example-user: Quest A 25%/);
 
   status = {
     state: 'compatible',
     questCount: 99,
-    supportedCount: 99,
   };
   await runnerMessage.edit({
     content: '```\n⌛ example-user: Quest A 50%\n```',
   });
   assert.match(editedPayloads[1].content, /🔍 ตรวจพบ Quest ทั้งหมด : 5/);
-  assert.match(editedPayloads[1].content, /⚙️ Quest ที่ระบบทำได้ : 3/);
+  assert.doesNotMatch(editedPayloads[1].content, /⚙️ Quest ที่ระบบทำได้/);
   assert.doesNotMatch(editedPayloads[1].content, /99/);
 });
