@@ -40,8 +40,24 @@ jobs:
         run: npm ci --no-fund --no-audit
 
       - name: Apply guarded codemod
+        id: codemod
         working-directory: bot
-        run: node scripts/apply-status-retry-hardening.mjs
+        shell: bash
+        run: |
+          set +e
+          node scripts/apply-status-retry-hardening.mjs 2>&1 | tee codemod-output.log
+          status=${PIPESTATUS[0]}
+          echo "exit_code=$status" >> "$GITHUB_OUTPUT"
+          exit "$status"
+
+      - name: Upload codemod diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: status-retry-codemod-${{ github.run_id }}
+          path: bot/codemod-output.log
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Validate hardened repository
         working-directory: bot
