@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { config } from './config.js';
 import {
   addScheduleJitter,
@@ -7,6 +8,17 @@ import {
   RECHECK_INTERVAL_MS,
 } from './runner-schedule.js';
 import { fetchWithRetry } from './http-retry.js';
+import { executeVerifiedMutation } from './mutation-retry.js';
+import {
+  clearQuestStatuses as clearStoredQuestStatuses,
+  getQuestStatus as getStoredQuestStatus,
+  listQuestStatuses as listStoredQuestStatuses,
+  recordQuestAttempt,
+  recordQuestFailure,
+  recordQuestSuccess,
+  recordQuestVerification,
+  setQuestStatusLifecycle,
+} from './quest-status-store.js';
 import { reportCriticalError } from './error-reporter.js';
 import {
   decryptRunnerToken,
@@ -119,12 +131,16 @@ function userHeaders(token, path = '') {
   };
 }
 
-async function discordFetch(token, path, options = {}) {
+async function discordFetch(token, path, options = {}, policy = {}) {
   const { headers = {}, ...requestOptions } = options;
+  const method = String(requestOptions.method ?? 'GET').toUpperCase();
+  const requestPolicy = method === 'POST'
+    ? { ...policy, retryRateLimits: false }
+    : policy;
   const res = await fetchWithRetry(`${DISCORD_API}${path}`, {
     ...requestOptions,
     headers: { ...userHeaders(token, path), ...headers },
-  });
+  }, requestPolicy);
   if (res.status === 204) return { ok: true, status: 204 };
   const text = await res.text();
   let data;
@@ -209,22 +225,24 @@ function isCaptchaChallenge(error) {
   );
 }
 
-const questEngineStatus = {
-  lastCheckAt: null,
-  lastSuccessfulCheckAt: null,
-  state: 'unknown',
-  questCount: 0,
-  excludedCount: 0,
-  enrollmentBlockedUntil: null,
-  supportedCount: 0,
-  unknownEvents: [],
-  schemaIssues: [],
-  lastVerifiedProgressAt: null,
-  lastVerifiedCompletionAt: null,
-  lastVerifiedClaimAt: null,
-  questListPath: null,
-  lastError: null,
-};
+const questStatusStorage = new AsyncLocalStorage();
+
+function normalizeStatusContext(context = {}) {
+  if (typeof context === 'string') return { key: context };
+  return {
+    key: context.key || context.jobKey || 'system',
+    ownerId: context.ownerId ?? null,
+    accountId: context.accountId ?? null,
+    username: context.username ?? null,
+    jobKey: context.jobKey ?? null,
+    mode: context.mode ?? null,
+    lifecycle: context.lifecycle ?? 'running',
+  };
+}
+
+function currentQuestStatusContext() {
+  return questStatusStorage.getStore() ?? normalizeStatusContext();
+}
 
 export class QuestCompatibilityError extends Error {
   constructor(message) {
@@ -233,25 +251,39 @@ export class QuestCompatibilityError extends Error {
   }
 }
 
-export function getQuestEngineStatus() {
-  return {
-    ...questEngineStatus,
-    unknownEvents: [...questEngineStatus.unknownEvents],
-    schemaIssues: [...questEngineStatus.schemaIssues],
-  };
+export function getQuestEngineStatus(statusKey = null) {
+  return getStoredQuestStatus(statusKey);
+}
+
+export function listQuestEngineStatuses(options = {}) {
+  return listStoredQuestStatuses(options);
+}
+
+export function clearQuestEngineStatuses() {
+  clearStoredQuestStatuses();
 }
 
 function recordQuestError(error) {
-  questEngineStatus.lastCheckAt = new Date().toISOString();
-  questEngineStatus.state = error instanceof QuestCompatibilityError ? 'incompatible' : 'error';
-  questEngineStatus.lastError = error.message;
+  const context = currentQuestStatusContext();
+  recordQuestFailure(
+    context.key,
+    error,
+    error instanceof QuestCompatibilityError,
+    context,
+  );
 }
 
 export async function fetchMe(token, signal) {
   return discordFetch(token, '/users/@me', { signal });
 }
 
-export async function fetchQuests(token, signal) {
+export async function fetchQuests(token, signal, explicitStatusContext = null) {
+  if (explicitStatusContext) {
+    const context = normalizeStatusContext(explicitStatusContext);
+    return questStatusStorage.run(context, () => fetchQuests(token, signal));
+  }
+  const statusContext = currentQuestStatusContext();
+  recordQuestAttempt(statusContext.key, statusContext);
   const paths = QUEST_LIST_PATHS;
   let raw;
   let selectedPath;
@@ -354,9 +386,7 @@ export async function fetchQuests(token, signal) {
   )];
   const schemaIssues = quests.flatMap((quest) => quest.schemaIssues);
 
-  Object.assign(questEngineStatus, {
-    lastCheckAt: new Date().toISOString(),
-    lastSuccessfulCheckAt: new Date().toISOString(),
+  recordQuestSuccess(statusContext.key, {
     state: schemaIssues.length || unknownEvents.length ? 'degraded' : 'compatible',
     questCount: quests.length,
     excludedCount: selectedExcludedCount,
@@ -365,8 +395,7 @@ export async function fetchQuests(token, signal) {
     unknownEvents,
     schemaIssues,
     questListPath: selectedPath,
-    lastError: null,
-  });
+  }, statusContext);
 
   if (schemaIssues.length || unknownEvents.length) {
     await reportCriticalError(
@@ -382,76 +411,127 @@ export async function fetchQuests(token, signal) {
   return quests;
 }
 
-async function enrollQuest(token, questId, signal) {
-  return discordFetch(token, `/quests/${questId}/enroll`, {
-    method: 'POST',
-    body: JSON.stringify({
-      location: 11,
-      is_targeted: false,
-      metadata_raw: null,
-    }),
+async function readFreshQuestForMutation(token, questId, signal) {
+  try {
+    return (await fetchQuests(token, signal)).find((quest) => quest.id === questId) ?? null;
+  } catch (error) {
+    if (isFatalAuthError(error) || isAbortFailure(error, signal)) throw error;
+    return null;
+  }
+}
+
+async function verifiedQuestMutation({ token, questId, signal, perform, predicate }) {
+  return executeVerifiedMutation({
+    perform,
     signal,
+    verify: async () => {
+      const fresh = await readFreshQuestForMutation(token, questId, signal);
+      return Boolean(fresh && predicate(fresh));
+    },
+  });
+}
+
+async function enrollQuest(token, questId, signal) {
+  return verifiedQuestMutation({
+    token,
+    questId,
+    signal,
+    predicate: (fresh) => fresh.enrolled,
+    perform: () => discordFetch(token, `/quests/${questId}/enroll`, {
+      method: 'POST',
+      body: JSON.stringify({
+        location: 11,
+        is_targeted: false,
+        metadata_raw: null,
+      }),
+      signal,
+    }),
   });
 }
 
 async function claimQuest(token, questId, platform, signal) {
-  try {
-    return await discordFetch(token, `/quests/${questId}/claim-reward`, {
-      method: 'POST',
-      body: JSON.stringify({ location: 11, platform }),
-      signal,
-    });
-  } catch (error) {
-    if (error?.status !== 404) throw error;
-    return discordFetch(token, `/quests/${questId}/claim`, {
-      method: 'POST',
-      body: JSON.stringify({ location: 1, platform }),
-      signal,
-    });
-  }
+  const perform = async () => {
+    try {
+      return await discordFetch(token, `/quests/${questId}/claim-reward`, {
+        method: 'POST',
+        body: JSON.stringify({ location: 11, platform }),
+        signal,
+      });
+    } catch (error) {
+      if (error?.status !== 404) throw error;
+      return discordFetch(token, `/quests/${questId}/claim`, {
+        method: 'POST',
+        body: JSON.stringify({ location: 1, platform }),
+        signal,
+      });
+    }
+  };
+  return verifiedQuestMutation({
+    token,
+    questId,
+    signal,
+    perform,
+    predicate: (fresh) => fresh.claimed,
+  });
 }
 
 async function sendVideoProgress(token, questId, timestamp, signal) {
   const ts = Math.round(timestamp + Math.random() * 0.5);
-  return discordFetch(token, `/quests/${questId}/video-progress`, {
-    method: 'POST', body: JSON.stringify({ timestamp: ts }), signal,
+  return verifiedQuestMutation({
+    token,
+    questId,
+    signal,
+    predicate: (fresh) => fresh.completed || fresh.progressSecs >= Math.floor(timestamp),
+    perform: () => discordFetch(token, `/quests/${questId}/video-progress`, {
+      method: 'POST',
+      body: JSON.stringify({ timestamp: ts }),
+      signal,
+    }),
   });
 }
 
 async function sendGameHeartbeat(token, quest, terminal, signal) {
-  try {
-    return await discordFetch(token, `/quests/${quest.id}/heartbeat`, {
-      method: 'POST',
-      body: JSON.stringify({
-        stream_key: `call:${quest.id}:1`,
-        terminal,
-      }),
-      signal,
-    });
-  } catch (error) {
-    if (error?.status !== 400 || !quest.applicationId) throw error;
-    return discordFetch(token, `/quests/${quest.id}/heartbeat`, {
-      method: 'POST',
-      body: JSON.stringify({
-        application_id: quest.applicationId,
-        terminal,
-      }),
-      signal,
-    });
-  }
+  const baseline = quest.progressSecs;
+  const perform = async () => {
+    try {
+      return await discordFetch(token, `/quests/${quest.id}/heartbeat`, {
+        method: 'POST',
+        body: JSON.stringify({ stream_key: `call:${quest.id}:1`, terminal }),
+        signal,
+      });
+    } catch (error) {
+      if (error?.status !== 400 || !quest.applicationId) throw error;
+      return discordFetch(token, `/quests/${quest.id}/heartbeat`, {
+        method: 'POST',
+        body: JSON.stringify({ application_id: quest.applicationId, terminal }),
+        signal,
+      });
+    }
+  };
+  return verifiedQuestMutation({
+    token,
+    questId: quest.id,
+    signal,
+    perform,
+    predicate: (fresh) => fresh.completed || fresh.progressSecs > baseline,
+  });
 }
 
 async function sendApplicationHeartbeat(token, quest, terminal, signal) {
   if (!quest.applicationId) {
     throw new QuestCompatibilityError(`Quest ${quest.id} is missing config.application.id`);
   }
-  return discordFetch(token, `/quests/${quest.id}/heartbeat`, {
-    method: 'POST',
-    body: JSON.stringify({
-      application_id: quest.applicationId,
-      terminal,
-    }),
+  const baseline = quest.progressSecs;
+  return verifiedQuestMutation({
+    token,
+    questId: quest.id,
     signal,
+    predicate: (fresh) => fresh.completed || fresh.progressSecs > baseline,
+    perform: () => discordFetch(token, `/quests/${quest.id}/heartbeat`, {
+      method: 'POST',
+      body: JSON.stringify({ application_id: quest.applicationId, terminal }),
+      signal,
+    }),
   });
 }
 
@@ -756,6 +836,17 @@ export async function startRunner({
     await flush();
   }
 
+  const runnerStatusContext = normalizeStatusContext({
+    key: `job:${jobKey}`,
+    ownerId,
+    accountId,
+    username,
+    jobKey,
+    mode,
+    lifecycle: 'running',
+  });
+  setQuestStatusLifecycle(runnerStatusContext.key, 'running', runnerStatusContext);
+
   const jobRecord = {
     ownerId,
     accountId,
@@ -769,6 +860,7 @@ export async function startRunner({
       accountId,
       mode,
       scheduleId,
+      questStatusKey: runnerStatusContext.key,
       lifecycle: jobRecord.lifecycle,
       nextCheckAt,
       status: logLines.at(-1) ?? '',
@@ -812,7 +904,7 @@ export async function startRunner({
       );
       if (claimed) {
         claimRetryAt.delete(quest.id);
-        questEngineStatus.lastVerifiedClaimAt = new Date().toISOString();
+        recordQuestVerification(currentQuestStatusContext().key, 'claim', currentQuestStatusContext());
       } else {
         claimRetryAt.set(quest.id, Date.now() + CLAIM_RETRY_DELAY_MS);
       }
@@ -912,7 +1004,7 @@ export async function startRunner({
     const onServerProgress = async (fresh) => {
       const percent = fresh.completed ? 100 : Math.min(100, Math.floor(fresh.progress));
       if (fresh.progressSecs > 0 || fresh.completed) {
-        questEngineStatus.lastVerifiedProgressAt = new Date().toISOString();
+        recordQuestVerification(currentQuestStatusContext().key, 'progress', currentQuestStatusContext());
       }
       while (nextCheckpoint <= 100 && percent >= nextCheckpoint) {
         if (nextCheckpoint > lastReportedPercent) {
@@ -966,7 +1058,7 @@ export async function startRunner({
     }
 
     await onServerProgress(fresh);
-    questEngineStatus.lastVerifiedCompletionAt = new Date().toISOString();
+    recordQuestVerification(currentQuestStatusContext().key, 'completion', currentQuestStatusContext());
     await claimSilently(fresh);
 
     const latestQuests = await fetchQuests(userToken, signal);
@@ -978,7 +1070,7 @@ export async function startRunner({
     return { attempted: true, progressed: true, supportedCount: supportedRemaining };
   }
 
-  const runPromise = (async () => {
+  const runPromise = questStatusStorage.run(runnerStatusContext, async () => {
     try {
       if (!accountId || !initialUsername) {
         const me = await fetchMe(userToken, signal);
@@ -987,6 +1079,8 @@ export async function startRunner({
       }
       const job = jobs.get(jobKey);
       if (job) job.accountId = accountId;
+      Object.assign(runnerStatusContext, { accountId, username });
+      setQuestStatusLifecycle(runnerStatusContext.key, 'running', runnerStatusContext);
 
       addLog(`✅ LOGIN : ${username}`);
       if (mode === 'scheduled') {
@@ -1106,9 +1200,14 @@ export async function startRunner({
         // Deliver the latest queued status before tearing the job down.
         await flush();
       }
+      setQuestStatusLifecycle(runnerStatusContext.key, 'stopped', {
+        ...runnerStatusContext,
+        accountId,
+        username,
+      });
       jobs.delete(jobKey);
     }
-  })();
+  });
 
   const currentJob = jobs.get(jobKey);
   if (currentJob) currentJob.done = runPromise;
