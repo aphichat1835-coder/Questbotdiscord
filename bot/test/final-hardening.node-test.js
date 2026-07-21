@@ -5,6 +5,8 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 import Database from 'better-sqlite3';
+import { resolveContainedPath } from '../src/path-safety.js';
+import { fetchInputUrl } from './fetch-input.js';
 
 process.env.DISCORD_BOT_TOKEN = 'test-bot-token';
 process.env.DISCORD_CLIENT_ID = 'test-client';
@@ -78,22 +80,23 @@ test('run keeps inspecting tokens until a real slot is filled', async () => {
     });
   }
 
+  const accountByToken = new Map([
+    ['valid-token', { id: 'valid-account', username: 'valid-user' }],
+  ]);
   globalThis.fetch = async (url, options = {}) => {
-    const endpoint = String(url);
-    const token = options.headers?.Authorization;
+    const endpoint = fetchInputUrl(url);
+    const account = accountByToken.get(options.headers?.Authorization);
     if (endpoint.endsWith('/users/@me')) {
-      if (token === 'invalid-token') {
+      if (!account) {
         return new Response(JSON.stringify({ message: 'Unauthorized' }), {
           status: 401,
           headers: { 'Content-Type': 'application/json' },
         });
       }
-      if (token === 'valid-token') {
-        return new Response(JSON.stringify({ id: 'valid-account', username: 'valid-user' }), {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' },
-        });
-      }
+      return new Response(JSON.stringify(account), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
     }
     if (endpoint.endsWith('/quests/@me') || endpoint.endsWith('/users/@me/quests')) {
       return new Response(JSON.stringify({ quests: [] }), {
@@ -101,7 +104,7 @@ test('run keeps inspecting tokens until a real slot is filled', async () => {
         headers: { 'Content-Type': 'application/json' },
       });
     }
-    throw new Error(`Unexpected fetch: ${url}`);
+    throw new Error(`Unexpected fetch: ${endpoint}`);
   };
 
   let reply = '';
@@ -128,7 +131,7 @@ test('stop timeout reports pending cleanup and keeps the account blocked', async
   let heartbeatStarted = false;
   let releaseHeartbeat;
   globalThis.fetch = async (url) => {
-    const endpoint = String(url);
+    const endpoint = fetchInputUrl(url);
     if (endpoint.endsWith('/quests/@me') || endpoint.endsWith('/users/@me/quests')) {
       return new Response(JSON.stringify({ quests: [{
         id: 'slow-stop-quest',
@@ -150,7 +153,7 @@ test('stop timeout reports pending cleanup and keeps the account blocked', async
       heartbeatStarted = true;
       return new Promise((resolve) => { releaseHeartbeat = resolve; });
     }
-    throw new Error(`Unexpected fetch: ${url}`);
+    throw new Error(`Unexpected fetch: ${endpoint}`);
   };
 
   await startRunner({
@@ -254,7 +257,8 @@ test('legacy database migration preserves scheduled runners and creates a readab
   const backups = (await fs.readdir(tempDir))
     .filter((name) => name.includes('.pre-tracker-removal-') && name.endsWith('.bak'));
   assert.equal(backups.length, 1);
-  const backup = new Database(path.join(tempDir, backups[0]), { readonly: true });
+  const backupPath = resolveContainedPath(tempDir, backups[0]);
+  const backup = new Database(backupPath, { readonly: true });
   assert.equal(backup.prepare('SELECT COUNT(*) AS count FROM quests').get().count, 1);
   assert.equal(backup.prepare('SELECT COUNT(*) AS count FROM scheduled_runners').get().count, 1);
   backup.close();
