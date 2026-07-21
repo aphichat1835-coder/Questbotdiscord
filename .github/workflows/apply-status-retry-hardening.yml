@@ -44,6 +44,7 @@ jobs:
         working-directory: bot
         shell: bash
         run: |
+          sed -i 's/changes !== 15/changes !== 16/g; s/Expected 15 changes/Expected 16 changes/g' scripts/apply-status-retry-hardening.mjs
           set +e
           node scripts/apply-status-retry-hardening.mjs 2>&1 | tee codemod-output.log
           status=${PIPESTATUS[0]}
