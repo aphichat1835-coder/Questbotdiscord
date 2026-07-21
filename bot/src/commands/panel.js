@@ -14,6 +14,7 @@ export const data = new SlashCommandBuilder()
 
 const FIELD_MAX = 1000;
 const PAGE_LIMIT = 20;
+const QUEST_STATS_COLOR = 16705372;
 const DEADLINE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const MANAGER_MODAL_IDS = new Set(['panel_add_modal', 'panel_edit_modal']);
 
@@ -41,6 +42,16 @@ function truncate(rows) {
 /** Wrap one text input in the action row required by Discord modals. */
 function inputRow(input) {
   return new ActionRowBuilder().addComponents(input);
+}
+
+/** Build one short required Quest-ID input. */
+function questIdInput(label) {
+  return new TextInputBuilder()
+    .setCustomId('id')
+    .setLabel(label)
+    .setStyle(TextInputStyle.Short)
+    .setRequired(true)
+    .setPlaceholder('เช่น 1');
 }
 
 /** Build the add-Quest modal. */
@@ -81,16 +92,7 @@ function buildDoneQuestModal() {
   return new ModalBuilder()
     .setCustomId('panel_done_modal')
     .setTitle('✅ Mark Quest Done')
-    .addComponents(
-      inputRow(
-        new TextInputBuilder()
-          .setCustomId('id')
-          .setLabel('Quest ID')
-          .setStyle(TextInputStyle.Short)
-          .setRequired(true)
-          .setPlaceholder('เช่น 1'),
-      ),
-    );
+    .addComponents(inputRow(questIdInput('Quest ID')));
 }
 
 /** Build the edit-Quest modal. */
@@ -99,14 +101,7 @@ function buildEditQuestModal() {
     .setCustomId('panel_edit_modal')
     .setTitle('✏️ แก้ไข Quest')
     .addComponents(
-      inputRow(
-        new TextInputBuilder()
-          .setCustomId('id')
-          .setLabel('Quest ID ที่จะแก้ไข')
-          .setStyle(TextInputStyle.Short)
-          .setRequired(true)
-          .setPlaceholder('เช่น 1'),
-      ),
+      inputRow(questIdInput('Quest ID ที่จะแก้ไข')),
       inputRow(
         new TextInputBuilder()
           .setCustomId('name')
@@ -139,16 +134,7 @@ function buildDeleteQuestModal() {
   return new ModalBuilder()
     .setCustomId('panel_delete_modal')
     .setTitle('🗑️ ลบ Quest')
-    .addComponents(
-      inputRow(
-        new TextInputBuilder()
-          .setCustomId('id')
-          .setLabel('Quest ID ที่จะลบ')
-          .setStyle(TextInputStyle.Short)
-          .setRequired(true)
-          .setPlaceholder('เช่น 1'),
-      ),
-    );
+    .addComponents(inputRow(questIdInput('Quest ID ที่จะลบ')));
 }
 
 /** Build the Quest-list embed from stored rows. */
@@ -178,7 +164,7 @@ function buildQuestStatsEmbed({ total, done, pending, overdue }) {
 
   return new EmbedBuilder()
     .setTitle('📊 สถิติเควส')
-    .setColor(0xfee75c)
+    .setColor(QUEST_STATS_COLOR)
     .addFields(
       { name: '📦 ทั้งหมด', value: `${total}`, inline: true },
       { name: '✅ เสร็จ', value: `${done}`, inline: true },
@@ -214,19 +200,19 @@ async function runPanelOperation(interaction, operation) {
 }
 
 /** Reply with the standard Manager permission denial. */
-function replyManagerRequired(interaction, changed = false) {
-  const content = changed
-    ? '🔒 สิทธิ์ของคุณเปลี่ยนไป — ต้องการสิทธิ์ **Manager** ขึ้นไป'
-    : '🔒 ต้องการสิทธิ์ **Manager** ขึ้นไป';
-  return interaction.reply({ flags: 64, content });
+function replyManagerRequired(interaction) {
+  return interaction.reply({
+    flags: 64,
+    content: '🔒 ต้องการสิทธิ์ **Manager** ขึ้นไป',
+  });
 }
 
 /** Reply with the standard Administrator permission denial. */
-function replyAdminRequired(interaction, changed = false) {
-  const content = changed
-    ? '🔒 สิทธิ์ของคุณเปลี่ยนไป — ต้องการสิทธิ์ **Administrator**'
-    : '🔒 ต้องการสิทธิ์ **Administrator**';
-  return interaction.reply({ flags: 64, content });
+function replyAdminRequired(interaction) {
+  return interaction.reply({
+    flags: 64,
+    content: '🔒 ต้องการสิทธิ์ **Administrator**',
+  });
 }
 
 /** Open the public control panel. */
@@ -318,23 +304,21 @@ async function handleStopButton(interaction) {
   return interaction.editReply(content);
 }
 
-const BUTTON_HANDLERS = Object.freeze({
-  refresh: (interaction) => sendPanel(interaction, true),
-  list: handleListButton,
-  status: handleStatusButton,
-  add: handleAddButton,
-  done: handleDoneButton,
-  edit: handleEditButton,
-  delete: handleDeleteButton,
-  run: handleRunButton,
-  stop: handleStopButton,
-});
-
-/** Dispatch one panel button by the action encoded in its custom ID. */
+/** Dispatch one panel button through an explicit allowlist. */
 export async function handleButton(interaction) {
   const action = interaction.customId.split(':')[1];
-  const handler = BUTTON_HANDLERS[action];
-  return handler?.(interaction);
+  switch (action) {
+    case 'refresh': return sendPanel(interaction, true);
+    case 'list': return handleListButton(interaction);
+    case 'status': return handleStatusButton(interaction);
+    case 'add': return handleAddButton(interaction);
+    case 'done': return handleDoneButton(interaction);
+    case 'edit': return handleEditButton(interaction);
+    case 'delete': return handleDeleteButton(interaction);
+    case 'run': return handleRunButton(interaction);
+    case 'stop': return handleStopButton(interaction);
+    default: return undefined;
+  }
 }
 
 /** Return the private permission reply required for one panel modal, if any. */
@@ -395,6 +379,7 @@ async function handleEditModal(interaction) {
 
   return runPanelOperation(interaction, async () => {
     const quest = await editQuest(id, updates);
+    if (!quest) return interaction.editReply(`❌ ไม่พบเควส ID #${id}`);
     return interaction.editReply(`✏️ อัพเดท **${quest.name}** (ID #${quest.id}) แล้ว`);
   });
 }
@@ -412,17 +397,16 @@ async function handleDeleteModal(interaction) {
   });
 }
 
-const MODAL_HANDLERS = Object.freeze({
-  panel_add_modal: handleAddModal,
-  panel_done_modal: handleDoneModal,
-  panel_edit_modal: handleEditModal,
-  panel_delete_modal: handleDeleteModal,
-});
-
-/** Recheck permission and dispatch one panel modal submission. */
+/** Recheck permission and dispatch one panel modal through an explicit allowlist. */
 export async function handlePanelModal(interaction) {
   const permissionReply = getModalPermissionReply(interaction);
   if (permissionReply) return interaction.reply(permissionReply);
-  const handler = MODAL_HANDLERS[interaction.customId];
-  return handler?.(interaction);
+
+  switch (interaction.customId) {
+    case 'panel_add_modal': return handleAddModal(interaction);
+    case 'panel_done_modal': return handleDoneModal(interaction);
+    case 'panel_edit_modal': return handleEditModal(interaction);
+    case 'panel_delete_modal': return handleDeleteModal(interaction);
+    default: return undefined;
+  }
 }
