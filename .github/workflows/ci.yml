@@ -47,17 +47,6 @@ jobs:
       - name: Install locked dependencies
         run: npm ci --no-fund --no-audit
 
-      - name: Apply audited runner codemod
-        run: node scripts/apply-runner-hardening.mjs
-
-      - name: Upload hardened runner
-        uses: actions/upload-artifact@v4
-        with:
-          name: hardened-discord-runner
-          path: bot/src/discord-runner.js
-          if-no-files-found: error
-          retention-days: 7
-
       - name: Run bot unit tests
         id: tests
         shell: bash
