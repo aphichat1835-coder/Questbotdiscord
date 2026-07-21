@@ -3,6 +3,7 @@ import path from 'node:path';
 import { config } from './config.js';
 import { backupDatabase } from './db.js';
 import { reportCriticalError } from './error-reporter.js';
+import { resolveContainedPath } from './path-safety.js';
 import { nextDailyTime } from './runner-schedule.js';
 
 let backupTimeout = null;
@@ -66,22 +67,27 @@ function scheduleDatabaseBackup() {
   backupTimeout.unref?.();
 }
 
+function isBackupFile(name) {
+  return name.startsWith('questbot-') && name.endsWith('.db');
+}
+
 export async function runDatabaseBackup(now = new Date()) {
   if (!config.databaseBackupDir) return null;
-  await fs.mkdir(config.databaseBackupDir, { recursive: true });
+  const backupDir = path.resolve(config.databaseBackupDir);
+  await fs.mkdir(backupDir, { recursive: true });
 
   const timestamp = now.toISOString().replace(/[:.]/g, '-');
   const filename = `questbot-${timestamp}.db`;
-  const destination = path.join(config.databaseBackupDir, filename);
+  const destination = resolveContainedPath(backupDir, filename);
   await backupDatabase(destination);
 
-  const files = (await fs.readdir(config.databaseBackupDir))
-    .filter((name) => /^questbot-.*\.db$/.test(name))
+  const files = (await fs.readdir(backupDir))
+    .filter(isBackupFile)
     .sort()
     .reverse();
+  const expiredFiles = files.slice(config.databaseBackupRetention);
   await Promise.all(
-    files.slice(config.databaseBackupRetention)
-      .map((name) => fs.unlink(path.join(config.databaseBackupDir, name))),
+    expiredFiles.map((name) => fs.unlink(resolveContainedPath(backupDir, name))),
   );
 
   console.log(`💾 Database backup completed → ${destination}`);
