@@ -41,6 +41,24 @@ test('runner headers stay pinned while activity lines rotate', () => {
   assert.doesNotMatch(updated, /Quest ทั้งหมด : 5/);
 });
 
+test('oversized single activity line is removed to stay within Discord limit', () => {
+  const oversizedActivity = `⌛ ${'x'.repeat(2500)}`;
+  const formatted = formatRunnerStatusContent([
+    '```',
+    '✅ LOGIN : example-user',
+    '🔎 example-user: พบ 1 QUESTS',
+    oversizedActivity,
+    '```',
+  ].join('\n'), {}, {
+    state: 'compatible',
+    questCount: 1,
+  });
+
+  assert.ok(formatted.length <= 1950);
+  assert.match(formatted, /🔍 ตรวจพบ Quest ทั้งหมด : 1/);
+  assert.doesNotMatch(formatted, /x{100}/);
+});
+
 test('installed wrapper only reformats runner status messages', async () => {
   const sentPayloads = [];
   const editedPayloads = [];
