@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict';
-import fs from 'node:fs/promises';
 
 process.env.DISCORD_BOT_TOKEN ??= 'fixture-bot-token';
 process.env.DISCORD_CLIENT_ID ??= 'fixture-client-id';
@@ -8,8 +7,10 @@ process.env.OWNER_ID ??= 'fixture-owner-id';
 process.env.RUNNER_TOKEN_SECRET ??= 'fixture-secret-at-least-16-chars';
 process.env.DATABASE_PATH ??= ':memory:';
 
-const fixtureUrl = new URL('../fixtures/quest-api.sample.json', import.meta.url);
-const raw = JSON.parse(await fs.readFile(fixtureUrl, 'utf8'));
+const { default: raw } = await import(
+  '../fixtures/quest-api.sample.json',
+  { with: { type: 'json' } },
+);
 assert.equal(raw.fixture_version, 1, 'Unsupported fixture_version');
 assert.ok(raw.response && Array.isArray(raw.response.quests), 'Fixture must contain response.quests[]');
 assert.ok(raw.response.quests.length >= 3, 'Fixture must cover video, game and completed Quest shapes');
