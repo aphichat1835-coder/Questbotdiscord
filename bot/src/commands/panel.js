@@ -86,3 +86,11 @@ export async function handleButton(interaction) {
   if (interaction.replied || interaction.deferred) return interaction.followUp(payload);
   return interaction.reply(payload);
 }
+
+// Compatibility tombstone for old tests/imports. index.js no longer routes legacy modals here.
+export async function handlePanelModal(interaction) {
+  return interaction.reply({
+    flags: 64,
+    content: 'ℹ️ สิทธิ์และระบบเปลี่ยนไป — Modal รุ่นเก่าถูกปิดใช้งานแล้ว กรุณาใช้ `/panel` ใหม่',
+  });
+}
