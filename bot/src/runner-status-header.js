@@ -15,7 +15,17 @@ function readCodeBlockLines(content) {
   return text.slice(4, -4).split('\n');
 }
 
-export function formatRunnerStatusContent(content, state = {}) {
+function readQuestCounts(status) {
+  if (!status || status.state === 'unknown') {
+    return { total: null, runnable: null };
+  }
+  return {
+    total: Number.isInteger(status.questCount) ? status.questCount : null,
+    runnable: Number.isInteger(status.supportedCount) ? status.supportedCount : null,
+  };
+}
+
+export function formatRunnerStatusContent(content, state = {}, status = null) {
   const lines = readCodeBlockLines(content);
   if (!lines) return content;
 
@@ -29,8 +39,9 @@ export function formatRunnerStatusContent(content, state = {}) {
       state.modeLine = line;
       continue;
     }
-    if (/^🔎 .+: พบ \d+ QUESTS$/.test(line)) {
-      state.questCountLine = line;
+    const runnableMatch = line.match(/^🔎 .+: พบ (\d+) QUESTS$/);
+    if (runnableMatch) {
+      state.runnableQuestCount = Number(runnableMatch[1]);
       continue;
     }
     if (line) activityLines.push(line);
@@ -38,10 +49,17 @@ export function formatRunnerStatusContent(content, state = {}) {
 
   if (!state.loginLine) return content;
 
+  const counts = readQuestCounts(status);
+  if (counts.total != null) state.totalQuestCount = counts.total;
+  if (counts.runnable != null) state.runnableQuestCount = counts.runnable;
+
+  const totalText = state.totalQuestCount ?? 'กำลังตรวจสอบ...';
+  const runnableText = state.runnableQuestCount ?? 'กำลังตรวจสอบ...';
   const headerLines = [
     state.loginLine,
     state.modeLine,
-    state.questCountLine ?? '🔎 กำลังตรวจสอบ QUESTS...',
+    `🔍 ตรวจพบ Quest ทั้งหมด : ${totalText}`,
+    `⚙️ Quest ที่ระบบทำได้ : ${runnableText}`,
     '────────────────────────',
   ].filter(Boolean);
 
@@ -57,7 +75,7 @@ export function formatRunnerStatusContent(content, state = {}) {
   return formatted;
 }
 
-function wrapMessage(message, state) {
+function wrapMessage(message, state, getStatus) {
   if (!message || typeof message.edit !== 'function') return message;
 
   return new Proxy(message, {
@@ -65,13 +83,14 @@ function wrapMessage(message, state) {
       if (property === 'edit') {
         return async (payload) => {
           const rawContent = getPayloadContent(payload);
+          const status = typeof getStatus === 'function' ? getStatus() : null;
           const content = rawContent == null
             ? rawContent
-            : formatRunnerStatusContent(rawContent, state);
+            : formatRunnerStatusContent(rawContent, state, status);
           const edited = await target.edit(
             rawContent == null ? payload : withPayloadContent(payload, content),
           );
-          return wrapMessage(edited, state);
+          return wrapMessage(edited, state, getStatus);
         };
       }
 
@@ -81,7 +100,7 @@ function wrapMessage(message, state) {
   });
 }
 
-function wrapChannel(channel) {
+function wrapChannel(channel, getStatus) {
   if (!channel || typeof channel.send !== 'function') return channel;
   const cached = channelProxies.get(channel);
   if (cached) return cached;
@@ -94,9 +113,10 @@ function wrapChannel(channel) {
           if (rawContent == null) return target.send(payload);
 
           const state = {};
-          const content = formatRunnerStatusContent(rawContent, state);
+          const status = typeof getStatus === 'function' ? getStatus() : null;
+          const content = formatRunnerStatusContent(rawContent, state, status);
           const message = await target.send(withPayloadContent(payload, content));
-          return state.loginLine ? wrapMessage(message, state) : message;
+          return state.loginLine ? wrapMessage(message, state, getStatus) : message;
         };
       }
 
@@ -109,11 +129,11 @@ function wrapChannel(channel) {
   return proxy;
 }
 
-export function installPersistentRunnerStatusHeaders(client) {
+export function installPersistentRunnerStatusHeaders(client, getStatus = null) {
   if (!client?.channels?.fetch || client[INSTALL_KEY]) return false;
 
   const originalFetch = client.channels.fetch.bind(client.channels);
-  client.channels.fetch = async (...args) => wrapChannel(await originalFetch(...args));
+  client.channels.fetch = async (...args) => wrapChannel(await originalFetch(...args), getStatus);
   Object.defineProperty(client, INSTALL_KEY, { value: true });
   return true;
 }
