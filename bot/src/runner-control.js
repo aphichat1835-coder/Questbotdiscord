@@ -13,6 +13,10 @@ function accountKey(ownerId, accountId) {
   return accountId ? `${ownerId}:${accountId}` : null;
 }
 
+function result(accepted, cleanupComplete) {
+  return { accepted, cleanupComplete };
+}
+
 async function waitForCompletion(completion, timeoutMs) {
   if (!completion || typeof completion.then !== 'function') return true;
   let timeout;
@@ -40,6 +44,16 @@ function trackStoppingJob(jobKey, key, done) {
   return completion;
 }
 
+function summarizeResults(results) {
+  const accepted = results.filter((item) => item.accepted).length;
+  const completed = results.filter((item) => item.accepted && item.cleanupComplete).length;
+  return {
+    accepted,
+    completed,
+    pending: accepted - completed,
+  };
+}
+
 export function isAccountStopping(ownerId, accountId) {
   const key = accountKey(ownerId, accountId);
   return key ? stoppingAccounts.has(key) : false;
@@ -58,12 +72,11 @@ export async function stopJobAndWait(ownerId, jobKey, {
 } = {}) {
   const existingCompletion = stoppingJobs.get(jobKey);
   if (existingCompletion) {
-    await waitForCompletion(existingCompletion, timeoutMs);
-    return true;
+    return result(true, await waitForCompletion(existingCompletion, timeoutMs));
   }
 
   const job = getJob(jobKey);
-  if (!job || job.ownerId !== ownerId) return false;
+  if (!job || job.ownerId !== ownerId) return result(false, false);
   const key = accountKey(ownerId, job.accountId);
   if (key) stoppingAccounts.add(key);
 
@@ -72,37 +85,51 @@ export async function stopJobAndWait(ownerId, jobKey, {
   if (!stopped) {
     stoppingJobs.delete(jobKey);
     if (key) stoppingAccounts.delete(key);
-    return false;
+    return result(false, false);
   }
 
-  // Interaction replies stop waiting after the timeout, but the account remains
-  // blocked until job.done actually settles and the real cleanup finishes.
-  await waitForCompletion(completion, timeoutMs);
-  return true;
+  // The caller may stop waiting after the timeout, but the account stays blocked
+  // until job.done settles and the real cleanup finishes.
+  return result(true, await waitForCompletion(completion, timeoutMs));
 }
 
-export async function stopScheduledJobAndWait(ownerId, scheduleId, {
+export async function stopScheduledJobAndWaitDetailed(ownerId, scheduleId, {
   timeoutMs = DEFAULT_STOP_TIMEOUT_MS,
 } = {}) {
   const jobKey = `scheduled:${scheduleId}`;
   const job = getJob(jobKey);
-  if (!job) return stopScheduledJobImmediately(ownerId, scheduleId);
+  if (!job) {
+    const removed = stopScheduledJobImmediately(ownerId, scheduleId);
+    return result(removed, removed);
+  }
   return stopJobAndWait(ownerId, jobKey, { removeSchedule: true, timeoutMs });
 }
 
-export async function stopAllForUserAndWait(ownerId, {
+export async function stopScheduledJobAndWait(ownerId, scheduleId, options = {}) {
+  return (await stopScheduledJobAndWaitDetailed(ownerId, scheduleId, options)).accepted;
+}
+
+export async function stopAllForUserAndWaitDetailed(ownerId, {
   mode = null,
   removeSchedule = true,
   timeoutMs = DEFAULT_STOP_TIMEOUT_MS,
 } = {}) {
-  const jobs = getUserJobs(ownerId, { mode });
+  const jobs = getUserJobs(ownerId, { mode, includeStopping: true });
   const results = await Promise.all(jobs.map((job) => stopJobAndWait(ownerId, job.key, {
     removeSchedule,
     timeoutMs,
   })));
-  return results.filter(Boolean).length;
+  return summarizeResults(results);
+}
+
+export async function stopAllForUserAndWait(ownerId, options = {}) {
+  return (await stopAllForUserAndWaitDetailed(ownerId, options)).accepted;
+}
+
+export async function stopRunnerAndWaitDetailed(ownerId, options = {}) {
+  return stopAllForUserAndWaitDetailed(ownerId, options);
 }
 
 export async function stopRunnerAndWait(ownerId, options = {}) {
-  return (await stopAllForUserAndWait(ownerId, options)) > 0;
+  return (await stopRunnerAndWaitDetailed(ownerId, options)).accepted > 0;
 }
