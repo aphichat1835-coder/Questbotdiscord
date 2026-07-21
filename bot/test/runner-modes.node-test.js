@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import test from 'node:test';
+import { fetchInputUrl } from './fetch-input.js';
 
 process.env.DISCORD_BOT_TOKEN = 'test-bot-token';
 process.env.DISCORD_CLIENT_ID = 'test-client';
@@ -69,7 +70,7 @@ async function waitFor(predicate, timeoutMs = 1000) {
 }
 
 function isQuestListUrl(url) {
-  const value = String(url);
+  const value = fetchInputUrl(url);
   return value.endsWith('/quests/@me') || value.endsWith('/users/@me/quests');
 }
 
@@ -112,10 +113,10 @@ async function startScheduledHeartbeatFailure({
         },
       }] });
     }
-    if (String(url).includes('/heartbeat')) {
+    if (fetchInputUrl(url).includes('/heartbeat')) {
       return jsonResponse({ message: status === 401 ? 'Unauthorized' : 'Forbidden' }, status);
     }
-    throw new Error(`Unexpected fetch: ${url}`);
+    throw new Error(`Unexpected fetch: ${fetchInputUrl(url)}`);
   };
 
   await startRunner({
@@ -140,7 +141,7 @@ test.beforeEach(() => {
         headers: { 'Content-Type': 'application/json' },
       });
     }
-    throw new Error(`Unexpected fetch: ${url}`);
+    throw new Error(`Unexpected fetch: ${fetchInputUrl(url)}`);
   };
 });
 
@@ -267,7 +268,7 @@ test('malformed Quest API response is reported as incompatible, not as an empty 
 
 test('quest fetch falls back to the legacy endpoint when /quests/@me is unavailable', async () => {
   global.fetch = async (url) => {
-    const path = String(url);
+    const path = fetchInputUrl(url);
     if (path.endsWith('/quests/@me')) {
       return new Response(JSON.stringify({ message: 'Not Found' }), {
         status: 404,
@@ -286,7 +287,7 @@ test('quest fetch falls back to the legacy endpoint when /quests/@me is unavaila
         headers: { 'Content-Type': 'application/json' },
       });
     }
-    throw new Error(`Unexpected fetch: ${url}`);
+    throw new Error(`Unexpected fetch: ${fetchInputUrl(url)}`);
   };
 
   const quests = await fetchQuests('token-legacy-endpoint');
@@ -297,7 +298,7 @@ test('quest fetch falls back to the legacy endpoint when /quests/@me is unavaila
 test('quest fetch checks the alternate endpoint before accepting an empty list', async () => {
   const calls = [];
   global.fetch = async (url) => {
-    calls.push(String(url));
+    calls.push(fetchInputUrl(url));
     if (calls.length === 1) {
       return new Response(JSON.stringify({ quests: [] }), {
         status: 200,
@@ -339,7 +340,7 @@ test('aborted quest fetch does not become a compatibility error', async () => {
 test('current Quest API requests use the quest-home referer', async () => {
   let referer = null;
   global.fetch = async (url, options = {}) => {
-    if (String(url).endsWith('/quests/@me')) {
+    if (fetchInputUrl(url).endsWith('/quests/@me')) {
       referer = options.headers?.Referer;
       return new Response(JSON.stringify({ quests: [{
         id: 'referer-quest',
@@ -350,7 +351,7 @@ test('current Quest API requests use the quest-home referer', async () => {
         headers: { 'Content-Type': 'application/json' },
       });
     }
-    throw new Error(`Unexpected fetch: ${url}`);
+    throw new Error(`Unexpected fetch: ${fetchInputUrl(url)}`);
   };
 
   const quests = await fetchQuests('token-quest-referer');
@@ -361,7 +362,7 @@ test('current Quest API requests use the quest-home referer', async () => {
 test('quest enrollment cooldown is preserved and excludes unaccepted quests from runnable count', async () => {
   const blockedUntil = new Date(Date.now() + 60_000).toISOString();
   global.fetch = async (url) => {
-    if (String(url).endsWith('/quests/@me')) {
+    if (fetchInputUrl(url).endsWith('/quests/@me')) {
       return new Response(JSON.stringify({
         quests: [{
           id: 'cooldown-quest',
@@ -375,7 +376,7 @@ test('quest enrollment cooldown is preserved and excludes unaccepted quests from
         headers: { 'Content-Type': 'application/json' },
       });
     }
-    throw new Error(`Unexpected fetch: ${url}`);
+    throw new Error(`Unexpected fetch: ${fetchInputUrl(url)}`);
   };
 
   const [quest] = await fetchQuests('token-enrollment-cooldown');
@@ -391,7 +392,7 @@ test('runner records completion and claim only after Discord returns completed_a
   let claimed = false;
   let claimBody = null;
   global.fetch = async (url, options = {}) => {
-    const path = String(url);
+    const path = fetchInputUrl(url);
     if (isQuestListUrl(path)) {
       return new Response(JSON.stringify({ quests: [{
         id: 'quest-server-proof',
@@ -427,7 +428,7 @@ test('runner records completion and claim only after Discord returns completed_a
         headers: { 'Content-Type': 'application/json' },
       });
     }
-    throw new Error(`Unexpected fetch: ${url}`);
+    throw new Error(`Unexpected fetch: ${fetchInputUrl(url)}`);
   };
 
   await startRunner({
@@ -476,7 +477,7 @@ test('one-shot runner rescans after each quest and reports the requested flow in
   });
 
   global.fetch = async (url, options = {}) => {
-    const path = String(url);
+    const path = fetchInputUrl(url);
     if (isQuestListUrl(path)) {
       return new Response(JSON.stringify(payload()), {
         status: 200,
@@ -498,7 +499,7 @@ test('one-shot runner rescans after each quest and reports the requested flow in
         headers: { 'Content-Type': 'application/json' },
       });
     }
-    throw new Error(`Unexpected fetch: ${url}`);
+    throw new Error(`Unexpected fetch: ${fetchInputUrl(url)}`);
   };
 
   await startRunner({
@@ -614,7 +615,7 @@ test('runner counts only runnable quests and hides expired, future, blocked, uns
   });
 
   global.fetch = async (url, options = {}) => {
-    const path = String(url);
+    const path = fetchInputUrl(url);
     if (isQuestListUrl(path)) {
       return new Response(JSON.stringify(payload()), {
         status: 200,
@@ -629,7 +630,7 @@ test('runner counts only runnable quests and hides expired, future, blocked, uns
       runnableClaimed = true;
       return jsonResponse({ ok: true });
     }
-    throw new Error(`Unexpected fetch: ${url}`);
+    throw new Error(`Unexpected fetch: ${fetchInputUrl(url)}`);
   };
 
   await startRunner({
@@ -659,7 +660,7 @@ test('runner reports existing Discord progress before the remaining checkpoints'
   let completed = false;
   let claimed = false;
   global.fetch = async (url, options = {}) => {
-    const path = String(url);
+    const path = fetchInputUrl(url);
     if (isQuestListUrl(path)) {
       return new Response(JSON.stringify({ quests: [{
         id: 'partial-progress',
@@ -686,7 +687,7 @@ test('runner reports existing Discord progress before the remaining checkpoints'
       claimed = true;
       return jsonResponse({ ok: true });
     }
-    throw new Error(`Unexpected fetch: ${url}`);
+    throw new Error(`Unexpected fetch: ${fetchInputUrl(url)}`);
   };
 
   await startRunner({
@@ -717,7 +718,7 @@ test('runner reports existing Discord progress before the remaining checkpoints'
 test('claim failures stay out of the channel while one-shot still logs out', async () => {
   const contents = [];
   global.fetch = async (url) => {
-    const path = String(url);
+    const path = fetchInputUrl(url);
     if (isQuestListUrl(path)) {
       return new Response(JSON.stringify({ quests: [{
         id: 'claim-failure',
@@ -739,7 +740,7 @@ test('claim failures stay out of the channel while one-shot still logs out', asy
     if (path.endsWith('/claim-reward')) {
       return jsonResponse({ message: 'Forbidden' }, 403);
     }
-    throw new Error(`Unexpected fetch: ${url}`);
+    throw new Error(`Unexpected fetch: ${fetchInputUrl(url)}`);
   };
 
   await startRunner({
@@ -787,7 +788,7 @@ test('a failed or CAPTCHA-blocked claim is attempted only once while other quest
   });
 
   global.fetch = async (url, options = {}) => {
-    const path = String(url);
+    const path = fetchInputUrl(url);
     if (isQuestListUrl(path)) return jsonResponse(payload());
     const questId = [...states.keys()].find((id) => path.includes(id));
     if (path.endsWith('/video-progress')) {
@@ -805,7 +806,7 @@ test('a failed or CAPTCHA-blocked claim is attempted only once while other quest
       states.get(questId).claimed = true;
       return jsonResponse({ claimed_at: new Date().toISOString() });
     }
-    throw new Error(`Unexpected fetch: ${url}`);
+    throw new Error(`Unexpected fetch: ${fetchInputUrl(url)}`);
   };
 
   await startRunner({
@@ -833,7 +834,7 @@ test('PLAY_ON_DESKTOP switches to application_id when the first heartbeat payloa
   const heartbeatBodies = [];
 
   global.fetch = async (url, options = {}) => {
-    const path = String(url);
+    const path = fetchInputUrl(url);
     if (isQuestListUrl(path)) {
       return new Response(JSON.stringify({ quests: [{
         id: 'quest-play',
@@ -876,7 +877,7 @@ test('PLAY_ON_DESKTOP switches to application_id when the first heartbeat payloa
         headers: { 'Content-Type': 'application/json' },
       });
     }
-    throw new Error(`Unexpected fetch: ${url}`);
+    throw new Error(`Unexpected fetch: ${fetchInputUrl(url)}`);
   };
 
   await startRunner({
@@ -983,7 +984,7 @@ test('one-shot runner logs out once after three attempts make no progress', asyn
   const contents = [];
   let enrollAttempts = 0;
   global.fetch = async (url) => {
-    const path = String(url);
+    const path = fetchInputUrl(url);
     if (isQuestListUrl(path)) {
       return new Response(JSON.stringify({ quests: [{
         id: 'no-progress',
@@ -1001,7 +1002,7 @@ test('one-shot runner logs out once after three attempts make no progress', asyn
       enrollAttempts++;
       return jsonResponse({ message: 'Forbidden' }, 403);
     }
-    throw new Error(`Unexpected fetch: ${url}`);
+    throw new Error(`Unexpected fetch: ${fetchInputUrl(url)}`);
   };
 
   await startRunner({
@@ -1070,7 +1071,7 @@ test('/run replies publicly and starts a persisted scheduled runner', async () =
   let deferOptions = null;
   let replyContent = null;
   global.fetch = async (url) => {
-    if (String(url).endsWith('/users/@me')) {
+    if (fetchInputUrl(url).endsWith('/users/@me')) {
       return new Response(JSON.stringify({ id: 'account-command', username: 'command-user' }), {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
@@ -1082,7 +1083,7 @@ test('/run replies publicly and starts a persisted scheduled runner', async () =
         headers: { 'Content-Type': 'application/json' },
       });
     }
-    throw new Error(`Unexpected fetch: ${url}`);
+    throw new Error(`Unexpected fetch: ${fetchInputUrl(url)}`);
   };
 
   await runCommand.handleModal({
