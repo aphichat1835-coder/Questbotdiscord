@@ -35,7 +35,6 @@ function truncate(rows) {
 }
 
 export async function execute(interaction) {
-  await interaction.deferReply({ flags: 64 });
   await sendPanel(interaction, false);
 }
 
