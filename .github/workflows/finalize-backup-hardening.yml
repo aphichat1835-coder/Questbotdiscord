@@ -1,0 +1,60 @@
+name: Finalize backup hardening
+
+permissions:
+  contents: write
+
+on:
+  push:
+    branches: [ss]
+    paths:
+      - bot/scripts/finalize-backup-hardening.mjs
+      - .github/workflows/finalize-backup-hardening.yml
+
+concurrency:
+  group: finalize-backup-hardening-ss
+  cancel-in-progress: false
+
+jobs:
+  finalize:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout ss
+        uses: actions/checkout@v6
+        with:
+          ref: ss
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: bot/.node-version
+          cache: npm
+          cache-dependency-path: bot/package-lock.json
+
+      - name: Install locked dependencies without lifecycle scripts
+        working-directory: bot
+        run: npm ci --ignore-scripts --no-fund --no-audit
+
+      - name: Rebuild trusted native dependency
+        working-directory: bot
+        run: npm rebuild better-sqlite3 --foreground-scripts
+
+      - name: Apply guarded updates
+        working-directory: bot
+        run: node scripts/finalize-backup-hardening.mjs
+
+      - name: Validate repository
+        working-directory: bot
+        run: |
+          npm run validate:quest-fixture
+          npm test
+          npm run check
+          npm audit --omit=dev --audit-level=high
+
+      - name: Commit permanent changes
+        run: |
+          test -n "$(git status --short -- bot/test bot/.env.example bot/README.md)"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add bot/test bot/.env.example bot/README.md
+          git commit -m "align tests and docs with safe backup slots"
+          git push origin HEAD:ss
