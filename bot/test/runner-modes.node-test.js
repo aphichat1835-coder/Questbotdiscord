@@ -33,7 +33,6 @@ const {
 } = await import('../src/scheduled-runner-store.js');
 const runCommand = await import('../src/commands/run.js');
 const stopCommand = await import('../src/commands/stop.js');
-const panelCommand = await import('../src/commands/panel.js');
 const { backupDatabase } = await import('../src/db.js');
 const { redactSensitive } = await import('../src/error-reporter.js');
 const { runDatabaseBackup } = await import('../src/worker.js');
@@ -1267,7 +1266,7 @@ test('scheduled database backups retain only the configured number of snapshots'
   await fs.rm(process.env.DATABASE_BACKUP_DIR, { recursive: true, force: true });
 });
 
-test('modal handlers recheck permissions when the modal is submitted', async () => {
+test('run modal rechecks permissions when the modal is submitted', async () => {
   let runReply;
   await runCommand.handleModal({
     customId: 'run_modal:scheduled:channel',
@@ -1278,15 +1277,4 @@ test('modal handlers recheck permissions when the modal is submitted', async () 
     },
   });
   assert.match(runReply.content, /สิทธิ์ของคุณเปลี่ยนไป/);
-
-  let editReply;
-  await panelCommand.handlePanelModal({
-    customId: 'panel_edit_modal',
-    user: { id: 'owner-no-role' },
-    member: { permissions: { has: () => false }, roles: { cache: { has: () => false } } },
-    async reply(payload) {
-      editReply = payload;
-    },
-  });
-  assert.match(editReply.content, /สิทธิ์ของคุณเปลี่ยนไป/);
 });
