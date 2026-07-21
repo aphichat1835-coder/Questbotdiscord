@@ -12,6 +12,12 @@ export const data = new SlashCommandBuilder()
   .setName('api-status')
   .setDescription('เช็กสถานะระบบ ฐานข้อมูล และผลตรวจ Quest API แยกตามบัญชี');
 
+const STATUS_COLORS = Object.freeze({
+  error: 15548997,
+  warning: 16705372,
+  healthy: 5763719,
+});
+
 function discordTime(iso) {
   const timestamp = Date.parse(iso);
   return Number.isFinite(timestamp) ? `<t:${Math.floor(timestamp / 1000)}:R>` : 'ยังไม่มี';
@@ -32,6 +38,12 @@ function accountStatusLine(status) {
     `Quest ${status.questCount} / พร้อมทำ ${status.supportedCount} · ${status.lifecycle}`,
     `ตรวจล่าสุด ${discordTime(status.lastCheckAt)}`,
   ].join('\n');
+}
+
+function selectStatusColor(dbOk, state) {
+  if (!dbOk || state === 'error' || state === 'incompatible') return STATUS_COLORS.error;
+  if (state === 'degraded') return STATUS_COLORS.warning;
+  return STATUS_COLORS.healthy;
 }
 
 export async function execute(interaction) {
@@ -79,13 +91,9 @@ export async function execute(interaction) {
     ? accountStatuses.slice(0, 8).map(accountStatusLine).join('\n\n')
     : 'ยังไม่มีผลตรวจ Quest API ของบัญชีคุณ';
 
-  const statusColor = !dbOk || ['error', 'incompatible'].includes(aggregate.state)
-    ? 0xed4245
-    : aggregate.state === 'degraded' ? 0xfee75c : 0x57f287;
-
   const embed = new EmbedBuilder()
     .setTitle('🔌 NeverDie System Status')
-    .setColor(statusColor)
+    .setColor(selectStatusColor(dbOk, aggregate.state))
     .addFields(
       { name: 'Database', value: dbOk ? '🟢 OK' : '🔴 Error', inline: true },
       { name: 'Query Latency', value: `${latency}ms`, inline: true },
