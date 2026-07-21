@@ -77,7 +77,7 @@ export async function handleModal(interaction) {
     return interaction.reply({ flags: 64, content: '❌ ไม่พบ token กรุณาใส่อย่างน้อย 1 token' });
   }
 
-  await interaction.deferReply({ flags: 64 });
+  await interaction.deferReply(isScheduled ? {} : { flags: 64 });
 
   const ownerId    = interaction.user.id;
   const existing   = getUserJobs(ownerId);
