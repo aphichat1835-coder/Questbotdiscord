@@ -117,7 +117,7 @@ export function formatRunnerStatusContent(content, state = {}, status = null) {
   const visibleActivity = [...activityLines];
   let formatted = buildRunnerStatusContent(headerLines, visibleActivity);
 
-  while (formatted.length > 1950 && visibleActivity.length > 1) {
+  while (formatted.length > 1950 && visibleActivity.length > 0) {
     visibleActivity.shift();
     formatted = buildRunnerStatusContent(headerLines, visibleActivity);
   }
