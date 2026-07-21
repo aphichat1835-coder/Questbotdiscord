@@ -22,6 +22,13 @@ import * as run         from './commands/run.js';
 import * as stop        from './commands/stop.js';
 import * as panel       from './commands/panel.js';
 
+const PANEL_MODAL_IDS = new Set([
+  'panel_add_modal',
+  'panel_done_modal',
+  'panel_edit_modal',
+  'panel_delete_modal',
+]);
+
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 client.commands = new Collection();
 installPersistentRunnerStatusHeaders(client, getQuestEngineStatus);
@@ -50,6 +57,7 @@ client.once('clientReady', () => {
   void onClientReady().catch((error) => fatalShutdown('Client startup', error));
 });
 
+/** Start runtime services after the Discord client is ready. */
 async function onClientReady() {
   console.log(`✅ บอทพร้อมแล้ว — logged in as ${client.user.tag}`);
   startDashboard(client);
@@ -57,11 +65,12 @@ async function onClientReady() {
   await restoreScheduledRunners(client);
 }
 
-// interaction หมดอายุ (10062) หรือถูกตอบไปแล้ว (40060) — ไม่ต้อง retry
+/** Return whether an interaction error is safe to ignore without retrying. */
 function isIgnorableInteractionError(error) {
   return error?.code === 10062 || error?.code === 40060;
 }
 
+/** Log a compact Discord API error without exposing request payloads. */
 function logDiscordError(label, error) {
   console.error(label, {
     code: error?.code,
@@ -73,6 +82,8 @@ function logDiscordError(label, error) {
 
 // กัน handler รับ interaction เดียวกันซ้ำใน process เดียว
 const seenInteractions = new Set();
+
+/** Claim one interaction ID for this process and expire the claim after one minute. */
 function markInteractionSeen(id) {
   if (seenInteractions.has(id)) return false;
   seenInteractions.add(id);
@@ -80,53 +91,80 @@ function markInteractionSeen(id) {
   return true;
 }
 
-client.on('interactionCreate', async (interaction) => {
+/** Route one modal submission to its owning command module. */
+function routeModalSubmit(interaction) {
+  if (interaction.customId.startsWith('run_modal:')) return run.handleModal(interaction);
+  if (PANEL_MODAL_IDS.has(interaction.customId)) return panel.handlePanelModal(interaction);
+  return undefined;
+}
+
+/** Route one button interaction to its owning command module. */
+function routeButton(interaction) {
+  if (interaction.customId.startsWith('panel:')) return panel.handleButton(interaction);
+  if (interaction.customId.startsWith('runner-stop:')) return stop.handleButton(interaction);
+  return undefined;
+}
+
+/** Route one string-select interaction to its owning command module. */
+function routeStringSelect(interaction) {
+  if (interaction.customId === 'runner-stop:select') return stop.handleSelect(interaction);
+  return undefined;
+}
+
+/** Execute a registered slash command when one matches the interaction name. */
+function routeChatInput(interaction) {
+  const command = client.commands.get(interaction.commandName);
+  return command?.execute(interaction);
+}
+
+/** Dispatch an interaction by Discord interaction type. */
+function routeInteraction(interaction) {
+  if (interaction.isModalSubmit()) return routeModalSubmit(interaction);
+  if (interaction.isButton()) return routeButton(interaction);
+  if (interaction.isStringSelectMenu()) return routeStringSelect(interaction);
+  if (interaction.isChatInputCommand()) return routeChatInput(interaction);
+  return undefined;
+}
+
+/** Send the standard private interaction failure response. */
+async function sendInteractionFailure(interaction) {
+  const message = { content: '❌ เกิดข้อผิดพลาด กรุณาลองใหม่', flags: 64 };
+  if (interaction.replied || interaction.deferred) {
+    await interaction.followUp(message);
+    return;
+  }
+  await interaction.reply(message);
+}
+
+/** Report an interaction failure while suppressing expired/already-acknowledged errors. */
+async function reportInteractionFailure(interaction, error) {
+  if (isIgnorableInteractionError(error)) {
+    console.warn(`⚠️ Ignored interaction error: ${error.code} ${error.message}`);
+    return;
+  }
+
+  logDiscordError('❌ Interaction error:', error);
+  try {
+    await sendInteractionFailure(interaction);
+  } catch (replyError) {
+    if (!isIgnorableInteractionError(replyError)) {
+      logDiscordError('❌ Failed to report interaction error:', replyError);
+    }
+  }
+}
+
+/** Deduplicate, route, and contain failures for one Discord interaction. */
+async function handleInteraction(interaction) {
   if (!markInteractionSeen(interaction.id)) return;
 
   try {
-    if (interaction.isModalSubmit()) {
-      if (interaction.customId.startsWith('run_modal:')) return run.handleModal(interaction);
-      if (['panel_add_modal', 'panel_done_modal', 'panel_edit_modal', 'panel_delete_modal'].includes(interaction.customId)) {
-        return panel.handlePanelModal(interaction);
-      }
-      return;
-    }
-
-    if (interaction.isButton()) {
-      if (interaction.customId.startsWith('panel:')) return panel.handleButton(interaction);
-      if (interaction.customId.startsWith('runner-stop:')) return stop.handleButton(interaction);
-      return;
-    }
-
-    if (interaction.isStringSelectMenu()) {
-      if (interaction.customId === 'runner-stop:select') return stop.handleSelect(interaction);
-      return;
-    }
-
-    if (!interaction.isChatInputCommand()) return;
-    const command = client.commands.get(interaction.commandName);
-    if (!command) return;
-    await command.execute(interaction);
-  } catch (err) {
-    if (isIgnorableInteractionError(err)) {
-      console.warn(`⚠️ Ignored interaction error: ${err.code} ${err.message}`);
-      return;
-    }
-    logDiscordError('❌ Interaction error:', err);
-    const msg = { content: '❌ เกิดข้อผิดพลาด กรุณาลองใหม่', flags: 64 };
-    try {
-      if (interaction.replied || interaction.deferred) {
-        await interaction.followUp(msg);
-      } else {
-        await interaction.reply(msg);
-      }
-    } catch (replyError) {
-      if (!isIgnorableInteractionError(replyError)) {
-        logDiscordError('❌ Failed to report interaction error:', replyError);
-      }
-    }
+    await routeInteraction(interaction);
+  } catch (error) {
+    await reportInteractionFailure(interaction, error);
   }
-});
+}
+
+client.on('interactionCreate', handleInteraction);
 
 client.on('error', (error) => {
   void reportCriticalError('Discord client', error);
@@ -141,6 +179,7 @@ client.on('invalidated', () => {
   void fatalShutdown('Discord session invalidated', new Error('Discord gateway session invalidated'));
 });
 
+/** Stop workers, runners, Discord, dashboard, and database resources once. */
 async function gracefulShutdown(reason, exitCode = 0) {
   if (shuttingDown) return;
   shuttingDown = true;
@@ -168,6 +207,7 @@ async function gracefulShutdown(reason, exitCode = 0) {
   process.exit(exitCode);
 }
 
+/** Report a fatal runtime error with a bounded wait, then shut down. */
 async function fatalShutdown(source, error) {
   await Promise.race([
     reportCriticalError(source, error),

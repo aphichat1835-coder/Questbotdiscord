@@ -59,6 +59,11 @@ test('oversized single activity line is removed to stay within Discord limit', (
   assert.doesNotMatch(formatted, /x{100}/);
 });
 
+test('non-string content is returned without object stringification', () => {
+  const content = { content: '```\n✅ LOGIN : example-user\n```' };
+  assert.equal(formatRunnerStatusContent(content), content);
+});
+
 test('installed wrapper only reformats runner status messages', async () => {
   const sentPayloads = [];
   const editedPayloads = [];
