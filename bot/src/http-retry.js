@@ -1,6 +1,7 @@
 const DEFAULT_TIMEOUT_MS = 15_000;
 const DEFAULT_MAX_RETRIES = 3;
 const MAX_RETRY_DELAY_MS = 60_000;
+const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
 export class RequestTimeoutError extends Error {
   constructor(timeoutMs) {
@@ -23,11 +24,12 @@ export function wait(ms, signal) {
       return;
     }
 
+    let timer;
     const onAbort = () => {
       clearTimeout(timer);
       reject(abortedError());
     };
-    const timer = setTimeout(() => {
+    timer = setTimeout(() => {
       signal?.removeEventListener('abort', onAbort);
       resolve();
     }, Math.max(0, ms));
@@ -58,10 +60,6 @@ async function retryAfterMs(response) {
   return null;
 }
 
-function shouldRetryResponse(response) {
-  return response.status === 429 || response.status >= 500;
-}
-
 async function fetchAttempt(fetchFn, url, options, timeoutMs) {
   const externalSignal = options.signal;
   if (externalSignal?.aborted) throw abortedError();
@@ -87,6 +85,16 @@ async function fetchAttempt(fetchFn, url, options, timeoutMs) {
   }
 }
 
+function mayRetryUnsafeRequest(method, policy) {
+  return SAFE_METHODS.has(method) || policy.retryUnsafe === true;
+}
+
+function shouldRetryResponse(response, method, policy) {
+  if (response.status === 429) return policy.retryRateLimits !== false;
+  if (response.status >= 500) return mayRetryUnsafeRequest(method, policy);
+  return false;
+}
+
 export async function fetchWithRetry(url, options = {}, policy = {}) {
   const {
     fetchFn = globalThis.fetch,
@@ -96,12 +104,13 @@ export async function fetchWithRetry(url, options = {}, policy = {}) {
     random = Math.random,
     waitFn = null,
   } = policy;
+  const method = String(options.method ?? 'GET').toUpperCase();
 
   let lastError;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
       const response = await fetchAttempt(fetchFn, url, options, timeoutMs);
-      if (!shouldRetryResponse(response) || attempt === maxRetries) return response;
+      if (!shouldRetryResponse(response, method, policy) || attempt === maxRetries) return response;
 
       const rateLimitDelay = response.status === 429 ? await retryAfterMs(response) : null;
       const backoff = Math.min(
@@ -113,7 +122,7 @@ export async function fetchWithRetry(url, options = {}, policy = {}) {
     } catch (error) {
       if (options.signal?.aborted || error?.message === 'aborted') throw error;
       lastError = error;
-      if (attempt === maxRetries) throw error;
+      if (attempt === maxRetries || !mayRetryUnsafeRequest(method, policy)) throw error;
 
       const backoff = Math.min(
         MAX_RETRY_DELAY_MS,
