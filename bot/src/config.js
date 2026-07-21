@@ -8,6 +8,14 @@ for (const key of required) {
   }
 }
 
+function readBoolean(name, fallback = false) {
+  const value = process.env[name]?.trim().toLowerCase();
+  if (value == null || value === '') return fallback;
+  return ['1', 'true', 'yes', 'on'].includes(value);
+}
+
+const legacyBackupEnabled = Boolean(process.env.DATABASE_BACKUP_DIR?.trim());
+
 export const config = {
   token: process.env.DISCORD_BOT_TOKEN,
   clientId: process.env.DISCORD_CLIENT_ID,
@@ -17,10 +25,13 @@ export const config = {
   logChannelId: process.env.LOG_CHANNEL_ID ?? '',
   managerRoleId: process.env.MANAGER_ROLE_ID ?? '',
   databasePath: process.env.DATABASE_PATH ?? './data/quests.db',
-  databaseBackupDir: process.env.DATABASE_BACKUP_DIR ?? '',
-  databaseBackupRetention: Math.max(
-    1,
-    Number.parseInt(process.env.DATABASE_BACKUP_RETENTION ?? '7', 10) || 7,
+  databaseBackupEnabled: readBoolean('DATABASE_BACKUP_ENABLED', legacyBackupEnabled),
+  databaseBackupRetention: Math.min(
+    7,
+    Math.max(
+      1,
+      Number.parseInt(process.env.DATABASE_BACKUP_RETENTION ?? '7', 10) || 7,
+    ),
   ),
   runnerTokenSecret: process.env.RUNNER_TOKEN_SECRET ?? '',
   healthStatusToken: process.env.HEALTH_STATUS_TOKEN?.trim() ?? '',
