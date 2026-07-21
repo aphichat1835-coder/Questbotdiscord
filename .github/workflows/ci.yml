@@ -24,6 +24,8 @@ jobs:
           test ! -d src-tauri
           test ! -d src-runner
           test ! -d src-cdp-launcher
+          test -f bot/fixtures/quest-api.sample.json
+          test -f bot/scripts/validate-quest-fixture.mjs
           ! grep -R "panel_\(add\|done\|edit\|delete\)_modal" bot/src/index.js
           ! grep -R "getAllQuests\|addQuest\|editQuest\|markDone\|removeQuest" bot/src
 
@@ -46,6 +48,9 @@ jobs:
 
       - name: Install locked dependencies
         run: npm ci --no-fund --no-audit
+
+      - name: Validate sanitized Quest API fixture
+        run: npm run validate:quest-fixture
 
       - name: Run bot unit tests
         id: tests
