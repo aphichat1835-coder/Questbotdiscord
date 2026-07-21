@@ -76,6 +76,23 @@ function stopPanelPayload(ownerId, notice = null) {
   return { embeds: [embed], components };
 }
 
+async function acknowledgeForCleanup(interaction) {
+  if (typeof interaction.deferUpdate === 'function') {
+    await interaction.deferUpdate();
+    return true;
+  }
+  return false;
+}
+
+async function finishUpdate(interaction, payload, deferred) {
+  if (deferred && typeof interaction.editReply === 'function') {
+    return interaction.editReply(payload);
+  }
+  if (typeof interaction.update === 'function') return interaction.update(payload);
+  if (typeof interaction.editReply === 'function') return interaction.editReply(payload);
+  throw new Error('Interaction does not support update or editReply');
+}
+
 export async function execute(interaction) {
   await interaction.reply({
     ...stopPanelPayload(interaction.user.id),
@@ -84,7 +101,7 @@ export async function execute(interaction) {
 }
 
 export async function handleSelect(interaction) {
-  await interaction.deferUpdate();
+  const deferred = await acknowledgeForCleanup(interaction);
   const stopped = [];
   for (const rawId of interaction.values) {
     const id = Number(rawId);
@@ -96,7 +113,7 @@ export async function handleSelect(interaction) {
   const notice = stopped.length
     ? `✅ หยุดและ Cleanup แล้ว: **${stopped.join(', ')}**`
     : 'ℹ️ ไม่พบ Runner ที่เลือก';
-  await interaction.editReply(stopPanelPayload(interaction.user.id, notice));
+  return finishUpdate(interaction, stopPanelPayload(interaction.user.id, notice), deferred);
 }
 
 export async function handleButton(interaction) {
@@ -106,14 +123,16 @@ export async function handleButton(interaction) {
   }
 
   if (action === 'all') {
-    await interaction.deferUpdate();
+    const deferred = await acknowledgeForCleanup(interaction);
     const rows = listScheduledRunners(interaction.user.id);
     const stopped = await stopAllForUserAndWait(interaction.user.id, { mode: 'scheduled' });
-    return interaction.editReply(
+    return finishUpdate(
+      interaction,
       stopPanelPayload(
         interaction.user.id,
         `✅ หยุดและ Cleanup Auto Daily Runner แล้ว **${stopped || rows.length}** token`,
       ),
+      deferred,
     );
   }
 
