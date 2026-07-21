@@ -1,16 +1,37 @@
 import { EmbedBuilder, SlashCommandBuilder } from 'discord.js';
 import { db } from '../db.js';
-import { getQuestEngineStatus, listJobs } from '../discord-runner.js';
+import {
+  getQuestEngineStatus,
+  listJobs,
+  listQuestEngineStatuses,
+} from '../discord-runner.js';
 import { listStoppingAccounts } from '../runner-control.js';
 import { listScheduledRunners } from '../scheduled-runner-store.js';
 
 export const data = new SlashCommandBuilder()
   .setName('api-status')
-  .setDescription('เช็กสถานะระบบ ฐานข้อมูล และผลตรวจ Quest API ล่าสุด');
+  .setDescription('เช็กสถานะระบบ ฐานข้อมูล และผลตรวจ Quest API แยกตามบัญชี');
 
 function discordTime(iso) {
   const timestamp = Date.parse(iso);
   return Number.isFinite(timestamp) ? `<t:${Math.floor(timestamp / 1000)}:R>` : 'ยังไม่มี';
+}
+
+const stateLabels = {
+  unknown: '⚪ ยังไม่มีการตรวจ',
+  compatible: '🟢 ใช้งานร่วมกันได้',
+  degraded: '🟡 พบ schema/event ใหม่',
+  incompatible: '🔴 รูปแบบ API ไม่รองรับ',
+  error: '🔴 ติดต่อ API ไม่สำเร็จ',
+};
+
+function accountStatusLine(status) {
+  const identity = status.username ?? status.accountId ?? status.jobKey ?? status.key;
+  return [
+    `**${String(identity).slice(0, 80)}** · ${stateLabels[status.state] ?? status.state}`,
+    `Quest ${status.questCount} / พร้อมทำ ${status.supportedCount} · ${status.lifecycle}`,
+    `ตรวจล่าสุด ${discordTime(status.lastCheckAt)}`,
+  ].join('\n');
 }
 
 export async function execute(interaction) {
@@ -29,40 +50,38 @@ export async function execute(interaction) {
   const latency = Date.now() - start;
   const memory = process.memoryUsage();
   const toMB = (value) => (value / 1024 / 1024).toFixed(1);
-  const quest = getQuestEngineStatus();
+  const aggregate = getQuestEngineStatus();
+  const accountStatuses = listQuestEngineStatuses({ ownerId: interaction.user.id });
   const jobs = listJobs();
   const persisted = listScheduledRunners();
   const stopping = listStoppingAccounts(interaction.user.id).length;
 
-  const stateLabels = {
-    unknown: '⚪ ยังไม่มีการตรวจ',
-    compatible: '🟢 ใช้งานร่วมกันได้',
-    degraded: '🟡 พบ schema/event ใหม่',
-    incompatible: '🔴 รูปแบบ API ไม่รองรับ',
-    error: '🔴 ติดต่อ API ไม่สำเร็จ',
-  };
-
   const questDetails = [
-    '**ข้อมูลนี้คือผลตรวจล่าสุดรวมจาก Runner ทุกบัญชี ไม่ใช่ของบัญชีใดบัญชีหนึ่ง**',
-    `สถานะ: ${stateLabels[quest.state] ?? quest.state}`,
-    `พยายามตรวจล่าสุด: ${discordTime(quest.lastCheckAt)}`,
-    `สำเร็จล่าสุด: ${discordTime(quest.lastSuccessfulCheckAt)}`,
-    `พบ ${quest.questCount} Quest / พร้อมทำ ${quest.supportedCount} / excluded ${quest.excludedCount ?? 0}`,
-    `Endpoint: \`${quest.questListPath ?? 'ยังไม่มี'}\``,
+    '**สรุปรวมจากสถานะแยกของทุก Job/Account**',
+    `สถานะ: ${stateLabels[aggregate.state] ?? aggregate.state}`,
+    `บัญชีที่มีสถานะ: **${aggregate.accountCount ?? 0}**`,
+    `พยายามตรวจล่าสุด: ${discordTime(aggregate.lastCheckAt)}`,
+    `สำเร็จล่าสุด: ${discordTime(aggregate.lastSuccessfulCheckAt)}`,
+    `พบ ${aggregate.questCount} Quest / พร้อมทำ ${aggregate.supportedCount} / excluded ${aggregate.excludedCount ?? 0}`,
+    `Endpoint: \`${aggregate.questListPath ?? 'ยังไม่มี'}\``,
   ];
-  if (quest.enrollmentBlockedUntil) {
-    questDetails.push(`รับ Quest ใหม่ได้: ${discordTime(quest.enrollmentBlockedUntil)}`);
+  if (aggregate.enrollmentBlockedUntil) {
+    questDetails.push(`รับ Quest ใหม่ได้: ${discordTime(aggregate.enrollmentBlockedUntil)}`);
   }
-  if (quest.unknownEvents.length) {
-    questDetails.push(`Event ใหม่: \`${quest.unknownEvents.join(', ').slice(0, 500)}\``);
+  if (aggregate.unknownEvents.length) {
+    questDetails.push(`Event ใหม่: \`${aggregate.unknownEvents.join(', ').slice(0, 500)}\``);
   }
-  if (quest.schemaIssues.length) {
-    questDetails.push(`Schema: \`${quest.schemaIssues.join('; ').slice(0, 500)}\``);
+  if (aggregate.schemaIssues.length) {
+    questDetails.push(`Schema: \`${aggregate.schemaIssues.join('; ').slice(0, 500)}\``);
   }
 
-  const statusColor = !dbOk || ['error', 'incompatible'].includes(quest.state)
+  const accountDetails = accountStatuses.length
+    ? accountStatuses.slice(0, 8).map(accountStatusLine).join('\n\n')
+    : 'ยังไม่มีผลตรวจ Quest API ของบัญชีคุณ';
+
+  const statusColor = !dbOk || ['error', 'incompatible'].includes(aggregate.state)
     ? 0xed4245
-    : quest.state === 'degraded' ? 0xfee75c : 0x57f287;
+    : aggregate.state === 'degraded' ? 0xfee75c : 0x57f287;
 
   const embed = new EmbedBuilder()
     .setTitle('🔌 NeverDie System Status')
@@ -84,19 +103,22 @@ export async function execute(interaction) {
         ].join('\n'),
         inline: false,
       },
-      { name: 'Discord Quest API — ล่าสุดรวมทุก Runner', value: questDetails.join('\n').slice(0, 1024) },
+      { name: 'Discord Quest API — สรุปรวม', value: questDetails.join('\n').slice(0, 1024) },
+      { name: 'สถานะบัญชีของคุณ', value: accountDetails.slice(0, 1024) },
       {
-        name: 'หลักฐานจาก Discord',
+        name: 'หลักฐานจาก Discord — รวม',
         value: [
-          `ยืนยัน progress: ${discordTime(quest.lastVerifiedProgressAt)}`,
-          `ยืนยัน completed_at: ${discordTime(quest.lastVerifiedCompletionAt)}`,
-          `ยืนยัน claimed_at: ${discordTime(quest.lastVerifiedClaimAt)}`,
+          `ยืนยัน progress: ${discordTime(aggregate.lastVerifiedProgressAt)}`,
+          `ยืนยัน completed_at: ${discordTime(aggregate.lastVerifiedCompletionAt)}`,
+          `ยืนยัน claimed_at: ${discordTime(aggregate.lastVerifiedClaimAt)}`,
         ].join('\n'),
       },
     )
     .setTimestamp();
 
   if (dbError) embed.addFields({ name: '❌ Database Error', value: `\`${dbError}\`` });
-  if (quest.lastError) embed.addFields({ name: '❌ Quest API Error', value: `\`${quest.lastError.slice(0, 900)}\`` });
+  if (aggregate.lastError) {
+    embed.addFields({ name: '❌ Quest API Error ล่าสุด', value: `\`${aggregate.lastError.slice(0, 900)}\`` });
+  }
   return interaction.editReply({ embeds: [embed] });
 }
