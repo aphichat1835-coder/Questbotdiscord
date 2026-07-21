@@ -103,4 +103,16 @@ test('installed wrapper only reformats runner status messages', async () => {
   assert.match(editedPayloads[0].content, /🔍 ตรวจพบ Quest ทั้งหมด : 5/);
   assert.match(editedPayloads[0].content, /⚙️ Quest ที่ระบบทำได้ : 3/);
   assert.match(editedPayloads[0].content, /⌛ example-user: Quest A 25%/);
+
+  status = {
+    state: 'compatible',
+    questCount: 99,
+    supportedCount: 99,
+  };
+  await runnerMessage.edit({
+    content: '```\n⌛ example-user: Quest A 50%\n```',
+  });
+  assert.match(editedPayloads[1].content, /🔍 ตรวจพบ Quest ทั้งหมด : 5/);
+  assert.match(editedPayloads[1].content, /⚙️ Quest ที่ระบบทำได้ : 3/);
+  assert.doesNotMatch(editedPayloads[1].content, /99/);
 });
