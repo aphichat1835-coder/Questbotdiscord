@@ -2,6 +2,7 @@ import Database from 'better-sqlite3';
 import fs from 'node:fs';
 import path from 'node:path';
 import 'dotenv/config';
+import { appendSafeSuffix, resolveContainedPath } from './path-safety.js';
 
 const dbPath = process.env.DATABASE_PATH ?? './data/quests.db';
 if (dbPath !== ':memory:') {
@@ -45,16 +46,23 @@ function tableExists(name) {
   ).get(name));
 }
 
+function createLegacyMigrationBackup() {
+  if (dbPath === ':memory:' || !fs.existsSync(dbPath)) return null;
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const destination = appendSafeSuffix(
+    dbPath,
+    `.pre-tracker-removal-${timestamp}.bak`,
+  );
+  fs.copyFileSync(dbPath, destination);
+  return destination;
+}
+
 function migrateLegacyTracker() {
   const existing = LEGACY_TABLES.filter(tableExists);
   if (!existing.length) return;
 
   db.pragma('wal_checkpoint(TRUNCATE)');
-  if (dbPath !== ':memory:' && fs.existsSync(dbPath)) {
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    legacyMigrationBackupPath = `${dbPath}.pre-tracker-removal-${timestamp}.bak`;
-    fs.copyFileSync(dbPath, legacyMigrationBackupPath);
-  }
+  legacyMigrationBackupPath = createLegacyMigrationBackup();
 
   db.transaction(() => {
     for (const table of existing) db.exec(`DROP TABLE IF EXISTS ${table}`);
@@ -70,10 +78,12 @@ function migrateLegacyTracker() {
 migrateLegacyTracker();
 
 export async function backupDatabase(destination) {
-  const backupDir = path.dirname(destination);
+  const absoluteDestination = path.resolve(destination);
+  const backupDir = path.dirname(absoluteDestination);
+  const safeDestination = resolveContainedPath(backupDir, path.basename(absoluteDestination));
   if (!fs.existsSync(backupDir)) fs.mkdirSync(backupDir, { recursive: true });
-  await db.backup(destination);
-  return destination;
+  await db.backup(safeDestination);
+  return safeDestination;
 }
 
 export function closeDatabase() {
