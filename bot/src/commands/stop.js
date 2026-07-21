@@ -114,11 +114,11 @@ async function stopRows(ownerId, rows) {
 
 function stopNotice(result, scope = '') {
   if (result.accepted === 0) return 'ℹ️ ไม่พบ Runner ที่เลือก';
-  const label = scope ? `${scope} ` : '';
+  const target = scope ? ` ${scope}` : '';
   if (result.pending > 0) {
-    return `🛑 รับคำสั่งหยุด ${label}แล้ว **${result.accepted}** token · ยัง Cleanup อยู่ **${result.pending}** token`;
+    return `🛑 รับคำสั่งหยุด${target}แล้ว **${result.accepted}** token · ยัง Cleanup อยู่ **${result.pending}** token`;
   }
-  return `✅ หยุดและ Cleanup ${label}เสร็จแล้ว **${result.completed}** token`;
+  return `✅ หยุดและ Cleanup${target}เสร็จแล้ว **${result.completed}** token`;
 }
 
 export async function execute(interaction) {
