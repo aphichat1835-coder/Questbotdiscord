@@ -1,7 +1,7 @@
 name: CI
 
 permissions:
-  contents: read
+  contents: write
 
 on:
   workflow_dispatch:
@@ -14,6 +14,8 @@ jobs:
   repository-shape:
     name: Repository shape
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -30,12 +32,11 @@ jobs:
   bot-checks:
     name: Bot checks
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: bot
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event_name == 'push' && github.ref_name || '' }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v6
@@ -45,10 +46,17 @@ jobs:
           cache-dependency-path: bot/package-lock.json
 
       - name: Install locked dependencies
+        working-directory: bot
         run: npm ci --no-fund --no-audit
+
+      - name: Apply runner hardening on ss
+        if: github.event_name == 'push' && github.ref == 'refs/heads/ss'
+        working-directory: bot
+        run: node scripts/apply-runner-hardening.mjs
 
       - name: Run bot unit tests
         id: tests
+        working-directory: bot
         shell: bash
         run: |
           set +e
@@ -67,7 +75,22 @@ jobs:
           retention-days: 7
 
       - name: Syntax check all source modules
+        working-directory: bot
         run: npm run check
 
       - name: Production dependency audit
+        working-directory: bot
         run: npm audit --omit=dev --audit-level=high
+
+      - name: Commit hardened runner
+        if: github.event_name == 'push' && github.ref == 'refs/heads/ss'
+        run: |
+          if git diff --quiet -- bot/src/discord-runner.js; then
+            echo "Runner already hardened"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add bot/src/discord-runner.js
+          git commit -m "harden runner lifecycle and client profile"
+          git push origin HEAD:ss
