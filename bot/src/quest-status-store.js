@@ -86,6 +86,12 @@ function latestIso(values) {
     .sort((left, right) => Date.parse(right) - Date.parse(left))[0] ?? null;
 }
 
+function selectQuestListPath(paths) {
+  if (paths.length === 1) return paths[0];
+  if (paths.length > 1) return 'multiple';
+  return null;
+}
+
 function aggregate(items) {
   if (!items.length) return emptyStatus('aggregate', { lifecycle: 'idle' });
   const latestError = [...items]
@@ -118,7 +124,7 @@ function aggregate(items) {
     lastVerifiedProgressAt: latestIso(items.map((item) => item.lastVerifiedProgressAt)),
     lastVerifiedCompletionAt: latestIso(items.map((item) => item.lastVerifiedCompletionAt)),
     lastVerifiedClaimAt: latestIso(items.map((item) => item.lastVerifiedClaimAt)),
-    questListPath: paths.length === 1 ? paths[0] : paths.length > 1 ? 'multiple' : null,
+    questListPath: selectQuestListPath(paths),
     lastError: latestError?.lastError ?? null,
     updatedAt: latestIso(items.map((item) => item.updatedAt)),
   };
