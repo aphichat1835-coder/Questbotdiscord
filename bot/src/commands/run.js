@@ -1,13 +1,16 @@
 import {
-  SlashCommandBuilder, ModalBuilder,
-  TextInputBuilder, TextInputStyle, ActionRowBuilder,
+  ActionRowBuilder,
+  ModalBuilder,
+  SlashCommandBuilder,
+  TextInputBuilder,
+  TextInputStyle,
 } from 'discord.js';
 import { config } from '../config.js';
 import {
-  startRunner,
   fetchMe,
   findUserJobByAccount,
   getUserJobs,
+  startRunner,
 } from '../discord-runner.js';
 import { isAccountStopping } from '../runner-control.js';
 import { isManager } from '../permissions.js';
@@ -60,6 +63,23 @@ export async function showRunModal(interaction, mode = 'scheduled') {
   }
 }
 
+function tokenCheckFailure(error, tokenIndex) {
+  const prefix = `❌ Token ลำดับที่ ${tokenIndex + 1}`;
+  if (error?.status === 401 || error?.status === 403) {
+    return `${prefix} ไม่ถูกต้องหรือไม่มีสิทธิ์เข้าถึงบัญชี`;
+  }
+  if (error?.status === 429) {
+    return `${prefix} ตรวจไม่ได้ชั่วคราว — Discord จำกัดคำขอ กรุณาลองใหม่ภายหลัง`;
+  }
+  if (Number.isInteger(error?.status) && error.status >= 500) {
+    return `${prefix} ตรวจไม่ได้ชั่วคราว — Discord API ขัดข้อง (${error.status})`;
+  }
+  if (error?.name === 'RequestTimeoutError') {
+    return `${prefix} ตรวจไม่สำเร็จ — การเชื่อมต่อหมดเวลา`;
+  }
+  return `${prefix} ตรวจไม่สำเร็จ — ติดต่อ Discord ไม่ได้`;
+}
+
 export async function handleModal(interaction) {
   const modalParts = interaction.customId.split(':');
   const mode = modalParts.length >= 3 ? modalParts[1] : 'oneshot';
@@ -84,7 +104,7 @@ export async function handleModal(interaction) {
   await interaction.deferReply(isScheduled ? {} : { flags: 64 });
 
   const ownerId = interaction.user.id;
-  const existing = getUserJobs(ownerId);
+  const existing = getUserJobs(ownerId, { includeStopping: true });
   const persisted = listScheduledRunners(ownerId);
   const runningScheduledIds = new Set(
     existing.filter((job) => job.scheduleId != null).map((job) => job.scheduleId),
@@ -92,19 +112,29 @@ export async function handleModal(interaction) {
   const offlineScheduled = persisted.filter((row) => !runningScheduledIds.has(row.id)).length;
   const usedSlots = existing.length + offlineScheduled;
   const freeSlots = Math.max(0, 10 - usedSlots);
-  const toRun = tokens.slice(0, freeSlots);
 
-  if (!toRun.length) {
-    return interaction.editReply('⚠️ มี Runner ทำงานอยู่เต็มแล้ว (สูงสุด 10 token) ใช้ 🛑 STOP ALL ก่อน');
+  if (freeSlots === 0) {
+    return interaction.editReply('⚠️ มี Runner ทำงานหรือกำลัง Cleanup เต็มแล้ว (สูงสุด 10 token) ใช้ 🛑 STOP ALL ก่อน');
   }
 
   const results = [];
+  let started = 0;
+  let inspected = 0;
   let startIndex = Date.now();
 
-  for (const [tokenIndex, token] of toRun.entries()) {
-    const me = await fetchMe(token).catch(() => null);
+  for (const [tokenIndex, token] of tokens.entries()) {
+    if (started >= freeSlots) break;
+    inspected++;
+
+    let me;
+    try {
+      me = await fetchMe(token);
+    } catch (error) {
+      results.push(tokenCheckFailure(error, tokenIndex));
+      continue;
+    }
     if (!me?.id) {
-      results.push(`❌ Token ลำดับที่ ${tokenIndex + 1} ไม่ถูกต้อง`);
+      results.push(`❌ Token ลำดับที่ ${tokenIndex + 1} ไม่คืนข้อมูลบัญชีที่ใช้งานได้`);
       continue;
     }
 
@@ -145,6 +175,7 @@ export async function handleModal(interaction) {
         accountId: me.id,
         username: me.username,
       });
+      started++;
 
       results.push(isScheduled
         ? `🤖 เริ่มระบบอัตโนมัติรายวัน: **${me.username}**\n   ตรวจทันที และตรวจประจำเวลา **00:00 / 08:00 / 16:00 น.**`
@@ -155,8 +186,8 @@ export async function handleModal(interaction) {
     }
   }
 
-  const skipped = tokens.length - toRun.length;
-  if (skipped > 0) results.push(`⚠️ ข้าม ${skipped} token (เกินลิมิต)`);
+  const skipped = tokens.length - inspected;
+  if (skipped > 0) results.push(`⚠️ ข้าม ${skipped} token เพราะช่อง Runner เต็ม`);
 
   if (isScheduled && results.some((line) => line.startsWith('🤖'))) {
     results.unshift('**🚀 NEVERDIE AUTO DAILY QUEST เปิดใช้งานแล้ว**');
