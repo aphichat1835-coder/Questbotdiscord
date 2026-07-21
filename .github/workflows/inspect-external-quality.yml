@@ -33,19 +33,34 @@ jobs:
           import urllib.parse
           import urllib.request
 
-          repository = os.environ['REPOSITORY']
-          sha = os.environ['TARGET_SHA']
           token = os.environ['GH_TOKEN']
-          check_url = f'https://api.github.com/repos/{repository}/commits/{sha}/check-runs?per_page=100'
-          request = urllib.request.Request(check_url, headers={
+          headers = {
               'Accept': 'application/vnd.github+json',
               'Authorization': f'Bearer {token}',
               'X-GitHub-Api-Version': '2022-11-28',
-          })
-          with urllib.request.urlopen(request, timeout=30) as response:
-              checks = json.load(response)
+          }
+
+          def read_json(url):
+              request = urllib.request.Request(url, headers=headers)
+              with urllib.request.urlopen(request, timeout=30) as response:
+                  return json.load(response)
+
+          repository = os.environ['REPOSITORY']
+          sha = os.environ['TARGET_SHA']
+          check_url = f'https://api.github.com/repos/{repository}/commits/{sha}/check-runs?per_page=100'
+          checks = read_json(check_url)
           with open('quality-checks.json', 'w', encoding='utf-8') as handle:
               json.dump(checks, handle, indent=2, ensure_ascii=False)
+
+          annotations = {}
+          for check in checks.get('check_runs', []):
+              count = check.get('output', {}).get('annotations_count', 0)
+              if count:
+                  annotations[check['name']] = read_json(
+                      f"{check['output']['annotations_url']}?per_page=100",
+                  )
+          with open('quality-annotations.json', 'w', encoding='utf-8') as handle:
+              json.dump(annotations, handle, indent=2, ensure_ascii=False)
 
           sonar_params = urllib.parse.urlencode({
               'projectKey': os.environ['SONAR_PROJECT'],
@@ -79,6 +94,7 @@ jobs:
           name: external-quality-evidence-${{ github.run_id }}
           path: |
             quality-checks.json
+            quality-annotations.json
             sonar-gate.json
             sonar-issues.json
           if-no-files-found: error
