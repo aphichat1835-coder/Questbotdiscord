@@ -61,12 +61,37 @@ jobs:
           retention-days: 7
 
       - name: Validate hardened repository
+        id: validation
         working-directory: bot
+        shell: bash
         run: |
-          npm run validate:quest-fixture
-          npm test
-          npm run check
-          npm audit --omit=dev --audit-level=high
+          set +e
+          {
+            npm run validate:quest-fixture
+            fixture_status=$?
+            npm test
+            test_status=$?
+            npm run check
+            check_status=$?
+            npm audit --omit=dev --audit-level=high
+            audit_status=$?
+            echo "fixture=$fixture_status tests=$test_status check=$check_status audit=$audit_status"
+            if (( fixture_status || test_status || check_status || audit_status )); then
+              exit 1
+            fi
+          } 2>&1 | tee hardening-validation.log
+          status=${PIPESTATUS[0]}
+          echo "exit_code=$status" >> "$GITHUB_OUTPUT"
+          exit "$status"
+
+      - name: Upload validation diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: status-retry-validation-${{ github.run_id }}
+          path: bot/hardening-validation.log
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Commit hardened Runner
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
