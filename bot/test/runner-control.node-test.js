@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import test from 'node:test';
+import { fetchInputUrl } from './fetch-input.js';
 
 process.env.DISCORD_BOT_TOKEN = 'test-bot-token';
 process.env.DISCORD_CLIENT_ID = 'test-client';
@@ -51,7 +52,7 @@ test.after(async () => {
 
 test('stop control blocks restart state until runner cleanup finishes', async () => {
   globalThis.fetch = async (url, options = {}) => {
-    const value = String(url);
+    const value = fetchInputUrl(url);
     if (value.endsWith('/quests/@me')) {
       return new Response(JSON.stringify({ quests: [{
         id: 'quest-control',
@@ -71,7 +72,7 @@ test('stop control blocks restart state until runner cleanup finishes', async ()
         options.signal?.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
       });
     }
-    throw new Error(`Unexpected fetch: ${url}`);
+    throw new Error(`Unexpected fetch: ${value}`);
   };
 
   await startRunner({
