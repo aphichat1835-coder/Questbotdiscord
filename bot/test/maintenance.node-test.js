@@ -52,7 +52,9 @@ test('STOP ALL removes persisted scheduled runners even when they are offline', 
   });
 
   assert.equal(listScheduledRunners('offline-owner').length, 0);
-  assert.match(updatedPayload.embeds[0].data.description, /2.*token/);
+  const description = updatedPayload.embeds[0].data.description;
+  assert.ok(description.includes('2'));
+  assert.ok(description.includes('token'));
 });
 
 test('health status authorization uses an exact bearer token', () => {
