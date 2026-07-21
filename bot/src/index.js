@@ -12,6 +12,7 @@ import {
   reportCriticalError,
   setErrorReporterClient,
 } from './error-reporter.js';
+import { installPersistentRunnerStatusHeaders } from './runner-status-header.js';
 
 import * as ping        from './commands/ping.js';
 import * as help        from './commands/help.js';
@@ -22,6 +23,7 @@ import * as panel       from './commands/panel.js';
 
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 client.commands = new Collection();
+installPersistentRunnerStatusHeaders(client);
 setErrorReporterClient(client);
 let buildInfoInterval = null;
 let shuttingDown = false;
