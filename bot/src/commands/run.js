@@ -13,6 +13,7 @@ import {
   startRunner,
 } from '../discord-runner.js';
 import { isAccountStopping } from '../runner-control.js';
+import { withOwnerAdmissionLock } from '../run-admission-lock.js';
 import { isManager } from '../permissions.js';
 import {
   createScheduledRunner,
@@ -216,6 +217,20 @@ function finalizeResults(results, tokens, inspected, isScheduled) {
   return results.join('\n');
 }
 
+async function admitRunners(context, tokens) {
+  const freeSlots = availableRunnerSlots(context.ownerId);
+  if (freeSlots === 0) {
+    return context.interaction.editReply(
+      '⚠️ มี Runner ทำงานหรือกำลัง Cleanup เต็มแล้ว (สูงสุด 10 token) ใช้ 🛑 STOP ALL ก่อน',
+    );
+  }
+
+  const { results, inspected } = await processTokens(context, tokens, freeSlots);
+  return context.interaction.editReply(
+    finalizeResults(results, tokens, inspected, context.isScheduled),
+  );
+}
+
 export async function handleModal(interaction) {
   const modal = parseModalContext(interaction);
   if (!modal.valid) {
@@ -235,11 +250,6 @@ export async function handleModal(interaction) {
 
   await interaction.deferReply(modal.isScheduled ? {} : { flags: 64 });
   const ownerId = interaction.user.id;
-  const freeSlots = availableRunnerSlots(ownerId);
-  if (freeSlots === 0) {
-    return interaction.editReply('⚠️ มี Runner ทำงานหรือกำลัง Cleanup เต็มแล้ว (สูงสุด 10 token) ใช้ 🛑 STOP ALL ก่อน');
-  }
-
   let startIndex = Date.now();
   const context = {
     ...modal,
@@ -247,6 +257,6 @@ export async function handleModal(interaction) {
     ownerId,
     nextStartIndex: () => startIndex++,
   };
-  const { results, inspected } = await processTokens(context, tokens, freeSlots);
-  return interaction.editReply(finalizeResults(results, tokens, inspected, modal.isScheduled));
+
+  return withOwnerAdmissionLock(ownerId, () => admitRunners(context, tokens));
 }
