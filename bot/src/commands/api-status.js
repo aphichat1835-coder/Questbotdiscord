@@ -5,12 +5,13 @@ import {
   listJobs,
   listQuestEngineStatuses,
 } from '../discord-runner.js';
+import { isManager } from '../permissions.js';
 import { listStoppingAccounts } from '../runner-control.js';
 import { listScheduledRunners } from '../scheduled-runner-store.js';
 
 export const data = new SlashCommandBuilder()
   .setName('api-status')
-  .setDescription('เช็กสถานะระบบ ฐานข้อมูล และผลตรวจ Quest API แยกตามบัญชี');
+  .setDescription('เช็กสถานะระบบและ Quest API สำหรับ Manager');
 
 const STATUS_COLORS = Object.freeze({
   error: '#ED4245',
@@ -47,6 +48,13 @@ function selectStatusColor(dbOk, state) {
 }
 
 export async function execute(interaction) {
+  if (!isManager(interaction)) {
+    return interaction.reply({
+      flags: 64,
+      content: '🔒 ต้องการสิทธิ์ **Manager** ขึ้นไปจึงจะดูสถานะระบบได้',
+    });
+  }
+
   await interaction.deferReply({ flags: 64 });
 
   const start = Date.now();
