@@ -1,5 +1,7 @@
 const INSTALL_KEY = Symbol.for('neverdie.runnerStatusHeadersInstalled');
 const channelProxies = new WeakMap();
+const QUEST_COUNT_LINE = /^🔎 .+: พบ (\d+) QUESTS$/;
+const MAX_DISCORD_MESSAGE_LENGTH = 1950;
 
 function getPayloadContent(payload) {
   return typeof payload === 'string' ? payload : payload?.content;
@@ -25,7 +27,7 @@ function consumeRunnerStatusLine(line, state, activityLines) {
     return;
   }
 
-  const questCountMatch = line.match(/^🔎 .+: พบ (\d+) QUESTS$/);
+  const questCountMatch = QUEST_COUNT_LINE.exec(line);
   if (questCountMatch) {
     state.totalQuestCount = Number.parseInt(questCountMatch[1], 10);
     return;
@@ -35,6 +37,15 @@ function consumeRunnerStatusLine(line, state, activityLines) {
 
 function buildRunnerStatusContent(headerLines, activityLines) {
   return `\`\`\`\n${[...headerLines, ...activityLines].join('\n')}\n\`\`\``;
+}
+
+function clampCodeBlockContent(content) {
+  if (content.length <= MAX_DISCORD_MESSAGE_LENGTH) return content;
+  const prefix = '```\n';
+  const suffix = '\n```';
+  const body = content.slice(prefix.length, -suffix.length);
+  const bodyBudget = MAX_DISCORD_MESSAGE_LENGTH - prefix.length - suffix.length;
+  return `${prefix}${body.slice(0, bodyBudget - 1)}…${suffix}`;
 }
 
 export function formatRunnerStatusContent(content, state = {}) {
@@ -55,11 +66,11 @@ export function formatRunnerStatusContent(content, state = {}) {
 
   const visibleActivity = [...activityLines];
   let formatted = buildRunnerStatusContent(headerLines, visibleActivity);
-  while (formatted.length > 1950 && visibleActivity.length > 0) {
+  while (formatted.length > MAX_DISCORD_MESSAGE_LENGTH && visibleActivity.length > 0) {
     visibleActivity.shift();
     formatted = buildRunnerStatusContent(headerLines, visibleActivity);
   }
-  return formatted;
+  return clampCodeBlockContent(formatted);
 }
 
 function wrapMessage(message, state) {
