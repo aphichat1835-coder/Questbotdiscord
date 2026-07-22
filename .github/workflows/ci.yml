@@ -55,11 +55,12 @@ jobs:
       - name: Validate sanitized Quest API fixture
         run: npm run validate:quest-fixture
 
-      - name: Enforce literal-only database backup destinations
+      - name: Enforce approved database backup destinations
         run: |
-          test "$(grep -c "await db.backup('./data/backups/" src/db.js)" -eq 8
-          ! grep -n "db.backup(" src/db.js | grep -v "db.backup('./data/backups/"
+          test "$(grep -c "await db.backup(" src/db.js)" -eq 16
+          ! grep -n "db.backup(" src/db.js | grep -vE "db.backup\('(\./data|/var/data)/backups/"
           ! grep -R "backupDatabase(destination" src test
+          ! grep -R "DATABASE_BACKUP_DIR" src scripts test .env.example README.md
           test ! -f src/path-safety.js
           test ! -f test/path-safety.node-test.js
 
