@@ -14,8 +14,6 @@ function readBoolean(name, fallback = false) {
   return ['1', 'true', 'yes', 'on'].includes(value);
 }
 
-const legacyBackupEnabled = Boolean(process.env.DATABASE_BACKUP_DIR?.trim());
-
 export const config = {
   token: process.env.DISCORD_BOT_TOKEN,
   clientId: process.env.DISCORD_CLIENT_ID,
@@ -25,7 +23,7 @@ export const config = {
   logChannelId: process.env.LOG_CHANNEL_ID ?? '',
   managerRoleId: process.env.MANAGER_ROLE_ID ?? '',
   databasePath: process.env.DATABASE_PATH ?? './data/quests.db',
-  databaseBackupEnabled: readBoolean('DATABASE_BACKUP_ENABLED', legacyBackupEnabled),
+  databaseBackupEnabled: readBoolean('DATABASE_BACKUP_ENABLED', false),
   databaseBackupRetention: Math.min(
     7,
     Math.max(
