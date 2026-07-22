@@ -37,6 +37,28 @@ test('separate runner messages never share quest totals', () => {
   assert.match(formatRunnerStatusContent('```\n⌛ b: 25%\n```', b), /พร้อมทำ : 7/);
 });
 
+test('runner status always fits the Discord message limit', () => {
+  const oversizedActivity = formatRunnerStatusContent([
+    '```',
+    '✅ LOGIN : account-a',
+    '🔎 account-a: พบ 1 QUESTS',
+    `⌛ ${'activity'.repeat(400)}`,
+    '```',
+  ].join('\n'));
+  assert.ok(oversizedActivity.length <= 1950);
+  assert.ok(oversizedActivity.endsWith('\n```'));
+
+  const oversizedHeader = formatRunnerStatusContent([
+    '```',
+    `✅ LOGIN : ${'account'.repeat(400)}`,
+    '🔎 account-a: พบ 1 QUESTS',
+    '```',
+  ].join('\n'));
+  assert.ok(oversizedHeader.length <= 1950);
+  assert.ok(oversizedHeader.endsWith('\n```'));
+  assert.match(oversizedHeader, /…\n```$/);
+});
+
 test('installed wrapper only reformats runner messages', async () => {
   const sent = [];
   const edited = [];
