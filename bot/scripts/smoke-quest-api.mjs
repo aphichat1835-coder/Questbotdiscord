@@ -25,7 +25,7 @@ try {
   const me = await fetchMe(token, controller.signal);
   const expectedAccountId = process.env.EXPECTED_DISCORD_ACCOUNT_ID?.trim();
   if (expectedAccountId && me.id !== expectedAccountId) {
-    throw new Error(`Smoke token belongs to unexpected account: ${me.id}`);
+    throw new Error('Smoke token belongs to a different account than EXPECTED_DISCORD_ACCOUNT_ID');
   }
 
   const quests = await fetchQuests(token, controller.signal, {
@@ -44,8 +44,7 @@ try {
   }
 
   const summary = {
-    accountId: me.id,
-    username: me.username,
+    accountVerified: expectedAccountId ? true : 'not-configured',
     questCount: quests.length,
     supportedCount: status.supportedCount,
     state: status.state,
