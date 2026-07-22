@@ -1,6 +1,6 @@
 # NeverDie Quest Bot
 
-Discord Bot แบบ Bot-only สำหรับตรวจและดำเนินการกับ Discord Quest ที่ระบบรองรับ ไม่มี Desktop/Tauri, CDP launcher, Game Simulator หรือ Quest Tracker แบบกรอก Quest ID
+Discord Bot แบบ Bot-only สำหรับตรวจและดำเนินการกับ Discord Quest ที่รองรับ ไม่มี Desktop/Tauri, CDP launcher, Game Simulator หรือ Quest Tracker แบบกรอก Quest ID
 
 ## คำสั่ง
 
@@ -25,7 +25,7 @@ Discord Bot แบบ Bot-only สำหรับตรวจและดำเ�
 
 CI ตรวจ Repository shape, Sanitized Quest fixture, ตำแหน่ง Backup ที่อนุญาต, Unit/Regression tests, Syntax ของ `src` และ `scripts` และ Production dependency audit
 
-Manual Quest API smoke เป็นแบบ Read-only: ตรวจบัญชีและอ่านรายการ Questเท่านั้น ไม่ Enroll, Progress, Heartbeat หรือ Claim การเปลี่ยนข้อมูลจริงต้องตรวจด้วยขั้นตอนควบคุมก่อน Production
+Manual Quest API smoke เป็นแบบ Read-only: ตรวจบัญชีและอ่านรายการ Quest เท่านั้น ไม่ Enroll, Progress, Heartbeat หรือ Claim การเปลี่ยนข้อมูลจริงต้องตรวจด้วยขั้นตอนควบคุมก่อน Production
 
 ## เริ่มใช้งาน
 
