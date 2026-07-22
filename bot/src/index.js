@@ -3,7 +3,7 @@ import { config } from './config.js';
 import { startWorker, stopWorker } from './worker.js';
 import { startDashboard, stopDashboard } from './dashboard.js';
 import {
-  refreshBuildInfo,
+  refreshBuildInfo as logConfiguredClientProfile,
   restoreScheduledRunners,
   shutdownRunners,
 } from './discord-runner.js';
@@ -29,15 +29,12 @@ setErrorReporterClient(client);
 const commands = [ping, help, apiStatus, run, stop, panel];
 for (const command of commands) client.commands.set(command.data.name, command);
 
-let buildInfoInterval = null;
 let shuttingDown = false;
 startDashboard(null);
 
-await refreshBuildInfo();
-buildInfoInterval = setInterval(() => {
-  void refreshBuildInfo().catch((error) => reportCriticalError('Build info refresh', error));
-}, 6 * 60 * 60 * 1000);
-buildInfoInterval.unref?.();
+// The client profile is fixed for the lifetime of the process. Environment
+// overrides are read at startup, so changing them requires a normal restart.
+await logConfiguredClientProfile();
 
 client.once('clientReady', () => {
   void onClientReady().catch((error) => fatalShutdown('Client startup', error));
@@ -142,7 +139,6 @@ async function gracefulShutdown(reason, exitCode = 0) {
   if (shuttingDown) return;
   shuttingDown = true;
   console.log(`🧹 Graceful shutdown — ${reason}`);
-  clearInterval(buildInfoInterval);
   await stopWorker();
 
   try {
