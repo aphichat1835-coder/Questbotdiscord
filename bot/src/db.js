@@ -9,9 +9,20 @@ if (dbPath !== ':memory:') {
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 }
 
-const usePersistentBackupDirectory = dbPath !== ':memory:'
-  && path.resolve(dbPath).startsWith('/var/data/');
-const backupDirectory = usePersistentBackupDirectory ? '/var/data/backups' : './data/backups';
+export function resolveDatabaseBackupDirectory(databasePath) {
+  return databasePath !== ':memory:' && path.resolve(databasePath).startsWith('/var/data/')
+    ? '/var/data/backups'
+    : './data/backups';
+}
+
+export function resolveDatabaseBackupSlotPath(databasePath, slotIndex) {
+  if (!Number.isInteger(slotIndex) || slotIndex < 0 || slotIndex >= DATABASE_BACKUP_SLOT_COUNT) {
+    throw new RangeError(`Database backup slot is out of range: ${slotIndex}`);
+  }
+  return `${resolveDatabaseBackupDirectory(databasePath)}/questbot-slot-${slotIndex + 1}.db`;
+}
+
+const backupDirectory = resolveDatabaseBackupDirectory(dbPath);
 
 export const db = new Database(dbPath);
 db.pragma('journal_mode = WAL');
@@ -75,134 +86,40 @@ function dropLegacyTables(existing) {
   if (existing.includes('quests')) db.exec('DROP TABLE IF EXISTS quests');
 }
 
-async function backupLocalSlot(slotIndex) {
-  switch (slotIndex) {
-    case 0:
-      await db.backup('./data/backups/questbot-slot-1.db');
-      return './data/backups/questbot-slot-1.db';
-    case 1:
-      await db.backup('./data/backups/questbot-slot-2.db');
-      return './data/backups/questbot-slot-2.db';
-    case 2:
-      await db.backup('./data/backups/questbot-slot-3.db');
-      return './data/backups/questbot-slot-3.db';
-    case 3:
-      await db.backup('./data/backups/questbot-slot-4.db');
-      return './data/backups/questbot-slot-4.db';
-    case 4:
-      await db.backup('./data/backups/questbot-slot-5.db');
-      return './data/backups/questbot-slot-5.db';
-    case 5:
-      await db.backup('./data/backups/questbot-slot-6.db');
-      return './data/backups/questbot-slot-6.db';
-    case 6:
-      await db.backup('./data/backups/questbot-slot-7.db');
-      return './data/backups/questbot-slot-7.db';
-    default:
-      throw new RangeError(`Database backup slot is out of range: ${slotIndex}`);
-  }
+function slotPath(slotIndex) {
+  return resolveDatabaseBackupSlotPath(dbPath, slotIndex);
 }
 
-async function backupPersistentSlot(slotIndex) {
-  switch (slotIndex) {
-    case 0:
-      await db.backup('/var/data/backups/questbot-slot-1.db');
-      return '/var/data/backups/questbot-slot-1.db';
-    case 1:
-      await db.backup('/var/data/backups/questbot-slot-2.db');
-      return '/var/data/backups/questbot-slot-2.db';
-    case 2:
-      await db.backup('/var/data/backups/questbot-slot-3.db');
-      return '/var/data/backups/questbot-slot-3.db';
-    case 3:
-      await db.backup('/var/data/backups/questbot-slot-4.db');
-      return '/var/data/backups/questbot-slot-4.db';
-    case 4:
-      await db.backup('/var/data/backups/questbot-slot-5.db');
-      return '/var/data/backups/questbot-slot-5.db';
-    case 5:
-      await db.backup('/var/data/backups/questbot-slot-6.db');
-      return '/var/data/backups/questbot-slot-6.db';
-    case 6:
-      await db.backup('/var/data/backups/questbot-slot-7.db');
-      return '/var/data/backups/questbot-slot-7.db';
-    default:
-      throw new RangeError(`Database backup slot is out of range: ${slotIndex}`);
-  }
+function slotPaths(startIndex = 0) {
+  return Array.from(
+    { length: DATABASE_BACKUP_SLOT_COUNT - startIndex },
+    (_, offset) => slotPath(startIndex + offset),
+  );
 }
 
 export async function backupDatabaseSlot(slotIndex) {
   ensureBackupDirectory();
-  return usePersistentBackupDirectory
-    ? backupPersistentSlot(slotIndex)
-    : backupLocalSlot(slotIndex);
-}
-
-async function clearLocalInactiveSlots(keep) {
-  const removals = [];
-  if (keep < 7) removals.push(fs.promises.rm('./data/backups/questbot-slot-7.db', { force: true }));
-  if (keep < 6) removals.push(fs.promises.rm('./data/backups/questbot-slot-6.db', { force: true }));
-  if (keep < 5) removals.push(fs.promises.rm('./data/backups/questbot-slot-5.db', { force: true }));
-  if (keep < 4) removals.push(fs.promises.rm('./data/backups/questbot-slot-4.db', { force: true }));
-  if (keep < 3) removals.push(fs.promises.rm('./data/backups/questbot-slot-3.db', { force: true }));
-  if (keep < 2) removals.push(fs.promises.rm('./data/backups/questbot-slot-2.db', { force: true }));
-  await Promise.all(removals);
-}
-
-async function clearPersistentInactiveSlots(keep) {
-  const removals = [];
-  if (keep < 7) removals.push(fs.promises.rm('/var/data/backups/questbot-slot-7.db', { force: true }));
-  if (keep < 6) removals.push(fs.promises.rm('/var/data/backups/questbot-slot-6.db', { force: true }));
-  if (keep < 5) removals.push(fs.promises.rm('/var/data/backups/questbot-slot-5.db', { force: true }));
-  if (keep < 4) removals.push(fs.promises.rm('/var/data/backups/questbot-slot-4.db', { force: true }));
-  if (keep < 3) removals.push(fs.promises.rm('/var/data/backups/questbot-slot-3.db', { force: true }));
-  if (keep < 2) removals.push(fs.promises.rm('/var/data/backups/questbot-slot-2.db', { force: true }));
-  await Promise.all(removals);
+  const destination = slotPath(slotIndex);
+  await db.backup(destination);
+  return destination;
 }
 
 export async function clearInactiveDatabaseBackupSlots(retention) {
   const keep = Math.max(1, Math.min(DATABASE_BACKUP_SLOT_COUNT, retention));
-  if (usePersistentBackupDirectory) return clearPersistentInactiveSlots(keep);
-  return clearLocalInactiveSlots(keep);
+  await Promise.all(slotPaths(keep).map((file) => fs.promises.rm(file, { force: true })));
 }
 
 export async function clearAllDatabaseBackupSlots() {
-  if (usePersistentBackupDirectory) {
-    await Promise.all([
-      fs.promises.rm('/var/data/backups/questbot-slot-1.db', { force: true }),
-      fs.promises.rm('/var/data/backups/questbot-slot-2.db', { force: true }),
-      fs.promises.rm('/var/data/backups/questbot-slot-3.db', { force: true }),
-      fs.promises.rm('/var/data/backups/questbot-slot-4.db', { force: true }),
-      fs.promises.rm('/var/data/backups/questbot-slot-5.db', { force: true }),
-      fs.promises.rm('/var/data/backups/questbot-slot-6.db', { force: true }),
-      fs.promises.rm('/var/data/backups/questbot-slot-7.db', { force: true }),
-    ]);
-    return;
-  }
-
-  await Promise.all([
-    fs.promises.rm('./data/backups/questbot-slot-1.db', { force: true }),
-    fs.promises.rm('./data/backups/questbot-slot-2.db', { force: true }),
-    fs.promises.rm('./data/backups/questbot-slot-3.db', { force: true }),
-    fs.promises.rm('./data/backups/questbot-slot-4.db', { force: true }),
-    fs.promises.rm('./data/backups/questbot-slot-5.db', { force: true }),
-    fs.promises.rm('./data/backups/questbot-slot-6.db', { force: true }),
-    fs.promises.rm('./data/backups/questbot-slot-7.db', { force: true }),
-  ]);
+  await Promise.all(slotPaths().map((file) => fs.promises.rm(file, { force: true })));
 }
 
 async function createLegacyMigrationBackup() {
   if (dbPath === ':memory:') return null;
   ensureBackupDirectory();
-  if (usePersistentBackupDirectory) {
-    await fs.promises.rm('/var/data/backups/pre-tracker-removal.db', { force: true });
-    await db.backup('/var/data/backups/pre-tracker-removal.db');
-    return '/var/data/backups/pre-tracker-removal.db';
-  }
-
-  await fs.promises.rm('./data/backups/pre-tracker-removal.db', { force: true });
-  await db.backup('./data/backups/pre-tracker-removal.db');
-  return './data/backups/pre-tracker-removal.db';
+  const destination = `${backupDirectory}/pre-tracker-removal.db`;
+  await fs.promises.rm(destination, { force: true });
+  await db.backup(destination);
+  return destination;
 }
 
 async function migrateLegacyTracker() {

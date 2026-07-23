@@ -97,10 +97,10 @@ Read-only Smoke ไม่ยืนยัน Enroll/Progress/Heartbeat/Claim จ�
 
 ## Runtime data contract
 
-ห้าม Commit Runtime SQLite, WAL/SHM หรือ Backup ทุกชนิด ก่อน Push ให้ตรวจ:
+ห้าม Commit Runtime SQLite, WAL/SHM/rollback journal หรือ Backup ทุกชนิด ก่อน Push ให้ตรวจ:
 
 ```bash
-git ls-files | grep -E '(^|/)(data|backups)/|\.(db|sqlite)(-wal|-shm)?$'
+git ls-files | grep -E '(^|/)(data|backups)/|\.(db|sqlite)(-(wal|shm|journal))?$'
 ```
 
 คำสั่งต้องไม่แสดงผล และ Test ใหม่ต้องอยู่ใต้ `bot/test/` เพื่อให้ `node --test` ค้นหาแบบ Recursive

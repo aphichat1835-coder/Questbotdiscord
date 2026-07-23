@@ -170,7 +170,8 @@ CI จะล้มเมื่อ Fixture หาย, Schema หลักเส�
 Smoke Test ตรวจบัญชีและดึงรายการ Quest จริงเท่านั้น ไม่ Enroll, Progress, Heartbeat หรือ Claim
 
 ```bash
-DISCORD_USER_TOKEN='ส่งผ่าน Environment เท่านั้น' npm run smoke:quest
+export DISCORD_USER_TOKEN='REPLACE_WITH_TOKEN_FROM_SECRET_STORE'
+npm run smoke:quest
 ```
 
 แนะนำให้ตั้ง `EXPECTED_DISCORD_ACCOUNT_ID` เพื่อป้องกัน Token ผิดบัญชี Script จะไม่พิมพ์ Token, Username หรือ Account ID ลง Log

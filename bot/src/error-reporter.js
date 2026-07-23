@@ -51,29 +51,35 @@ export function safeErrorMessage(error) {
   return redactSensitive(error?.message ?? error ?? 'Unknown error');
 }
 
-export async function reportCriticalError(source, error, { notify = true } = {}) {
-  const safeMessage = redactSensitive(error?.stack || error?.message || error);
-  console.error(`❌ [${redactSensitive(source)}]`, safeMessage);
+function canNotifyCriticalError(notify) {
+  return Boolean(notify && config.logChannelId && discordClient?.isReady?.());
+}
 
-  if (!notify || !config.logChannelId || !discordClient?.isReady?.()) return;
-  const key = `${source}:${safeMessage.slice(0, 250)}`;
-  const now = Date.now();
+function removeExpiredReports(now) {
   for (const [reportedKey, reportedAt] of recentlyReported) {
     if (now - reportedAt >= DEDUPE_MS) recentlyReported.delete(reportedKey);
   }
-  if (now - (recentlyReported.get(key) ?? 0) < DEDUPE_MS) return;
-  recentlyReported.set(key, now);
+}
 
+function reserveCriticalErrorReport(source, safeMessage, now = Date.now()) {
+  removeExpiredReports(now);
+  const key = `${source}:${safeMessage.slice(0, 250)}`;
+  if (now - (recentlyReported.get(key) ?? 0) < DEDUPE_MS) return false;
+  recentlyReported.set(key, now);
+  return true;
+}
+
+async function sendCriticalErrorNotification(source, safeMessage) {
   try {
     const channel = await discordClient.channels.fetch(config.logChannelId);
     if (!channel?.isTextBased?.()) return;
     await channel.send({
       content: [
-        `🚨 **Critical Error — ${redactSensitive(source)}**`,
+        `🚨 **Critical Error — ${source}**`,
         '```',
         safeMessage.slice(0, 1700),
         '```',
-      ].join('\n'),
+      ].join(String.fromCharCode(10)),
     });
   } catch (reportError) {
     console.error(
@@ -81,4 +87,14 @@ export async function reportCriticalError(source, error, { notify = true } = {})
       safeErrorMessage(reportError),
     );
   }
+}
+
+export async function reportCriticalError(source, error, { notify = true } = {}) {
+  const safeSource = redactSensitive(source);
+  const safeMessage = redactSensitive(error?.stack || error?.message || error);
+  console.error(`❌ [${safeSource}]`, safeMessage);
+
+  if (!canNotifyCriticalError(notify)) return;
+  if (!reserveCriticalErrorReport(safeSource, safeMessage)) return;
+  await sendCriticalErrorNotification(safeSource, safeMessage);
 }
