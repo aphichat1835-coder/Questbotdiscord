@@ -45,6 +45,7 @@ jobs:
           from pathlib import Path
           path = Path('/tmp/apply-final-hardening.py')
           content = path.read_text(encoding='utf-8')
+          content = content.replace(".replace('          ', '')", '')
           content = content.replace(
               "raise SystemExit(f'{path}: expected {count} exact matches, found {actual}')",
               "raise SystemExit(f'{path}: expected {count} exact matches, found {actual}; target={old[:160]!r}')",
