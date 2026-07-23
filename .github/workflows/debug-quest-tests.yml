@@ -37,20 +37,20 @@ jobs:
           cache: npm
           cache-dependency-path: bot/package-lock.json
 
-      - name: Capture validation output
+      - name: Capture every failing test
         shell: bash
         run: |
           set +e
           cd bot
           npm ci --ignore-scripts --no-fund --no-audit >/dev/null 2>&1
           npm rebuild better-sqlite3 --foreground-scripts >/dev/null 2>&1
-          npm test > ../QUEST_TEST_ERROR.txt 2>&1
+          npm test > ../QUEST_TEST_FULL.txt 2>&1
           test_status=$?
-          npm run check >> ../QUEST_TEST_ERROR.txt 2>&1
+          npm run check >> ../QUEST_TEST_FULL.txt 2>&1
           check_status=$?
-          printf '\nTEST_STATUS=%s\nCHECK_STATUS=%s\n' "$test_status" "$check_status" >> ../QUEST_TEST_ERROR.txt
-          tail -n 220 ../QUEST_TEST_ERROR.txt > ../QUEST_TEST_ERROR.tail
-          mv ../QUEST_TEST_ERROR.tail ../QUEST_TEST_ERROR.txt
+          printf '\nTEST_STATUS=%s\nCHECK_STATUS=%s\n' "$test_status" "$check_status" >> ../QUEST_TEST_FULL.txt
+          grep -n -B 6 -A 42 -E 'not ok|# fail |TEST_STATUS=|CHECK_STATUS=' ../QUEST_TEST_FULL.txt > ../QUEST_TEST_ERROR.txt || true
+          rm ../QUEST_TEST_FULL.txt
 
       - name: Publish diagnostic
         shell: bash
@@ -58,5 +58,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add QUEST_TEST_ERROR.txt
-          git commit -m "chore: record quest redesign test output"
+          git commit -m "chore: record all quest redesign test failures"
           git push origin HEAD:ss
