@@ -1,0 +1,135 @@
+name: Validate final consolidated review batch
+
+permissions:
+  contents: write
+
+on:
+  push:
+    branches:
+      - work/review-final-0ddc73e
+
+jobs:
+  validate:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: work/review-final-0ddc73e
+          fetch-depth: 0
+
+      - name: Correct base patch generator
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('.github/scripts/apply-review-batch.py')
+          text = path.read_text()
+
+          move_line = "text = text.replace('verificationFailureOutcome(', 'questFailureOutcome(')\n"
+          if text.count(move_line) != 1:
+            raise RuntimeError('verification replacement marker count changed')
+          text = text.replace(move_line, '', 1)
+          anchor = "    'remove duplicate verification failure helper',\n)\n"
+          if text.count(anchor) != 1:
+            raise RuntimeError('verification removal anchor count changed')
+          text = text.replace(anchor, anchor + move_line, 1)
+
+          old_split = "child.stdout.trim().split('\\n').at(-1)"
+          new_split = "child.stdout.trim().split('\\\\n').at(-1)"
+          if text.count(old_split) != 1:
+            raise RuntimeError('backup output split marker count changed')
+          text = text.replace(old_split, new_split, 1)
+          path.write_text(text)
+          PY
+
+      - name: Apply complete review batch
+        shell: bash
+        run: |
+          set -o pipefail
+          {
+            python3 .github/scripts/apply-review-batch.py
+            python3 .github/scripts/apply-review-complexity.py
+          } 2>&1 | tee REVIEW_FINAL_VALIDATION.log
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: bot/.node-version
+          cache: npm
+          cache-dependency-path: bot/package-lock.json
+
+      - name: Install locked dependencies
+        working-directory: bot
+        run: npm ci --ignore-scripts --no-fund --no-audit
+
+      - name: Rebuild trusted native dependency
+        working-directory: bot
+        run: npm rebuild better-sqlite3 --foreground-scripts
+
+      - name: Validate functional and delivery gates
+        working-directory: bot
+        shell: bash
+        run: |
+          set -o pipefail
+          {
+            npm run validate:quest-fixture
+            npm run test:coverage
+            npm run check
+            npm audit --omit=dev --audit-level=high
+          } 2>&1 | tee -a ../REVIEW_FINAL_VALIDATION.log
+
+      - name: Validate complete static quality targets
+        shell: bash
+        run: |
+          set -o pipefail
+          {
+            npx --yes oxlint -D unicorn/no-useless-spread bot/src
+            npx --yes eslint@9 --no-config-lookup --rule 'complexity: ["error", 15]' bot/src
+            npx --yes jscpd@4 --min-lines 5 --min-tokens 50 --threshold 3 --reporters console bot/src
+            git diff --check
+          } 2>&1 | tee -a REVIEW_FINAL_VALIDATION.log
+
+      - name: Commit validated source batch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            .github/workflows/ci.yml \
+            .gitignore \
+            CONTRIBUTING.md \
+            bot/README.md \
+            bot/src/abortable-delay.js \
+            bot/src/config.js \
+            bot/src/db.js \
+            bot/src/discord-runner.js \
+            bot/src/error-reporter.js \
+            bot/src/http-retry.js \
+            bot/src/mutation-retry.js \
+            bot/src/runner-control.js \
+            bot/src/commands/stop.js \
+            bot/test/abortable-delay.node-test.js \
+            bot/test/audit-hardening.node-test.js \
+            bot/test/backup-paths.node-test.js \
+            bot/test/quality-refactor.node-test.js \
+            bot/test/runner-control.node-test.js
+          git diff --cached --quiet && { echo "No validated changes produced"; exit 1; }
+          git commit -m "fix: address consolidated quality review"
+          git push origin HEAD:work/review-final-0ddc73e
+
+      - name: Record validation failure
+        if: failure()
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          {
+            echo "Final consolidated review validation failed"
+            echo
+            grep -n -B 15 -A 45 -E 'not ok|AssertionError|ERR_ASSERTION|SyntaxError|error |Error:|✖|duplication|expected one match|start marker|end marker' REVIEW_FINAL_VALIDATION.log 2>/dev/null || true
+            echo
+            echo "--- final output ---"
+            tail -n 240 REVIEW_FINAL_VALIDATION.log 2>/dev/null || true
+          } > REVIEW_FINAL_ERROR.txt
+          git add REVIEW_FINAL_ERROR.txt
+          git commit -m "chore: record final consolidated review failure" || true
+          git push origin HEAD:work/review-final-0ddc73e || true
