@@ -11,6 +11,60 @@ on:
     branches: [main, ss]
 
 jobs:
+  apply-hardening:
+    name: Apply audited hardening
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/ss' && !contains(github.event.head_commit.message, '[hardening-applied]') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout ss
+        uses: actions/checkout@v6
+        with:
+          ref: ss
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: bot/.node-version
+          cache: npm
+          cache-dependency-path: bot/package-lock.json
+
+      - name: Extract and apply audited patch
+        shell: bash
+        run: |
+          awk 'BEGIN { capture=0 } /python3 - <<'\''PY'\''/ { capture=1; next } capture && /^          PY$/ { exit } capture { sub(/^          /, ""); print }' \
+            .github/workflows/apply-final-hardening.yml > /tmp/apply-final-hardening.py
+          test -s /tmp/apply-final-hardening.py
+          python3 /tmp/apply-final-hardening.py
+
+      - name: Install locked dependencies
+        working-directory: bot
+        run: npm ci --ignore-scripts --no-fund --no-audit
+
+      - name: Rebuild trusted native dependency
+        working-directory: bot
+        run: npm rebuild better-sqlite3 --foreground-scripts
+
+      - name: Validate patched project
+        working-directory: bot
+        run: |
+          npm run validate:quest-fixture
+          npm run test:coverage
+          npm run check
+          npm audit --omit=dev --audit-level=high
+
+      - name: Commit audited fixes
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "hardening: close final audit findings [hardening-applied]"
+          git push origin HEAD:ss
+
   repository-shape:
     name: Repository shape
     runs-on: ubuntu-latest
