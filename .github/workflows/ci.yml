@@ -11,130 +11,6 @@ on:
     branches: [main, ss]
 
 jobs:
-  apply-hardening:
-    name: Apply audited hardening
-    if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.ref == 'ss' }}
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - name: Checkout ss
-        uses: actions/checkout@v6
-        with:
-          ref: ss
-          fetch-depth: 0
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version-file: bot/.node-version
-          cache: npm
-          cache-dependency-path: bot/package-lock.json
-
-      - name: Extract and apply audited patch
-        shell: bash
-        run: |
-          if test -f HARDENING_ERROR.txt || test -f HARDENING_VALIDATION_ERROR.txt; then
-            echo "Previous hardening error captured; waiting for patch correction."
-            exit 0
-          fi
-          awk 'BEGIN { capture=0 } /python3 - <<'\''PY'\''/ { capture=1; next } capture && /^          PY$/ { exit } capture { sub(/^          /, ""); print }' \
-            .github/workflows/apply-final-hardening.yml > /tmp/apply-final-hardening.py
-          test -s /tmp/apply-final-hardening.py
-          python3 - <<'PY'
-          from pathlib import Path
-          path = Path('/tmp/apply-final-hardening.py')
-          content = path.read_text(encoding='utf-8')
-          start_marker = "replace(\n  'bot/src/discord-runner.js',\n  \"\"\"      try {"
-          end_marker = "replace(\n  'bot/src/discord-runner.js',\n  \"\"\"    let nextCheckpoint"
-          start = content.index(start_marker)
-          end = content.index(end_marker, start)
-          content = content[:start] + content[end:]
-          content = content.replace(
-              "raise SystemExit(f'{path}: expected {count} exact matches, found {actual}')",
-              "raise SystemExit(f'{path}: expected {count} exact matches, found {actual}; target={old[:160]!r}')",
-          )
-          content = content.replace(
-              "raise SystemExit(f'{path}: expected {count} regex matches, found {actual}: {pattern}')",
-              "raise SystemExit(f'{path}: expected {count} regex matches, found {actual}: {pattern!r}')",
-          )
-          path.write_text(content, encoding='utf-8')
-          PY
-          if ! python3 /tmp/apply-final-hardening.py > /tmp/hardening.log 2>&1; then
-            tail -n 30 /tmp/hardening.log > HARDENING_ERROR.txt
-            cat HARDENING_ERROR.txt
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add HARDENING_ERROR.txt
-            git commit -m "debug: capture detailed hardening patch failure"
-            git push origin HEAD:ss
-            exit 1
-          fi
-          python3 - <<'PY'
-          from pathlib import Path
-
-          path = Path('bot/src/discord-runner.js')
-          content = path.read_text(encoding='utf-8')
-          old = "      try {\n        if (!liveMsg) {\n          const ch = await resolveOutputChannel();\n          if (!ch?.isTextBased?.()) return;\n          liveMsg = await ch.send({ content });\n        } else {\n          await liveMsg.edit({ content });\n        }\n      } catch (err) {\n        console.warn(`[Runner:${jobKey}] status message failed — ${err.message}`);\n      }\n"
-          new = "      const editingExisting = Boolean(liveMsg);\n      try {\n        if (!liveMsg) {\n          const ch = await resolveOutputChannel();\n          if (!ch?.isTextBased?.()) return;\n          liveMsg = await ch.send({ content });\n        } else {\n          await liveMsg.edit({ content });\n        }\n      } catch (err) {\n        if (editingExisting) liveMsg = null;\n        console.warn(`[Runner:${jobKey}] status message failed — ${err.message}`);\n      }\n"
-          if content.count(old) != 1:
-              raise SystemExit(f'status message block expected once, found {content.count(old)}')
-          path.write_text(content.replace(old, new, 1), encoding='utf-8')
-
-          workflow = Path('.github/workflows/ci.yml')
-          workflow_content = workflow.read_text(encoding='utf-8')
-          start = workflow_content.index('  apply-hardening:\n')
-          end = workflow_content.index('  repository-shape:\n')
-          workflow.write_text(workflow_content[:start] + workflow_content[end:], encoding='utf-8')
-          PY
-
-      - name: Install locked dependencies
-        if: ${{ hashFiles('HARDENING_ERROR.txt', 'HARDENING_VALIDATION_ERROR.txt') == '' }}
-        working-directory: bot
-        run: npm ci --ignore-scripts --no-fund --no-audit
-
-      - name: Rebuild trusted native dependency
-        if: ${{ hashFiles('HARDENING_ERROR.txt', 'HARDENING_VALIDATION_ERROR.txt') == '' }}
-        working-directory: bot
-        run: npm rebuild better-sqlite3 --foreground-scripts
-
-      - name: Validate patched project
-        if: ${{ hashFiles('HARDENING_ERROR.txt', 'HARDENING_VALIDATION_ERROR.txt') == '' }}
-        working-directory: bot
-        shell: bash
-        run: |
-          set +e
-          {
-            npm run validate:quest-fixture
-            npm run test:coverage
-            npm run check
-            npm audit --omit=dev --audit-level=high
-          } > /tmp/hardening-validation.log 2>&1
-          status=$?
-          cat /tmp/hardening-validation.log
-          if [ "$status" -ne 0 ]; then
-            tail -n 100 /tmp/hardening-validation.log > ../HARDENING_VALIDATION_ERROR.txt
-            cd ..
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add HARDENING_VALIDATION_ERROR.txt
-            git commit -m "debug: capture hardening validation failure"
-            git push origin HEAD:ss
-            exit "$status"
-          fi
-
-      - name: Commit audited fixes
-        if: ${{ hashFiles('HARDENING_ERROR.txt', 'HARDENING_VALIDATION_ERROR.txt') == '' }}
-        shell: bash
-        run: |
-          git checkout HEAD -- .github/workflows/ci.yml .github/workflows/apply-final-hardening.yml
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git diff --cached --check
-          git commit -m "hardening: close final audit findings [hardening-applied]"
-          git push origin HEAD:ss
-
   repository-shape:
     name: Repository shape
     runs-on: ubuntu-latest
@@ -142,7 +18,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Verify bot-only repository
+      - name: Verify bot-only repository and runtime data safety
+        shell: bash
         run: |
           test ! -d src
           test ! -d src-tauri
@@ -152,6 +29,8 @@ jobs:
           test -f bot/scripts/validate-quest-fixture.mjs
           ! grep -R "panel_\(add\|done\|edit\|delete\)_modal" bot/src/index.js
           ! grep -R "getAllQuests\|addQuest\|editQuest\|markDone\|removeQuest" bot/src
+          test -z "$(git ls-files | grep -E '(^|/)(data|backups)/|\.(db|sqlite)(-wal|-shm)?$' || true)"
+          git diff --check
 
   bot-checks:
     name: Bot checks
@@ -180,6 +59,7 @@ jobs:
         run: npm run validate:quest-fixture
 
       - name: Enforce approved database backup destinations
+        shell: bash
         run: |
           test "$(grep -c "await db.backup(" src/db.js)" -eq 16
           ! grep -n "db.backup(" src/db.js | grep -vE "db.backup\('(\./data|/var/data)/backups/"
@@ -188,12 +68,12 @@ jobs:
           test ! -f src/path-safety.js
           test ! -f test/path-safety.node-test.js
 
-      - name: Run bot unit tests
+      - name: Run recursive tests with coverage gate
         id: tests
         shell: bash
         run: |
           set +e
-          npm test 2>&1 | tee test-output.log
+          npm run test:coverage 2>&1 | tee test-output.log
           status=${PIPESTATUS[0]}
           echo "exit_code=$status" >> "$GITHUB_OUTPUT"
           exit "$status"
@@ -207,7 +87,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-      - name: Syntax check all source modules
+      - name: Syntax check all source and script modules
         run: npm run check
 
       - name: Production dependency audit
