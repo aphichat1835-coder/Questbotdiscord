@@ -1,0 +1,74 @@
+name: Debug locked one-shot v4 tests
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/debug-one-shot-v4-tests.yml
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    if: github.event.pull_request.head.ref == 'ss'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ss
+          show-progress: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: bot/.node-version
+          cache: npm
+          cache-dependency-path: bot/package-lock.json
+
+      - name: Apply verified patch
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import base64
+          import zlib
+          parts = sorted(Path('.github/scripts/one-shot-session-lock').glob('part-*'))
+          payload = ''.join(path.read_text() for path in parts)
+          script = zlib.decompress(base64.b64decode(payload)).decode()
+          exec(compile(script, 'debug-one-shot-v4', 'exec'))
+          PY
+
+      - name: Install dependencies
+        working-directory: bot
+        run: |
+          npm ci --ignore-scripts --no-fund --no-audit
+          npm rebuild better-sqlite3 --foreground-scripts
+
+      - name: Capture focused failures
+        working-directory: bot
+        shell: bash
+        run: |
+          set +e
+          npm test > v4-test-full.log 2>&1
+          status=$?
+          if [ "$status" -ne 0 ]; then
+            grep -n -B 5 -A 40 -E 'not ok|failureType|AssertionError|SyntaxError|ReferenceError|TypeError|ERR_' v4-test-full.log > v4-test-focused.log || true
+          else
+            tail -n 80 v4-test-full.log > v4-test-focused.log
+          fi
+          printf '%s\n' "$status" > v4-test-status.txt
+          exit 0
+
+      - name: Upload diagnostics
+        uses: actions/upload-artifact@v7
+        with:
+          name: locked-one-shot-v4-tests-${{ github.run_id }}
+          path: |
+            bot/v4-test-focused.log
+            bot/v4-test-status.txt
+          if-no-files-found: error
+          retention-days: 2
+
+      - name: Fail when tests failed
+        working-directory: bot
+        run: exit "$(cat v4-test-status.txt)"
