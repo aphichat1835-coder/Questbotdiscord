@@ -38,6 +38,12 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_scheduled_runners_owner
     ON scheduled_runners(owner_id);
+
+  CREATE TABLE IF NOT EXISTS runtime_leases (
+    name       TEXT PRIMARY KEY,
+    holder     TEXT NOT NULL,
+    expires_at INTEGER NOT NULL
+  );
 `);
 
 export const DATABASE_BACKUP_SLOT_COUNT = 7;
@@ -216,6 +222,39 @@ async function migrateLegacyTracker() {
 }
 
 await migrateLegacyTracker();
+
+const acquireRuntimeLeaseTransaction = db.transaction((name, holder, ttlMs, now) => {
+  db.prepare('DELETE FROM runtime_leases WHERE expires_at <= ?').run(now);
+  const existing = db.prepare('SELECT holder FROM runtime_leases WHERE name = ?').get(name);
+  if (existing && existing.holder !== holder) return false;
+  db.prepare(`
+    INSERT INTO runtime_leases (name, holder, expires_at)
+    VALUES (?, ?, ?)
+    ON CONFLICT(name) DO UPDATE SET
+      holder = excluded.holder,
+      expires_at = excluded.expires_at
+  `).run(name, holder, now + ttlMs);
+  return true;
+});
+
+export function acquireRuntimeLease(name, holder, ttlMs = 90_000) {
+  if (!name || !holder) throw new TypeError('Runtime lease name and holder are required');
+  return acquireRuntimeLeaseTransaction(name, holder, ttlMs, Date.now());
+}
+
+export function renewRuntimeLease(name, holder, ttlMs = 90_000) {
+  return db.prepare(`
+    UPDATE runtime_leases
+    SET expires_at = ?
+    WHERE name = ? AND holder = ?
+  `).run(Date.now() + ttlMs, name, holder).changes > 0;
+}
+
+export function releaseRuntimeLease(name, holder) {
+  return db.prepare(
+    'DELETE FROM runtime_leases WHERE name = ? AND holder = ?',
+  ).run(name, holder).changes > 0;
+}
 
 export function closeDatabase() {
   if (db.open) db.close();

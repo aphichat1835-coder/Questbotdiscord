@@ -51,9 +51,9 @@ function clone(status) {
 
 function prune() {
   if (statuses.size <= MAX_STATUS_ENTRIES) return;
-  const entries = [...statuses.entries()].sort(
-    ([, left], [, right]) => Date.parse(left.updatedAt) - Date.parse(right.updatedAt),
-  );
+  const entries = [...statuses.entries()]
+    .filter(([, status]) => !['running', 'stopping'].includes(status.lifecycle))
+    .sort(([, left], [, right]) => Date.parse(left.updatedAt) - Date.parse(right.updatedAt));
   while (statuses.size > MAX_STATUS_ENTRIES && entries.length) {
     statuses.delete(entries.shift()[0]);
   }
@@ -93,7 +93,9 @@ function selectQuestListPath(paths) {
 }
 
 function aggregate(items) {
-  if (!items.length) return emptyStatus('aggregate', { lifecycle: 'idle' });
+  const activeItems = items.filter((item) => ['running', 'stopping'].includes(item.lifecycle));
+  if (!activeItems.length) return emptyStatus('aggregate', { lifecycle: 'idle' });
+  items = activeItems;
   const latestError = [...items]
     .filter((item) => item.lastError)
     .sort((left, right) => Date.parse(right.lastCheckAt) - Date.parse(left.lastCheckAt))[0];
@@ -111,7 +113,7 @@ function aggregate(items) {
     jobKey: null,
     mode: null,
     lifecycle: items.some((item) => item.lifecycle === 'running') ? 'running' : 'idle',
-    accountCount: items.length,
+    accountCount: new Set(items.map((item) => item.accountId).filter(Boolean)).size,
     lastCheckAt: latestIso(items.map((item) => item.lastCheckAt)),
     lastSuccessfulCheckAt: latestIso(items.map((item) => item.lastSuccessfulCheckAt)),
     state: selectedState,

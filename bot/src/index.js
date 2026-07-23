@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { Client, Collection, GatewayIntentBits } from 'discord.js';
 import { config } from './config.js';
 import { startWorker, stopWorker } from './worker.js';
@@ -7,8 +8,14 @@ import {
   restoreScheduledRunners,
   shutdownRunners,
 } from './discord-runner.js';
-import { closeDatabase } from './db.js';
 import {
+  acquireRuntimeLease,
+  closeDatabase,
+  releaseRuntimeLease,
+  renewRuntimeLease,
+} from './db.js';
+import {
+  redactSensitive,
   reportCriticalError,
   setErrorReporterClient,
 } from './error-reporter.js';
@@ -30,6 +37,18 @@ const commands = [ping, help, apiStatus, run, stop, panel];
 for (const command of commands) client.commands.set(command.data.name, command);
 
 let shuttingDown = false;
+const runtimeLeaseName = 'bot-runtime';
+const runtimeLeaseHolder = `${process.pid}:${randomUUID()}`;
+if (!acquireRuntimeLease(runtimeLeaseName, runtimeLeaseHolder)) {
+  throw new Error('Another Quest Bot process already holds the shared database runtime lease');
+}
+const runtimeLeaseTimer = setInterval(() => {
+  if (!renewRuntimeLease(runtimeLeaseName, runtimeLeaseHolder)) {
+    void fatalShutdown('Runtime lease', new Error('Lost the shared database runtime lease'));
+  }
+}, 30_000);
+runtimeLeaseTimer.unref?.();
+
 startDashboard(null);
 
 // The client profile is fixed for the lifetime of the process. Environment
@@ -55,7 +74,7 @@ function logDiscordError(label, error) {
   console.error(label, {
     code: error?.code,
     status: error?.status,
-    message: error?.message,
+    message: redactSensitive(error?.message),
     method: error?.method,
   });
 }
@@ -138,6 +157,7 @@ client.on('invalidated', () => {
 async function gracefulShutdown(reason, exitCode = 0) {
   if (shuttingDown) return;
   shuttingDown = true;
+  clearInterval(runtimeLeaseTimer);
   console.log(`🧹 Graceful shutdown — ${reason}`);
   await stopWorker();
 
@@ -152,9 +172,16 @@ async function gracefulShutdown(reason, exitCode = 0) {
   try {
     client.destroy();
     await stopDashboard();
-    closeDatabase();
   } catch (error) {
     console.error('❌ Resource shutdown error:', error);
+    exitCode ||= 1;
+  }
+
+  try {
+    releaseRuntimeLease(runtimeLeaseName, runtimeLeaseHolder);
+    closeDatabase();
+  } catch (error) {
+    console.error('❌ Database shutdown error:', error);
     exitCode ||= 1;
   }
 

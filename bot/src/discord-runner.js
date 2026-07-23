@@ -6,6 +6,7 @@ import {
   nextRecheckState,
   nextScheduledCheck,
   RECHECK_INTERVAL_MS,
+  transientRetryDelayMs,
 } from './runner-schedule.js';
 import { fetchWithRetry } from './http-retry.js';
 import { executeVerifiedMutation } from './mutation-retry.js';
@@ -33,7 +34,7 @@ const FATAL_FORBIDDEN_PATHS = new Set(['/users/@me', ...QUEST_LIST_PATHS]);
 
 export class DiscordApiError extends Error {
   constructor(status, path, data) {
-    super(`Discord API ${status}: ${JSON.stringify(data)}`);
+    super(`Discord API ${status} at ${path}`);
     this.name = 'DiscordApiError';
     this.status = status;
     this.path = path;
@@ -421,12 +422,7 @@ export async function fetchQuests(token, signal, explicitStatusContext = null) {
 }
 
 async function readFreshQuestForMutation(token, questId, signal) {
-  try {
-    return (await fetchQuests(token, signal)).find((quest) => quest.id === questId) ?? null;
-  } catch (error) {
-    if (isFatalAuthError(error) || isAbortFailure(error, signal)) throw error;
-    return null;
-  }
+  return (await fetchQuests(token, signal)).find((quest) => quest.id === questId) ?? null;
 }
 
 async function verifiedQuestMutation({ token, questId, signal, perform, predicate }) {
@@ -716,6 +712,13 @@ export function findUserJobByAccount(ownerId, accountId) {
   return null;
 }
 
+export function findAnyJobByAccount(accountId) {
+  for (const [key, job] of jobs) {
+    if (job.accountId === accountId) return { key, ...job.summary() };
+  }
+  return null;
+}
+
 export function stopJob(ownerId, key, { removeSchedule = true } = {}) {
   const job = jobs.get(key);
   if (!job || job.ownerId !== ownerId) return false;
@@ -748,20 +751,32 @@ export function stopRunner(ownerId, options = {}) {
   return stopAllForUser(ownerId, options) > 0;
 }
 
-export async function shutdownRunners(timeoutMs = 10_000) {
+export async function shutdownRunners(timeoutMs = null) {
   const activeJobs = [...jobs.values()];
   for (const job of activeJobs) job.controller.abort();
 
-  let timeout;
-  try {
-    await Promise.race([
-      Promise.allSettled([...activeRunPromises]),
-      new Promise((resolve) => {
-        timeout = setTimeout(resolve, timeoutMs);
-      }),
-    ]);
-  } finally {
-    clearTimeout(timeout);
+  const pending = Promise.allSettled([...activeRunPromises]);
+  if (timeoutMs == null) {
+    await pending;
+  } else {
+    let timedOut = false;
+    let timeout;
+    try {
+      await Promise.race([
+        pending,
+        new Promise((resolve) => {
+          timeout = setTimeout(() => {
+            timedOut = true;
+            resolve();
+          }, timeoutMs);
+        }),
+      ]);
+    } finally {
+      clearTimeout(timeout);
+    }
+    if (timedOut && activeRunPromises.size > 0) {
+      throw new Error(`Runner shutdown timed out with ${activeRunPromises.size} task(s) pending`);
+    }
   }
   return activeJobs.length;
 }
@@ -836,6 +851,7 @@ export async function startRunner({
         visibleLines.shift();
         content = '```\n' + visibleLines.join('\n') + '\n```';
       }
+      const editingExisting = Boolean(liveMsg);
       try {
         if (!liveMsg) {
           const ch = await resolveOutputChannel();
@@ -845,6 +861,7 @@ export async function startRunner({
           await liveMsg.edit({ content });
         }
       } catch (err) {
+        if (editingExisting) liveMsg = null;
         console.warn(`[Runner:${jobKey}] status message failed — ${err.message}`);
       }
     });
@@ -1038,11 +1055,15 @@ export async function startRunner({
 
     let nextCheckpoint = Math.max(25, (Math.floor(initialPercent / 25) + 1) * 25);
     let lastReportedPercent = initialPercent;
+    let lastVerifiedProgressSecs = quest.progressSecs;
+    let completionSeen = quest.completed;
     const onServerProgress = async (fresh) => {
       const percent = fresh.completed ? 100 : Math.min(100, Math.floor(fresh.progress));
-      if (fresh.progressSecs > 0 || fresh.completed) {
+      if (fresh.progressSecs > lastVerifiedProgressSecs || (fresh.completed && !completionSeen)) {
         recordQuestVerification(currentQuestStatusContext().key, 'progress', currentQuestStatusContext());
       }
+      lastVerifiedProgressSecs = Math.max(lastVerifiedProgressSecs, fresh.progressSecs);
+      completionSeen ||= fresh.completed;
       while (nextCheckpoint <= 100 && percent >= nextCheckpoint) {
         if (nextCheckpoint > lastReportedPercent) {
           addLog(`⌛ ${username}: ${quest.name} ${nextCheckpoint}%`);
@@ -1149,8 +1170,24 @@ export async function startRunner({
         lastCheckAt: new Date().toISOString(),
         lastError: error.message,
       });
-      return { attempted: false, progressed: false, supportedCount: 0 };
+      return {
+      attempted: false,
+      progressed: false,
+      supportedCount: 0,
+      transientError: true,
+    };
     }
+  }
+
+  async function waitForTransientErrorRetry(attempt) {
+    const delayMs = transientRetryDelayMs(attempt);
+    nextCheckAt = new Date(Date.now() + delayMs).toISOString();
+    persistSchedule({ nextCheckAt });
+    addLog(`🌐 ${username}: NETWORK RETRY — อีก ${Math.round(delayMs / 60_000)} นาที`);
+    await render();
+    countAlreadyReported = false;
+    await sleep(delayMs, signal);
+    return attempt + 1;
   }
 
   async function waitForVerificationRecheck(state, outcome) {
@@ -1195,6 +1232,7 @@ export async function startRunner({
   async function runQuestLoop() {
     let noProgressRounds = 0;
     let scheduleState = { isRecheck: false, rechecksRemaining: 0 };
+    let transientErrorAttempts = 0;
 
     while (!signal.aborted) {
       const outcome = await runRoundSafely();
@@ -1204,6 +1242,11 @@ export async function startRunner({
         if (oneShotState.stop) break;
         continue;
       }
+      if (outcome.transientError) {
+        transientErrorAttempts = await waitForTransientErrorRetry(transientErrorAttempts);
+        continue;
+      }
+      transientErrorAttempts = 0;
       if (outcome.progressed && outcome.supportedCount > 0) continue;
       scheduleState = await handleScheduledIdle(scheduleState, outcome);
     }
@@ -1294,7 +1337,26 @@ export async function restoreScheduledRunners(client) {
 
   let restored = 0;
   let failed = 0;
+  const restoredByOwner = new Map();
+  const restoredAccounts = new Set();
+
   for (const row of rows) {
+    const ownerCount = restoredByOwner.get(row.owner_id) ?? 0;
+    if (ownerCount >= 10) {
+      failed++;
+      updateScheduledRunner(row.id, {
+        lastError: 'Restore skipped: owner runner limit exceeded',
+      });
+      continue;
+    }
+    if (restoredAccounts.has(row.account_id)) {
+      failed++;
+      updateScheduledRunner(row.id, {
+        lastError: 'Restore skipped: Discord account already restored',
+      });
+      continue;
+    }
+
     try {
       const token = decryptRunnerToken(row, config.runnerTokenSecret);
       await startRunner({
@@ -1310,6 +1372,8 @@ export async function restoreScheduledRunners(client) {
         initialNextCheckAt: row.next_check_at,
       });
       restored++;
+      restoredByOwner.set(row.owner_id, ownerCount + 1);
+      restoredAccounts.add(row.account_id);
     } catch (err) {
       failed++;
       updateScheduledRunner(row.id, { lastError: `Restore failed: ${err.message}` });

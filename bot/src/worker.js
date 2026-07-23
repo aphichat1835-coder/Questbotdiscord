@@ -30,22 +30,37 @@ export function startWorker() {
   scheduleDatabaseBackup();
 }
 
-export async function stopWorker(timeoutMs = 5000) {
+export async function stopWorker(timeoutMs = null) {
   workerStopping = true;
   if (backupTimeout) {
     clearTimeout(backupTimeout);
     backupTimeout = null;
   }
 
-  let timeout;
-  await Promise.race([
-    Promise.allSettled([...activeTasks]),
-    new Promise((resolve) => {
-      timeout = setTimeout(resolve, timeoutMs);
-      timeout.unref?.();
-    }),
-  ]);
-  clearTimeout(timeout);
+  const pending = Promise.allSettled([...activeTasks]);
+  if (timeoutMs == null) {
+    await pending;
+  } else {
+    let timedOut = false;
+    let timeout;
+    try {
+      await Promise.race([
+        pending,
+        new Promise((resolve) => {
+          timeout = setTimeout(() => {
+            timedOut = true;
+            resolve();
+          }, timeoutMs);
+          timeout.unref?.();
+        }),
+      ]);
+    } finally {
+      clearTimeout(timeout);
+    }
+    if (timedOut && activeTasks.size > 0) {
+      throw new Error(`Database backup shutdown timed out with ${activeTasks.size} task(s) pending`);
+    }
+  }
   console.log('💾 Database backup scheduler stopped');
 }
 

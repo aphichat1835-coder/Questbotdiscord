@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { withOwnerAdmissionLock } from '../src/run-admission-lock.js';
+import {
+  withAccountAdmissionLock,
+  withOwnerAdmissionLock,
+} from '../src/run-admission-lock.js';
 
 function deferred() {
   let resolve;
@@ -53,4 +56,25 @@ test('different owners can perform admission concurrently', async () => {
 
   release.resolve();
   await Promise.all([first, second]);
+});
+
+test('account admission blocks different owners for the same Discord account', async () => {
+  const release = deferred();
+  const started = deferred();
+  const order = [];
+
+  const first = withAccountAdmissionLock('account-a', async () => {
+    order.push('owner-a');
+    started.resolve();
+    await release.promise;
+  });
+  await started.promise;
+  const second = withAccountAdmissionLock('account-a', async () => {
+    order.push('owner-b');
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(order, ['owner-a']);
+  release.resolve();
+  await Promise.all([first, second]);
+  assert.deepEqual(order, ['owner-a', 'owner-b']);
 });

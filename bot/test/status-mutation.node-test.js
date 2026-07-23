@@ -3,9 +3,9 @@ import test from 'node:test';
 import { fetchInputUrl } from './fetch-input.js';
 
 process.env.DISCORD_BOT_TOKEN = 'test-bot-token';
-process.env.DISCORD_CLIENT_ID = 'test-client';
-process.env.DISCORD_GUILD_ID = 'test-guild';
-process.env.OWNER_ID = 'test-owner';
+process.env.DISCORD_CLIENT_ID = '12345678901234567';
+process.env.DISCORD_GUILD_ID = '22345678901234567';
+process.env.OWNER_ID = '32345678901234567';
 process.env.RUNNER_TOKEN_SECRET = 'status-mutation-test-secret-123456';
 process.env.DATABASE_PATH = ':memory:';
 

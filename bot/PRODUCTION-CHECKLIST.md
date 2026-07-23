@@ -108,3 +108,10 @@ CI และ Smoke Test จึงไม่ใช่หลักฐานว่�
 ## 8. เกณฑ์อนุมัติ
 
 อนุมัติ Production ได้เมื่อ CI ผ่านทั้งหมด, Persistent storage ผ่านการ Restart, Permission ถูกต้อง, Runner limit/Stop lifecycle ผ่านการทดสอบ และผู้ดูแลยอมรับความเสี่ยงด้านบัญชีและข้อกำหนดแพลตฟอร์มอย่างชัดเจน
+
+## 9. Repository data safety
+
+- `git ls-files` ต้องไม่พบ `.db`, `.sqlite`, WAL/SHM หรือไฟล์ใน Runtime `data/backups`
+- ตรวจ Git history และ Secret scanning ก่อน Merge หากฐานข้อมูลเคยถูก Commit
+- หากพบข้อมูลรับรองจริง ให้หมุน Secret/Token ก่อน Deploy
+- ตั้ง Production Replica เป็น 1 หรือยืนยันว่าทุก Process ใช้ Shared `DATABASE_PATH` เดียวกันและ Lease ทำงาน

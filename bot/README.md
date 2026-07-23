@@ -199,3 +199,17 @@ npm audit --omit=dev --audit-level=high
 ใช้ [`PRODUCTION-CHECKLIST.md`](PRODUCTION-CHECKLIST.md) เพื่อตรวจ Environment, Persistent storage, Permission, Runner limit, Stop lifecycle, Restart/Restore, Health endpoint และ Rollback
 
 > **คำเตือน:** การทำงานอัตโนมัติด้วยข้อมูลรับรองของบัญชีผู้ใช้มีความเสี่ยงด้านบัญชีและข้อกำหนดของแพลตฟอร์ม Unit Test และ CI ไม่สามารถทำให้ความเสี่ยงนี้หายไป ผู้ดูแลต้องตรวจสอบกฎปัจจุบันและยอมรับความเสี่ยงก่อนใช้งานจริง
+
+## Runtime lease และข้อกำหนด Replica
+
+ระบบใช้ Lease ใน SQLite เพื่ออนุญาต Bot process เดียวต่อฐานข้อมูล หาก Process อื่นใช้ `DATABASE_PATH` เดียวกัน ระบบจะหยุดตั้งแต่ Startup
+
+Production ต้องตั้ง Replica เป็น 1 เว้นแต่ทุก Replica ใช้ Persistent SQLite ไฟล์เดียวกันจริง การใช้ Local database แยกกันในหลาย Replica ไม่รองรับ
+
+Runtime database และ Backup ห้าม Commit เข้า Git โดยเด็ดขาด CI จะตรวจ `.db`, `.sqlite`, WAL/SHM และโฟลเดอร์ `data/backups`
+
+## ขอบเขต Input และบัญชี
+
+- Modal รับสูงสุด 10 Token ต่อครั้ง
+- Discord account เดียวเปิด Runner ได้เพียงหนึ่งตัวทั้งระบบ แม้ผู้สั่งเป็น Manager คนละคน
+- Restore จำกัดไม่เกิน 10 Runner ต่อ Owner และข้าม Account ที่ซ้ำ

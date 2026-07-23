@@ -2,6 +2,16 @@ const SCHEDULE_HOURS = Object.freeze([0, 8, 16]);
 
 export const RECHECK_COUNT = 3;
 export const RECHECK_INTERVAL_MS = 5 * 60 * 1000;
+const TRANSIENT_RETRY_DELAYS_MS = Object.freeze([
+  5 * 60 * 1000,
+  15 * 60 * 1000,
+  30 * 60 * 1000,
+]);
+
+export function transientRetryDelayMs(attempt = 0) {
+  const index = Math.max(0, Math.min(TRANSIENT_RETRY_DELAYS_MS.length - 1, attempt));
+  return TRANSIENT_RETRY_DELAYS_MS[index];
+}
 
 function zonedParts(date, timeZone) {
   const parts = new Intl.DateTimeFormat('en-CA', {

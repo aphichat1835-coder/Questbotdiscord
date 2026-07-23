@@ -1,7 +1,7 @@
 process.env.DISCORD_BOT_TOKEN ??= 'smoke-bot-token';
-process.env.DISCORD_CLIENT_ID ??= 'smoke-client-id';
-process.env.DISCORD_GUILD_ID ??= 'smoke-guild-id';
-process.env.OWNER_ID ??= 'smoke-owner-id';
+process.env.DISCORD_CLIENT_ID ??= '12345678901234567';
+process.env.DISCORD_GUILD_ID ??= '22345678901234567';
+process.env.OWNER_ID ??= '32345678901234567';
 process.env.RUNNER_TOKEN_SECRET ??= 'smoke-secret-at-least-16-chars';
 process.env.DATABASE_PATH ??= ':memory:';
 

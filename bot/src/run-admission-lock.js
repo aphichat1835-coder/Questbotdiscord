@@ -1,27 +1,31 @@
 const ownerQueues = new Map();
+const accountQueues = new Map();
 
-/**
- * Serialize runner admission for one Discord owner. This keeps slot counting and
- * runner creation atomic relative to other /run or panel modal submissions from
- * the same owner, while allowing different owners to proceed independently.
- */
-export async function withOwnerAdmissionLock(ownerId, operation) {
-  if (!ownerId) throw new TypeError('ownerId is required');
+async function withKeyedLock(queues, key, operation, label) {
+  if (!key) throw new TypeError(`${label} is required`);
   if (typeof operation !== 'function') throw new TypeError('operation must be a function');
 
-  const previous = ownerQueues.get(ownerId) ?? Promise.resolve();
+  const previous = queues.get(key) ?? Promise.resolve();
   let release;
   const gate = new Promise((resolve) => {
     release = resolve;
   });
   const queued = previous.then(() => gate);
-  ownerQueues.set(ownerId, queued);
+  queues.set(key, queued);
 
   await previous;
   try {
     return await operation();
   } finally {
     release();
-    if (ownerQueues.get(ownerId) === queued) ownerQueues.delete(ownerId);
+    if (queues.get(key) === queued) queues.delete(key);
   }
+}
+
+export function withOwnerAdmissionLock(ownerId, operation) {
+  return withKeyedLock(ownerQueues, ownerId, operation, 'ownerId');
+}
+
+export function withAccountAdmissionLock(accountId, operation) {
+  return withKeyedLock(accountQueues, accountId, operation, 'accountId');
 }

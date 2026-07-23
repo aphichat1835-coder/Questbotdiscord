@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 
 process.env.DISCORD_BOT_TOKEN ??= 'fixture-bot-token';
-process.env.DISCORD_CLIENT_ID ??= 'fixture-client-id';
-process.env.DISCORD_GUILD_ID ??= 'fixture-guild-id';
-process.env.OWNER_ID ??= 'fixture-owner-id';
+process.env.DISCORD_CLIENT_ID ??= '12345678901234567';
+process.env.DISCORD_GUILD_ID ??= '22345678901234567';
+process.env.OWNER_ID ??= '32345678901234567';
 process.env.RUNNER_TOKEN_SECRET ??= 'fixture-secret-at-least-16-chars';
 process.env.DATABASE_PATH ??= ':memory:';
 

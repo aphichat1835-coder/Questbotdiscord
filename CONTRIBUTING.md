@@ -94,3 +94,13 @@ npm audit --omit=dev --audit-level=high
 เมื่อเปลี่ยน Command, Environment, Permission, Backup, Schedule, Health endpoint หรือ Test boundary ต้องอัปเดตเอกสารที่เกี่ยวข้องใน Commit เดียวกัน
 
 Read-only Smoke ไม่ยืนยัน Enroll/Progress/Heartbeat/Claim จริง ก่อน Deploy ให้ทำตาม [`bot/PRODUCTION-CHECKLIST.md`](bot/PRODUCTION-CHECKLIST.md) และบันทึก Commit SHA/Backup สำหรับ Rollback
+
+## Runtime data contract
+
+ห้าม Commit Runtime SQLite, WAL/SHM หรือ Backup ทุกชนิด ก่อน Push ให้ตรวจ:
+
+```bash
+git ls-files | grep -E '(^|/)(data|backups)/|\.(db|sqlite)(-wal|-shm)?$'
+```
+
+คำสั่งต้องไม่แสดงผล และ Test ใหม่ต้องอยู่ใต้ `bot/test/` เพื่อให้ `node --test` ค้นหาแบบ Recursive

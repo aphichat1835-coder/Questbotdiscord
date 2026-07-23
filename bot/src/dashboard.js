@@ -9,7 +9,7 @@ import {
 import { listScheduledRunners } from './scheduled-runner-store.js';
 import { reportCriticalError } from './error-reporter.js';
 
-const PORT = Number.parseInt(process.env.PORT ?? '3000', 10) || 3000;
+const PORT = config.port;
 let botClient = null;
 let server = null;
 const startedAt = Date.now();

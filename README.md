@@ -40,3 +40,13 @@ npm start
 ดูคู่มือติดตั้ง การตั้งค่า การสำรองข้อมูล การทดสอบ และ Production checklist ที่ [`bot/README.md`](bot/README.md)
 
 > **คำเตือน:** ระบบที่ใช้ข้อมูลรับรองของบัญชีผู้ใช้เพื่อทำงานอัตโนมัติมีความเสี่ยงด้านบัญชีและข้อกำหนดของแพลตฟอร์ม ผู้ดูแลต้องตรวจสอบกฎปัจจุบันและยอมรับความเสี่ยงก่อนใช้งานจริง
+
+## Runtime hardening
+
+- Runtime SQLite databases, WAL/SHM files and backup files are forbidden in Git and rejected by CI.
+- A shared-database runtime lease prevents two Bot processes from running against the same database.
+- Production must run exactly one Replica unless every Replica shares the same `DATABASE_PATH`.
+- The same Discord account cannot be admitted by different Managers at the same time.
+- Each Modal accepts at most 10 Token entries.
+- Mutation retry stops when Fresh-state verification itself cannot be completed.
+- Stopped Job history remains available per account but is excluded from the active aggregate health state.

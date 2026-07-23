@@ -3,21 +3,57 @@ import { config } from './config.js';
 let discordClient = null;
 const recentlyReported = new Map();
 const DEDUPE_MS = 60_000;
+const SENSITIVE_KEY = /authorization|token|secret|cookie|captcha|email/i;
 
 export function setErrorReporterClient(client) {
   discordClient = client;
 }
 
+function sanitizeValue(value, seen = new WeakSet(), depth = 0) {
+  if (value == null || typeof value !== 'object') return value;
+  if (depth >= 5) return '[TRUNCATED]';
+  if (seen.has(value)) return '[CIRCULAR]';
+  seen.add(value);
+
+  if (Array.isArray(value)) {
+    return value.slice(0, 50).map((item) => sanitizeValue(item, seen, depth + 1));
+  }
+
+  const output = {};
+  for (const [key, item] of Object.entries(value).slice(0, 50)) {
+    output[key] = SENSITIVE_KEY.test(key)
+      ? '[REDACTED]'
+      : sanitizeValue(item, seen, depth + 1);
+  }
+  return output;
+}
+
+function printable(value) {
+  if (typeof value === 'string') return value;
+  try {
+    return JSON.stringify(sanitizeValue(value));
+  } catch {
+    return String(value);
+  }
+}
+
 export function redactSensitive(value) {
-  return String(value ?? 'Unknown error')
-    .replace(/(authorization|token|secret)(\s*[:=]\s*)([^\s,;]+)/gi, '$1$2[REDACTED]')
+  return printable(value)
+    .replace(
+      /((?:authorization|token|secret|cookie|captcha(?:_[a-z0-9_]+)?|email)["']?\s*[:=]\s*["']?)([^"',}\s]+)/gi,
+      '$1[REDACTED]',
+    )
     .replace(/\b[\w-]{20,}\.[\w-]{5,}\.[\w-]{15,}\b/g, '[REDACTED_TOKEN]')
     .slice(0, 1500);
 }
 
+export function safeErrorMessage(error) {
+  return redactSensitive(error?.message ?? error ?? 'Unknown error');
+}
+
 export async function reportCriticalError(source, error, { notify = true } = {}) {
   const safeMessage = redactSensitive(error?.stack || error?.message || error);
-  console.error(`❌ [${source}]`, safeMessage);
+  console.error(`❌ [${redactSensitive(source)}]`, safeMessage);
 
   if (!notify || !config.logChannelId || !discordClient?.isReady?.()) return;
   const key = `${source}:${safeMessage.slice(0, 250)}`;
@@ -40,6 +76,9 @@ export async function reportCriticalError(source, error, { notify = true } = {})
       ].join('\n'),
     });
   } catch (reportError) {
-    console.error('❌ [ErrorReporter] Discord notification failed:', redactSensitive(reportError?.message));
+    console.error(
+      '❌ [ErrorReporter] Discord notification failed:',
+      safeErrorMessage(reportError),
+    );
   }
 }

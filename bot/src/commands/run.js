@@ -8,19 +8,24 @@ import {
 import { config } from '../config.js';
 import {
   fetchMe,
-  findUserJobByAccount,
+  findAnyJobByAccount,
   getUserJobs,
   startRunner,
 } from '../discord-runner.js';
 import { isAccountStopping } from '../runner-control.js';
-import { withOwnerAdmissionLock } from '../run-admission-lock.js';
+import {
+  withAccountAdmissionLock,
+  withOwnerAdmissionLock,
+} from '../run-admission-lock.js';
 import { isManager } from '../permissions.js';
 import {
   createScheduledRunner,
   deleteScheduledRunner,
-  findScheduledRunner,
+  findAnyScheduledRunner,
   listScheduledRunners,
 } from '../scheduled-runner-store.js';
+
+const MAX_TOKENS_PER_SUBMISSION = 10;
 
 export const data = new SlashCommandBuilder()
   .setName('run')
@@ -125,8 +130,8 @@ function accountConflict(ownerId, account) {
   if (isAccountStopping(ownerId, account.id)) {
     return `⏳ **${account.username}** กำลังหยุดและ Cleanup กรุณาลองใหม่อีกครั้ง`;
   }
-  if (findUserJobByAccount(ownerId, account.id) || findScheduledRunner(ownerId, account.id)) {
-    return `⚠️ **${account.username}** มี Runner ทำงานอยู่แล้ว`;
+  if (findAnyJobByAccount(account.id) || findAnyScheduledRunner(account.id)) {
+    return `⚠️ **${account.username}** มี Runner ทำงานอยู่แล้วในระบบ`;
   }
   return null;
 }
@@ -191,13 +196,11 @@ async function processTokens(context, tokens, freeSlots) {
       continue;
     }
 
-    const conflict = accountConflict(context.ownerId, inspection.account);
-    if (conflict) {
-      results.push(conflict);
-      continue;
-    }
-
-    const outcome = await startAccountRunner(context, token, inspection.account);
+    const outcome = await withAccountAdmissionLock(inspection.account.id, async () => {
+      const conflict = accountConflict(context.ownerId, inspection.account);
+      if (conflict) return { started: false, line: conflict };
+      return startAccountRunner(context, token, inspection.account);
+    });
     results.push(outcome.line);
     if (outcome.started) started++;
   }
@@ -246,6 +249,12 @@ export async function handleModal(interaction) {
   const tokens = parseTokens(interaction);
   if (!tokens.length) {
     return interaction.reply({ flags: 64, content: '❌ ไม่พบ token กรุณาใส่อย่างน้อย 1 token' });
+  }
+  if (tokens.length > MAX_TOKENS_PER_SUBMISSION) {
+    return interaction.reply({
+      flags: 64,
+      content: `❌ รับได้สูงสุด ${MAX_TOKENS_PER_SUBMISSION} token ต่อครั้ง กรุณาแบ่งส่งใหม่`,
+    });
   }
 
   await interaction.deferReply(modal.isScheduled ? {} : { flags: 64 });
