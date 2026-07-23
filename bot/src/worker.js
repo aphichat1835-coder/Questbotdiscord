@@ -6,6 +6,7 @@ import {
 } from './db.js';
 import { reportCriticalError } from './error-reporter.js';
 import { nextDailyTime } from './runner-schedule.js';
+import { settleWithTimeout } from './async-settle.js';
 
 const MILLISECONDS_PER_DAY = 24 * 60 * 60 * 1000;
 let backupTimeout = null;
@@ -37,30 +38,12 @@ export async function stopWorker(timeoutMs = null) {
     backupTimeout = null;
   }
 
-  const pending = Promise.allSettled([...activeTasks]);
-  if (timeoutMs == null) {
-    await pending;
-  } else {
-    let timedOut = false;
-    let timeout;
-    try {
-      await Promise.race([
-        pending,
-        new Promise((resolve) => {
-          timeout = setTimeout(() => {
-            timedOut = true;
-            resolve();
-          }, timeoutMs);
-          timeout.unref?.();
-        }),
-      ]);
-    } finally {
-      clearTimeout(timeout);
-    }
-    if (timedOut && activeTasks.size > 0) {
-      throw new Error(`Database backup shutdown timed out with ${activeTasks.size} task(s) pending`);
-    }
-  }
+  await settleWithTimeout(activeTasks, timeoutMs, {
+    pendingCount: () => activeTasks.size,
+    timeoutMessage: (count) => (
+      `Database backup shutdown timed out with ${count} task(s) pending`
+    ),
+  });
   console.log('💾 Database backup scheduler stopped');
 }
 

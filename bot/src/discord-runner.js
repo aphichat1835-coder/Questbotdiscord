@@ -10,6 +10,7 @@ import {
 } from './runner-schedule.js';
 import { fetchWithRetry } from './http-retry.js';
 import { executeVerifiedMutation } from './mutation-retry.js';
+import { settleWithTimeout } from './async-settle.js';
 import {
   clearQuestStatuses as clearStoredQuestStatuses,
   getQuestStatus as getStoredQuestStatus,
@@ -202,6 +203,22 @@ function questUnavailableReason(quest, now = Date.now()) {
 
 function isRunnableQuest(quest) {
   return isSupportedEvent(quest.eventName) && !questUnavailableReason(quest);
+}
+
+function oneShotFreshQuestFailureReason(error) {
+  if (error instanceof QuestCompatibilityError && /disappeared from Quest API/.test(error.message)) {
+    return 'ไม่พบ Quest ในรายการล่าสุดจาก Discord';
+  }
+  return 'ตรวจสอบสถานะ Quest ล่าสุดไม่สำเร็จ';
+}
+
+function oneShotUnavailableReason(quest) {
+  const reason = questUnavailableReason(quest);
+  if (reason === 'หมดเวลาแล้ว') return 'Quest หมดเวลาก่อนดำเนินการเสร็จ';
+  if (reason === 'Discord ยังไม่เปิดให้รับ Quest') {
+    return 'Discord ยังไม่เปิดให้ดำเนินการ Quest';
+  }
+  return reason || 'Quest ไม่พร้อมให้ดำเนินการ';
 }
 
 export function selectQuestClaimPlatform(quest) {
@@ -767,29 +784,10 @@ export async function shutdownRunners(timeoutMs = null) {
   const activeJobs = [...jobs.values()];
   for (const job of activeJobs) job.controller.abort();
 
-  const pending = Promise.allSettled([...activeRunPromises]);
-  if (timeoutMs == null) {
-    await pending;
-  } else {
-    let timedOut = false;
-    let timeout;
-    try {
-      await Promise.race([
-        pending,
-        new Promise((resolve) => {
-          timeout = setTimeout(() => {
-            timedOut = true;
-            resolve();
-          }, timeoutMs);
-        }),
-      ]);
-    } finally {
-      clearTimeout(timeout);
-    }
-    if (timedOut && activeRunPromises.size > 0) {
-      throw new Error(`Runner shutdown timed out with ${activeRunPromises.size} task(s) pending`);
-    }
-  }
+  await settleWithTimeout(activeRunPromises, timeoutMs, {
+    pendingCount: () => activeRunPromises.size,
+    timeoutMessage: (count) => `Runner shutdown timed out with ${count} task(s) pending`,
+  });
   return activeJobs.length;
 }
 
@@ -1062,22 +1060,6 @@ export async function startRunner({
     return oneShotOutcome();
   }
 
-  function oneShotFreshQuestFailureReason(error) {
-    if (error instanceof QuestCompatibilityError && /disappeared from Quest API/.test(error.message)) {
-      return 'ไม่พบ Quest ในรายการล่าสุดจาก Discord';
-    }
-    return 'ตรวจสอบสถานะ Quest ล่าสุดไม่สำเร็จ';
-  }
-
-  function oneShotUnavailableReason(quest) {
-    const reason = questUnavailableReason(quest);
-    if (reason === 'หมดเวลาแล้ว') return 'Quest หมดเวลาก่อนดำเนินการเสร็จ';
-    if (reason === 'Discord ยังไม่เปิดให้รับ Quest') {
-      return 'Discord ยังไม่เปิดให้ดำเนินการ Quest';
-    }
-    return reason || 'Quest ไม่พร้อมให้ดำเนินการ';
-  }
-
   async function reportOneShotSummary() {
     if (mode !== 'oneshot' || oneShotSummaryReported) return;
     oneShotSummaryReported = true;
@@ -1109,119 +1091,159 @@ export async function startRunner({
     await flush();
   }
 
-  async function runQuestRound() {
-    const allQuests = await fetchQuests(userToken, signal);
-    let runnable;
-    let initialQuest;
+  function idleQuestOutcome(supportedCount = 0) {
+    return { attempted: false, progressed: false, supportedCount };
+  }
 
-    if (mode === 'oneshot') {
-      if (!oneShotSession) {
-        const initialRunnable = allQuests.filter(
-          (quest) => !quest.completed && isRunnableQuest(quest),
-        );
-        oneShotSession = createOneShotQuestSession(initialRunnable);
-        await reportOneShotInitialState();
-      }
+  function attemptedQuestOutcome(supportedCount) {
+    return { attempted: true, progressed: false, supportedCount };
+  }
 
-      if (isOneShotSessionComplete(oneShotSession)) {
-        return { attempted: false, progressed: false, supportedCount: 0 };
-      }
-
-      initialQuest = getNextPendingOneShotQuest(oneShotSession);
-      if (!initialQuest) {
-        return { attempted: false, progressed: false, supportedCount: 0 };
-      }
-      runnable = [initialQuest];
-    } else {
-      for (const quest of allQuests.filter((item) => item.completed && !item.claimed)) {
-        if (signal.aborted) throw new Error('aborted');
-        await claimSilently(quest);
-      }
-
-      runnable = allQuests.filter((quest) => !quest.completed && isRunnableQuest(quest));
-      if (!countAlreadyReported) await reportRunnableCount(runnable.length);
-      countAlreadyReported = false;
-      if (runnable.length === 0) {
-        return { attempted: false, progressed: false, supportedCount: 0 };
-      }
-      initialQuest = runnable[0];
+  async function prepareOneShotRound(allQuests) {
+    if (!oneShotSession) {
+      const initialRunnable = allQuests.filter(
+        (quest) => !quest.completed && isRunnableQuest(quest),
+      );
+      oneShotSession = createOneShotQuestSession(initialRunnable);
+      await reportOneShotInitialState();
+    }
+    if (isOneShotSessionComplete(oneShotSession)) {
+      return { outcome: idleQuestOutcome() };
     }
 
-    let quest;
+    const initialQuest = getNextPendingOneShotQuest(oneShotSession);
+    if (!initialQuest) return { outcome: idleQuestOutcome() };
+    return { runnable: [initialQuest], initialQuest };
+  }
+
+  async function claimScheduledCompletions(allQuests) {
+    const completed = allQuests.filter((quest) => quest.completed && !quest.claimed);
+    for (const quest of completed) {
+      if (signal.aborted) throw new Error('aborted');
+      await claimSilently(quest);
+    }
+  }
+
+  async function prepareScheduledRound(allQuests) {
+    await claimScheduledCompletions(allQuests);
+    const runnable = allQuests.filter((quest) => !quest.completed && isRunnableQuest(quest));
+    if (!countAlreadyReported) await reportRunnableCount(runnable.length);
+    countAlreadyReported = false;
+    if (runnable.length === 0) return { outcome: idleQuestOutcome() };
+    return { runnable, initialQuest: runnable[0] };
+  }
+
+  function prepareQuestRound(allQuests) {
+    return mode === 'oneshot'
+      ? prepareOneShotRound(allQuests)
+      : prepareScheduledRound(allQuests);
+  }
+
+  async function refreshRoundQuest(selection) {
     try {
-      quest = await fetchFreshQuest(userToken, initialQuest.id, signal);
+      return {
+        quest: await fetchFreshQuest(userToken, selection.initialQuest.id, signal),
+      };
     } catch (error) {
       rethrowFatalAuth(error);
       if (mode === 'oneshot') {
-        return reportOneShotFailure(initialQuest, oneShotFreshQuestFailureReason(error));
+        return {
+          outcome: await reportOneShotFailure(
+            selection.initialQuest,
+            oneShotFreshQuestFailureReason(error),
+          ),
+        };
       }
-      addLog(`⚠️ ${username}: refresh failed — ${initialQuest.name} — ${error.message}`);
+      addLog(`⚠️ ${username}: refresh failed — ${selection.initialQuest.name} — ${error.message}`);
       await render();
-      return { attempted: true, progressed: false, supportedCount: runnable.length };
+      return { outcome: attemptedQuestOutcome(selection.runnable.length) };
     }
+  }
 
+  async function resolveQuestAvailability(quest, selection) {
+    if (!quest.completed && isRunnableQuest(quest)) return null;
     if (quest.completed) {
       if (mode === 'oneshot') {
         await claimSilently(quest);
         return reportOneShotExternalCompletion(quest);
       }
-      return { attempted: false, progressed: false, supportedCount: runnable.length };
+      return idleQuestOutcome(selection.runnable.length);
     }
-    if (!isRunnableQuest(quest)) {
-      if (mode === 'oneshot') {
-        return reportOneShotFailure(quest, oneShotUnavailableReason(quest));
-      }
-      return { attempted: false, progressed: false, supportedCount: runnable.length };
+    if (mode === 'oneshot') {
+      return reportOneShotFailure(quest, oneShotUnavailableReason(quest));
     }
+    return idleQuestOutcome(selection.runnable.length);
+  }
 
+  async function announceQuestPreparation(quest) {
     if (mode === 'oneshot') {
       markOneShotQuestRunning(oneShotSession, quest.id, quest.progressSecs);
     }
     addLog(questActivityLine('⏭️', `กำลังเตรียมทำ ${quest.name}`));
     await render();
+  }
 
-    if (!quest.enrolled) {
-      try {
-        await enrollQuest(userToken, quest.id, signal);
-        const enrolled = await waitForQuestState(
-          userToken,
-          quest.id,
-          (fresh) => fresh.enrolled,
-          signal,
-        );
-        if (!enrolled) {
-          if (mode === 'oneshot') {
-            return reportOneShotFailure(quest, 'Discord ยังไม่ยืนยันการรับ Quest');
-          }
-          addLog(`⚠️ ${username}: ${quest.name} — Discord ยังไม่ยืนยันการรับ Quest`);
-          await render();
-          return { attempted: true, progressed: false, supportedCount: runnable.length };
-        }
-        quest = enrolled;
-      } catch (error) {
-        rethrowFatalAuth(error);
-        if (mode === 'oneshot') {
-          return reportOneShotFailure(quest, 'รับ Quest ไม่สำเร็จ');
-        }
-        addLog(`⚠️ ${username}: enroll failed — ${quest.name} — ${error.message}`);
-        await render();
-        return { attempted: true, progressed: false, supportedCount: runnable.length };
-      }
+  async function enrollmentFailureOutcome(quest, selection, reason, scheduledMessage) {
+    if (mode === 'oneshot') return reportOneShotFailure(quest, reason);
+    addLog(scheduledMessage);
+    await render();
+    return attemptedQuestOutcome(selection.runnable.length);
+  }
+
+  async function ensureQuestEnrollment(quest, selection) {
+    if (quest.enrolled) return { quest };
+    try {
+      await enrollQuest(userToken, quest.id, signal);
+      const enrolled = await waitForQuestState(
+        userToken,
+        quest.id,
+        (fresh) => fresh.enrolled,
+        signal,
+      );
+      if (enrolled) return { quest: enrolled };
+      return {
+        outcome: await enrollmentFailureOutcome(
+          quest,
+          selection,
+          'Discord ยังไม่ยืนยันการรับ Quest',
+          `⚠️ ${username}: ${quest.name} — Discord ยังไม่ยืนยันการรับ Quest`,
+        ),
+      };
+    } catch (error) {
+      rethrowFatalAuth(error);
+      return {
+        outcome: await enrollmentFailureOutcome(
+          quest,
+          selection,
+          'รับ Quest ไม่สำเร็จ',
+          `⚠️ ${username}: enroll failed — ${quest.name} — ${error.message}`,
+        ),
+      };
     }
+  }
 
+  async function announceQuestProgress(quest) {
     addLog(questActivityLine('▶️', `กำลังทำ ${quest.name}`));
     const initialPercent = Math.min(100, Math.max(0, Math.floor(quest.progress)));
     addLog(questActivityLine('⌛', `${quest.name} ${initialPercent}%`));
     await render();
+    return initialPercent;
+  }
 
+  function createQuestProgressHooks(quest, initialPercent) {
     let nextCheckpoint = Math.max(25, (Math.floor(initialPercent / 25) + 1) * 25);
     let lastReportedPercent = initialPercent;
     let lastVerifiedProgressSecs = quest.progressSecs;
     let completionSeen = quest.completed;
+
     const onServerProgress = async (fresh) => {
       const percent = fresh.completed ? 100 : Math.min(100, Math.floor(fresh.progress));
       if (fresh.progressSecs > lastVerifiedProgressSecs || (fresh.completed && !completionSeen)) {
-        recordQuestVerification(currentQuestStatusContext().key, 'progress', currentQuestStatusContext());
+        recordQuestVerification(
+          currentQuestStatusContext().key,
+          'progress',
+          currentQuestStatusContext(),
+        );
       }
       if (mode === 'oneshot') {
         recordOneShotVerifiedProgress(
@@ -1242,75 +1264,95 @@ export async function startRunner({
       }
       await render();
     };
+
     const onMutationAccepted = () => {
       if (mode === 'oneshot') {
         markOneShotProgressMutationSent(oneShotSession, quest.id);
       }
     };
 
-    const runner = isVideoEvent(quest.eventName) ? runVideoQuest : runGameQuest;
-    let runnerError = null;
-    await runner(
-      userToken,
-      quest,
-      signal,
-      onServerProgress,
-      speedMultiplier,
-      heartbeatInterval,
-      onMutationAccepted,
-    ).catch((error) => {
-      rethrowFatalAuth(error);
-      runnerError = error;
-      if (mode !== 'oneshot' && error.message !== 'aborted') {
-        addLog(`⚠️ ${username}: ERROR ${error.message}`);
-      }
-    });
+    return { onServerProgress, onMutationAccepted };
+  }
 
-    if (signal.aborted) throw new Error('aborted');
-    if (runnerError) {
+  async function executeQuestProgress(quest, selection, hooks) {
+    const runner = isVideoEvent(quest.eventName) ? runVideoQuest : runGameQuest;
+    try {
+      await runner(
+        userToken,
+        quest,
+        signal,
+        hooks.onServerProgress,
+        speedMultiplier,
+        heartbeatInterval,
+        hooks.onMutationAccepted,
+      );
+      if (signal.aborted) throw new Error('aborted');
+      return null;
+    } catch (error) {
+      rethrowFatalAuth(error);
+      if (signal.aborted) throw new Error('aborted');
       if (mode === 'oneshot') {
         return reportOneShotFailure(quest, 'การส่งความคืบหน้าไม่สำเร็จ');
       }
+      if (error.message !== 'aborted') {
+        addLog(`⚠️ ${username}: ERROR ${error.message}`);
+      }
       await render();
-      return { attempted: true, progressed: false, supportedCount: runnable.length };
+      return attemptedQuestOutcome(selection.runnable.length);
     }
+  }
 
-    let fresh;
+  async function verificationFailureOutcome(quest, selection, reason, scheduledMessage) {
+    if (mode === 'oneshot') return reportOneShotFailure(quest, reason);
+    addLog(scheduledMessage);
+    await render();
+    return attemptedQuestOutcome(selection.runnable.length);
+  }
+
+  async function verifyQuestCompletion(quest, selection) {
     try {
-      fresh = await waitForQuestState(
+      const fresh = await waitForQuestState(
         userToken,
         quest.id,
         (item) => item.completed,
         signal,
       );
+      if (fresh) return { fresh };
+      return {
+        outcome: await verificationFailureOutcome(
+          quest,
+          selection,
+          'Discord ยังไม่ยืนยันสถานะเสร็จ',
+          `⚠️ ${username}: ${quest.name} — Discord ยังไม่ส่ง completed_at หลังตรวจ 3 ครั้ง`,
+        ),
+      };
     } catch (error) {
       rethrowFatalAuth(error);
-      if (mode === 'oneshot') {
-        return reportOneShotFailure(quest, 'ตรวจสอบผลลัพธ์กับ Discord ไม่สำเร็จ');
-      }
-      addLog(`⚠️ ${username}: verify failed — ${error.message}`);
-      await render();
-      return { attempted: true, progressed: false, supportedCount: runnable.length };
+      return {
+        outcome: await verificationFailureOutcome(
+          quest,
+          selection,
+          'ตรวจสอบผลลัพธ์กับ Discord ไม่สำเร็จ',
+          `⚠️ ${username}: verify failed — ${error.message}`,
+        ),
+      };
     }
-    if (!fresh) {
-      if (mode === 'oneshot') {
-        return reportOneShotFailure(quest, 'Discord ยังไม่ยืนยันสถานะเสร็จ');
-      }
-      addLog(`⚠️ ${username}: ${quest.name} — Discord ยังไม่ส่ง completed_at หลังตรวจ 3 ครั้ง`);
-      await render();
-      return { attempted: true, progressed: false, supportedCount: runnable.length };
-    }
+  }
 
-    await onServerProgress(fresh);
-    recordQuestVerification(currentQuestStatusContext().key, 'completion', currentQuestStatusContext());
+  async function finalizeQuestCompletion(fresh, hooks) {
+    await hooks.onServerProgress(fresh);
+    recordQuestVerification(
+      currentQuestStatusContext().key,
+      'completion',
+      currentQuestStatusContext(),
+    );
 
     if (mode === 'oneshot') {
       const status = completeOneShotQuest(oneShotSession, fresh.id);
       await claimSilently(fresh);
-      if (status === ONE_SHOT_QUEST_STATUS.COMPLETED_BY_BOT) {
-        return reportOneShotBotCompletion(fresh);
-      }
-      return reportOneShotExternalCompletion(fresh);
+      return status === ONE_SHOT_QUEST_STATUS.COMPLETED_BY_BOT
+        ? reportOneShotBotCompletion(fresh)
+        : reportOneShotExternalCompletion(fresh);
     }
 
     await claimSilently(fresh);
@@ -1321,6 +1363,30 @@ export async function startRunner({
     await reportRunnableCount(supportedRemaining);
     countAlreadyReported = true;
     return { attempted: true, progressed: true, supportedCount: supportedRemaining };
+  }
+
+  async function runQuestRound() {
+    const selection = await prepareQuestRound(await fetchQuests(userToken, signal));
+    if (selection.outcome) return selection.outcome;
+
+    const refreshed = await refreshRoundQuest(selection);
+    if (refreshed.outcome) return refreshed.outcome;
+
+    const availabilityOutcome = await resolveQuestAvailability(refreshed.quest, selection);
+    if (availabilityOutcome) return availabilityOutcome;
+
+    await announceQuestPreparation(refreshed.quest);
+    const enrollment = await ensureQuestEnrollment(refreshed.quest, selection);
+    if (enrollment.outcome) return enrollment.outcome;
+
+    const initialPercent = await announceQuestProgress(enrollment.quest);
+    const hooks = createQuestProgressHooks(enrollment.quest, initialPercent);
+    const progressOutcome = await executeQuestProgress(enrollment.quest, selection, hooks);
+    if (progressOutcome) return progressOutcome;
+
+    const verification = await verifyQuestCompletion(enrollment.quest, selection);
+    if (verification.outcome) return verification.outcome;
+    return finalizeQuestCompletion(verification.fresh, hooks);
   }
 
   async function initializeRunnerSession() {
@@ -1589,55 +1655,99 @@ async function fetchFreshQuest(token, questId, signal) {
   return fresh;
 }
 
-async function runVideoQuest(token, quest, signal, onServerProgress, _speedMultiplier, _heartbeatSecs, onMutationAccepted = () => {}) {
+const VIDEO_SUBMISSION_INTERVAL_SECS = 10;
+const VIDEO_ALLOWANCE_WAIT_LIMIT = 120;
+const VIDEO_UNCHANGED_CHECK_LIMIT = 8;
+
+function nextVideoTimestamp(current, target, enrolledAtMs, now = Date.now()) {
+  const maxAllowed = Number.isFinite(enrolledAtMs)
+    ? Math.floor((now - enrolledAtMs) / 1000) + VIDEO_SUBMISSION_INTERVAL_SECS
+    : current + 1;
+  return Math.min(
+    target,
+    current + VIDEO_SUBMISSION_INTERVAL_SECS,
+    maxAllowed,
+  );
+}
+
+async function waitForVideoTimestampAllowance(waitCount, signal) {
+  const nextWaitCount = waitCount + 1;
+  if (nextWaitCount >= VIDEO_ALLOWANCE_WAIT_LIMIT) {
+    throw new Error('รอ video timestamp allowance จาก Discord เกิน 2 นาที');
+  }
+  await sleep(1000, signal);
+  return nextWaitCount;
+}
+
+function nextVideoUnchangedChecks(fresh, current, unchangedChecks) {
+  return fresh.progressSecs > current || fresh.completed
+    ? 0
+    : unchangedChecks + 1;
+}
+
+function assertVideoProgress(unchangedChecks) {
+  if (unchangedChecks >= VIDEO_UNCHANGED_CHECK_LIMIT) {
+    throw new Error('Discord ไม่ยืนยัน video progress หลังตรวจ 8 ครั้ง');
+  }
+}
+
+async function submitVideoProgressStep(
+  token,
+  quest,
+  timestamp,
+  signal,
+  onServerProgress,
+  onMutationAccepted,
+) {
+  const mutation = await sendVideoProgress(token, quest.id, timestamp, signal);
+  if (!mutation?.verifiedAfterFailure) onMutationAccepted();
+  await sleep(1000, signal);
+  const fresh = await fetchFreshQuest(token, quest.id, signal);
+  await onServerProgress(fresh);
+  return fresh;
+}
+
+async function runVideoQuest(
+  token,
+  quest,
+  signal,
+  onServerProgress,
+  _speedMultiplier,
+  _heartbeatSecs,
+  onMutationAccepted = () => {},
+) {
   let fresh = quest;
   let current = fresh.progressSecs;
   const target = fresh.secondsNeeded;
-  const submissionIntervalSecs = 10;
-  const step = submissionIntervalSecs;
   const enrolledAtMs = Date.parse(fresh.enrolledAt);
   let unchangedChecks = 0;
   let allowanceWaits = 0;
 
   while (!fresh.completed && current < target) {
     if (signal.aborted) throw new Error('aborted');
-
-    // Discord limits video timestamps to roughly the elapsed enrollment time.
-    // Never report an arbitrarily accelerated local value as accepted progress.
-    const maxAllowed = Number.isFinite(enrolledAtMs)
-      ? Math.floor((Date.now() - enrolledAtMs) / 1000) + 10
-      : current + 1;
-    const nextTimestamp = Math.min(target, current + step, maxAllowed);
-    if (nextTimestamp <= current) {
-      allowanceWaits++;
-      if (allowanceWaits >= 120) {
-        throw new Error('รอ video timestamp allowance จาก Discord เกิน 2 นาที');
-      }
-      await sleep(1000, signal);
+    const timestamp = nextVideoTimestamp(current, target, enrolledAtMs);
+    if (timestamp <= current) {
+      allowanceWaits = await waitForVideoTimestampAllowance(allowanceWaits, signal);
       continue;
     }
+
     allowanceWaits = 0;
-
-    const mutation = await sendVideoProgress(token, quest.id, nextTimestamp, signal);
-    if (!mutation?.verifiedAfterFailure) onMutationAccepted();
-    await sleep(1000, signal);
-    fresh = await fetchFreshQuest(token, quest.id, signal);
-    await onServerProgress(fresh);
-
-    if (fresh.progressSecs > current || fresh.completed) {
-      unchangedChecks = 0;
-    } else {
-      unchangedChecks++;
-    }
-    if (unchangedChecks >= 8) {
-      throw new Error('Discord ไม่ยืนยัน video progress หลังตรวจ 8 ครั้ง');
-    }
+    fresh = await submitVideoProgressStep(
+      token,
+      quest,
+      timestamp,
+      signal,
+      onServerProgress,
+      onMutationAccepted,
+    );
+    unchangedChecks = nextVideoUnchangedChecks(fresh, current, unchangedChecks);
+    assertVideoProgress(unchangedChecks);
     current = Math.max(current, fresh.progressSecs);
+
     if (!fresh.completed && current < target) {
-      await sleep((submissionIntervalSecs - 1) * 1000, signal);
+      await sleep((VIDEO_SUBMISSION_INTERVAL_SECS - 1) * 1000, signal);
     }
   }
-
   return fresh;
 }
 
