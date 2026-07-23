@@ -75,32 +75,8 @@ jobs:
 
           path = Path('bot/src/discord-runner.js')
           content = path.read_text(encoding='utf-8')
-          old = """      try {
-                if (!liveMsg) {
-                  const ch = await resolveOutputChannel();
-                  if (!ch?.isTextBased?.()) return;
-                  liveMsg = await ch.send({ content });
-                } else {
-                  await liveMsg.edit({ content });
-                }
-              } catch (err) {
-                console.warn(`[Runner:${jobKey}] status message failed — ${err.message}`);
-              }
-          """
-          new = """      const editingExisting = Boolean(liveMsg);
-              try {
-                if (!liveMsg) {
-                  const ch = await resolveOutputChannel();
-                  if (!ch?.isTextBased?.()) return;
-                  liveMsg = await ch.send({ content });
-                } else {
-                  await liveMsg.edit({ content });
-                }
-              } catch (err) {
-                if (editingExisting) liveMsg = null;
-                console.warn(`[Runner:${jobKey}] status message failed — ${err.message}`);
-              }
-          """
+          old = "      try {\n        if (!liveMsg) {\n          const ch = await resolveOutputChannel();\n          if (!ch?.isTextBased?.()) return;\n          liveMsg = await ch.send({ content });\n        } else {\n          await liveMsg.edit({ content });\n        }\n      } catch (err) {\n        console.warn(`[Runner:${jobKey}] status message failed — ${err.message}`);\n      }\n"
+          new = "      const editingExisting = Boolean(liveMsg);\n      try {\n        if (!liveMsg) {\n          const ch = await resolveOutputChannel();\n          if (!ch?.isTextBased?.()) return;\n          liveMsg = await ch.send({ content });\n        } else {\n          await liveMsg.edit({ content });\n        }\n      } catch (err) {\n        if (editingExisting) liveMsg = null;\n        console.warn(`[Runner:${jobKey}] status message failed — ${err.message}`);\n      }\n"
           if content.count(old) != 1:
               raise SystemExit(f'status message block expected once, found {content.count(old)}')
           path.write_text(content.replace(old, new, 1), encoding='utf-8')
