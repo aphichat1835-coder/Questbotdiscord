@@ -1,5 +1,5 @@
 name: Apply external completion claim
-# validation-trigger: 2
+# validation-trigger: 3
 
 on:
   pull_request:
