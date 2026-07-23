@@ -60,24 +60,16 @@ export function isFatalAuthError(error) {
   return error?.fatalAuth === true;
 }
 
-// ── Build info — hardcoded fallbacks, overwritten by refreshBuildInfo() ────────
-const FALLBACK = Object.freeze({
-  clientVersion:   '1.0.9267',
-  chromeVersion:   '138.0.7204.251',
-  electronVersion: '37.6.0',
-  buildNumber:     572700,
-  nativeBuildNumber: 47491,
-});
-
-let live = {
-  clientVersion: process.env.DISCORD_CLIENT_VERSION?.trim() || FALLBACK.clientVersion,
-  chromeVersion: process.env.DISCORD_CHROME_VERSION?.trim() || FALLBACK.chromeVersion,
-  electronVersion: process.env.DISCORD_ELECTRON_VERSION?.trim() || FALLBACK.electronVersion,
-  buildNumber: Number.parseInt(process.env.DISCORD_BUILD_NUMBER ?? '', 10) || FALLBACK.buildNumber,
-  nativeBuildNumber: Number.parseInt(process.env.DISCORD_NATIVE_BUILD_NUMBER ?? '', 10) || FALLBACK.nativeBuildNumber,
+// ── Validated Discord client profile ───────────────────────────────────────────
+const live = {
+  clientVersion: config.discordClientVersion,
+  chromeVersion: config.discordChromeVersion,
+  electronVersion: config.discordElectronVersion,
+  buildNumber: config.discordBuildNumber,
+  nativeBuildNumber: config.discordNativeBuildNumber,
 };
-const clientLocale = process.env.DISCORD_LOCALE?.trim() || 'en-US';
-const clientTimezone = process.env.DISCORD_TIMEZONE?.trim() || config.timezone;
+const clientLocale = config.discordLocale;
+const clientTimezone = config.discordTimezone;
 
 // ── Auto-fetch helpers ─────────────────────────────────────────────────────────
 
@@ -644,6 +636,30 @@ function rewardPlatforms(config) {
   return platforms.map(Number).filter(Number.isInteger);
 }
 
+function questProgressPercent(completedSeconds, secondsNeeded) {
+  if (secondsNeeded <= 0) return 0;
+  return Math.min(100, (completedSeconds / secondsNeeded) * 100);
+}
+
+function questConfigMetadata(config, rawId) {
+  return {
+    name: config.messages?.quest_name ?? rawId,
+    applicationId: config.application?.id ?? null,
+    rewardPlatforms: rewardPlatforms(config),
+    startsAt: config.starts_at ?? null,
+    expiresAt: config.expires_at ?? null,
+  };
+}
+
+function questUserMetadata(userStatus) {
+  return {
+    enrolledAt: userStatus.enrolled_at ?? null,
+    enrolled: Boolean(userStatus.enrolled_at),
+    completed: Boolean(userStatus.completed_at),
+    claimed: Boolean(userStatus.claimed_at) || userStatus.orb_quantity_claimed != null,
+  };
+}
+
 export function normalizeQuest(raw) {
   if (!raw || typeof raw !== 'object' || !raw.id) {
     throw new QuestCompatibilityError('Quest item is missing a valid id');
@@ -662,27 +678,17 @@ export function normalizeQuest(raw) {
     selectedTask.type,
     validation.secondsNeeded,
   );
-  const progress = validation.secondsNeeded > 0
-    ? Math.min(100, (completedSeconds / validation.secondsNeeded) * 100)
-    : 0;
 
   return {
     id: raw.id,
-    name: config.messages?.quest_name ?? raw.id,
+    ...questConfigMetadata(config, raw.id),
     eventName: selectedTask.type,
-    progress,
+    progress: questProgressPercent(completedSeconds, validation.secondsNeeded),
     secondsNeeded: validation.secondsNeeded,
     progressSecs: completedSeconds,
     progressKey: selectedTask.key,
-    applicationId: config.application?.id ?? null,
-    rewardPlatforms: rewardPlatforms(config),
     autoSupported: validation.autoSupported,
-    startsAt: config.starts_at ?? null,
-    expiresAt: config.expires_at ?? null,
-    enrolledAt: userStatus.enrolled_at ?? null,
-    enrolled: Boolean(userStatus.enrolled_at),
-    completed: Boolean(userStatus.completed_at),
-    claimed: Boolean(userStatus.claimed_at) || userStatus.orb_quantity_claimed != null,
+    ...questUserMetadata(userStatus),
     schemaIssues: validation.schemaIssues,
   };
 }
@@ -1183,7 +1189,7 @@ export async function startRunner({
     await render();
   }
 
-  async function enrollmentFailureOutcome(quest, selection, reason, scheduledMessage) {
+  async function questFailureOutcome(quest, selection, reason, scheduledMessage) {
     if (mode === 'oneshot') return reportOneShotFailure(quest, reason);
     addLog(scheduledMessage);
     await render();
@@ -1202,7 +1208,7 @@ export async function startRunner({
       );
       if (enrolled) return { quest: enrolled };
       return {
-        outcome: await enrollmentFailureOutcome(
+        outcome: await questFailureOutcome(
           quest,
           selection,
           'Discord ยังไม่ยืนยันการรับ Quest',
@@ -1212,7 +1218,7 @@ export async function startRunner({
     } catch (error) {
       rethrowFatalAuth(error);
       return {
-        outcome: await enrollmentFailureOutcome(
+        outcome: await questFailureOutcome(
           quest,
           selection,
           'รับ Quest ไม่สำเร็จ',
@@ -1302,13 +1308,6 @@ export async function startRunner({
     }
   }
 
-  async function verificationFailureOutcome(quest, selection, reason, scheduledMessage) {
-    if (mode === 'oneshot') return reportOneShotFailure(quest, reason);
-    addLog(scheduledMessage);
-    await render();
-    return attemptedQuestOutcome(selection.runnable.length);
-  }
-
   async function verifyQuestCompletion(quest, selection) {
     try {
       const fresh = await waitForQuestState(
@@ -1319,7 +1318,7 @@ export async function startRunner({
       );
       if (fresh) return { fresh };
       return {
-        outcome: await verificationFailureOutcome(
+        outcome: await questFailureOutcome(
           quest,
           selection,
           'Discord ยังไม่ยืนยันสถานะเสร็จ',
@@ -1329,7 +1328,7 @@ export async function startRunner({
     } catch (error) {
       rethrowFatalAuth(error);
       return {
-        outcome: await verificationFailureOutcome(
+        outcome: await questFailureOutcome(
           quest,
           selection,
           'ตรวจสอบผลลัพธ์กับ Discord ไม่สำเร็จ',

@@ -14,6 +14,7 @@ const { getUserJobs, startRunner, shutdownRunners } = await import('../src/disco
 const {
   isAccountStopping,
   stopRunnerAndWait,
+  summarizeStopResults,
 } = await import('../src/runner-control.js');
 const { closeDatabase } = await import('../src/db.js');
 
@@ -48,6 +49,14 @@ test.after(async () => {
     fs.rm(`${process.env.DATABASE_PATH}-wal`, { force: true }),
     fs.rm(`${process.env.DATABASE_PATH}-shm`, { force: true }),
   ]);
+});
+
+test('stop result summary is shared by runner control and stop command flows', () => {
+  assert.deepEqual(summarizeStopResults([
+    { accepted: true, cleanupComplete: true },
+    { accepted: true, cleanupComplete: false },
+    { accepted: false, cleanupComplete: false },
+  ]), { accepted: 2, completed: 1, pending: 1 });
 });
 
 test('stop control blocks restart state until runner cleanup finishes', async () => {

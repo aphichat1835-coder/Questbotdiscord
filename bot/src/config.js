@@ -61,6 +61,7 @@ function validateVersion(name, value) {
   if (value && !/^\d+(?:\.\d+){1,3}$/.test(value)) {
     configurationError(`${name} must contain numeric dot-separated version parts`);
   }
+  return value;
 }
 
 const clientId = validateSnowflake('DISCORD_CLIENT_ID', readRequired('DISCORD_CLIENT_ID'));
@@ -82,15 +83,25 @@ const discordTimezone = validateTimeZone(
   readOptional('DISCORD_TIMEZONE', timezone),
 );
 
-for (const name of [
+const discordClientVersion = validateVersion(
   'DISCORD_CLIENT_VERSION',
+  readOptional('DISCORD_CLIENT_VERSION', '1.0.9267'),
+);
+const discordChromeVersion = validateVersion(
   'DISCORD_CHROME_VERSION',
+  readOptional('DISCORD_CHROME_VERSION', '138.0.7204.251'),
+);
+const discordElectronVersion = validateVersion(
   'DISCORD_ELECTRON_VERSION',
-]) {
-  validateVersion(name, readOptional(name));
-}
-readInteger('DISCORD_BUILD_NUMBER', 0, { min: 0 });
-readInteger('DISCORD_NATIVE_BUILD_NUMBER', 0, { min: 0 });
+  readOptional('DISCORD_ELECTRON_VERSION', '37.6.0'),
+);
+const discordBuildNumber = readInteger('DISCORD_BUILD_NUMBER', 572700, { min: 0 });
+const discordNativeBuildNumber = readInteger(
+  'DISCORD_NATIVE_BUILD_NUMBER',
+  47491,
+  { min: 0 },
+);
+const discordLocale = readOptional('DISCORD_LOCALE', 'en-US');
 
 export const config = Object.freeze({
   token: readRequired('DISCORD_BOT_TOKEN'),
@@ -99,6 +110,12 @@ export const config = Object.freeze({
   ownerId,
   timezone,
   discordTimezone,
+  discordLocale,
+  discordClientVersion,
+  discordChromeVersion,
+  discordElectronVersion,
+  discordBuildNumber,
+  discordNativeBuildNumber,
   logChannelId,
   managerRoleId,
   databasePath: readOptional('DATABASE_PATH', './data/quests.db'),

@@ -1,10 +1,6 @@
-const MAX_RETRY_DELAY_MS = 60_000;
+import { abortableDelay } from './abortable-delay.js';
 
-function abortedError() {
-  const error = new Error('aborted');
-  error.name = 'AbortError';
-  return error;
-}
+const MAX_RETRY_DELAY_MS = 60_000;
 
 export function isUncertainMutationFailure(error) {
   if (!error) return false;
@@ -23,21 +19,8 @@ export function mutationRetryDelayMs(error) {
   return Math.min(MAX_RETRY_DELAY_MS, Math.ceil(seconds * 1000));
 }
 
-export async function waitForMutationRetry(ms, signal) {
-  if (signal?.aborted) throw abortedError();
-  await new Promise((resolve, reject) => {
-    let timer;
-    const onAbort = () => {
-      clearTimeout(timer);
-      reject(abortedError());
-    };
-    timer = setTimeout(() => {
-      signal?.removeEventListener('abort', onAbort);
-      resolve();
-    }, Math.max(0, ms));
-    timer.unref?.();
-    signal?.addEventListener('abort', onAbort, { once: true });
-  });
+export function waitForMutationRetry(ms, signal) {
+  return abortableDelay(ms, signal, { unref: true });
 }
 
 /**

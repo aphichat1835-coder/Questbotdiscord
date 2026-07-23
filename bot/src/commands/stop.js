@@ -7,7 +7,7 @@ import {
   StringSelectMenuBuilder,
 } from 'discord.js';
 import { config } from '../config.js';
-import { stopScheduledJobAndWaitDetailed } from '../runner-control.js';
+import { stopScheduledJobAndWaitDetailed, summarizeStopResults } from '../runner-control.js';
 import { listScheduledRunners } from '../scheduled-runner-store.js';
 
 export const data = new SlashCommandBuilder()
@@ -97,12 +97,6 @@ async function replyUnknownAction(interaction) {
   };
   if (interaction.replied || interaction.deferred) return interaction.followUp(payload);
   return interaction.reply(payload);
-}
-
-function summarizeStopResults(results) {
-  const accepted = results.filter((item) => item.accepted).length;
-  const completed = results.filter((item) => item.accepted && item.cleanupComplete).length;
-  return { accepted, completed, pending: accepted - completed };
 }
 
 async function stopRows(ownerId, rows) {
