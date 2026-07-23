@@ -1,4 +1,5 @@
 name: Validate final consolidated review batch
+# validation-trigger: 1
 
 permissions:
   contents: write
