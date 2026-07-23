@@ -41,13 +41,27 @@ jobs:
           awk 'BEGIN { capture=0 } /python3 - <<'\''PY'\''/ { capture=1; next } capture && /^          PY$/ { exit } capture { sub(/^          /, ""); print }' \
             .github/workflows/apply-final-hardening.yml > /tmp/apply-final-hardening.py
           test -s /tmp/apply-final-hardening.py
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('/tmp/apply-final-hardening.py')
+          content = path.read_text(encoding='utf-8')
+          content = content.replace(
+              "raise SystemExit(f'{path}: expected {count} exact matches, found {actual}')",
+              "raise SystemExit(f'{path}: expected {count} exact matches, found {actual}; target={old[:160]!r}')",
+          )
+          content = content.replace(
+              "raise SystemExit(f'{path}: expected {count} regex matches, found {actual}: {pattern}')",
+              "raise SystemExit(f'{path}: expected {count} regex matches, found {actual}: {pattern!r}')",
+          )
+          path.write_text(content, encoding='utf-8')
+          PY
           if ! python3 /tmp/apply-final-hardening.py > /tmp/hardening.log 2>&1; then
             tail -n 30 /tmp/hardening.log > HARDENING_ERROR.txt
             cat HARDENING_ERROR.txt
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git add HARDENING_ERROR.txt
-            git commit -m "debug: capture hardening patch failure"
+            git commit -m "debug: capture detailed hardening patch failure"
             git push origin HEAD:ss
             exit 1
           fi
