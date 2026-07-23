@@ -1,0 +1,66 @@
+name: Debug locked one-shot patch v2
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/debug-one-shot-patch-v2.yml
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    if: github.event.pull_request.head.ref == 'ss'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ss
+          show-progress: false
+
+      - name: Capture patch failure
+        shell: bash
+        run: |
+          set +e
+          python3 - <<'PY' > one-shot-patch-v2.log 2>&1
+          from pathlib import Path
+          import base64
+          import re
+          import zlib
+          import traceback
+
+          try:
+              workflow = Path('.github/workflows/apply-one-shot-session-lock.yml').read_text()
+              payload = re.search(r"payload = '([^']+)'", workflow)
+              if not payload:
+                  raise RuntimeError('patch payload not found')
+              script = zlib.decompress(base64.b64decode(payload.group(1))).decode()
+              start_marker = "redesign_path = Path('bot/test/quest-status-redesign.node-test.js')"
+              end_marker = "modes_path = Path('bot/test/runner-modes.node-test.js')"
+              if start_marker in script:
+                  start = script.index(start_marker)
+                  end = script.index(end_marker)
+                  script = script[:start] + script[end:]
+              exec(compile(script, 'apply-one-shot-session-lock-v2', 'exec'))
+          except Exception:
+              traceback.print_exc()
+              raise
+          PY
+          status=$?
+          printf '%s\n' "$status" > one-shot-patch-v2-status.txt
+          exit 0
+
+      - name: Upload patch diagnostics
+        uses: actions/upload-artifact@v7
+        with:
+          name: locked-one-shot-patch-v2-${{ github.run_id }}
+          path: |
+            one-shot-patch-v2.log
+            one-shot-patch-v2-status.txt
+          if-no-files-found: error
+          retention-days: 2
+
+      - name: Fail when patch failed
+        shell: bash
+        run: exit "$(cat one-shot-patch-v2-status.txt)"
