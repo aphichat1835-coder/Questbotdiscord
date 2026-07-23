@@ -1161,7 +1161,10 @@ export async function startRunner({
     }
 
     if (quest.completed) {
-      if (mode === 'oneshot') return reportOneShotExternalCompletion(quest);
+      if (mode === 'oneshot') {
+        await claimSilently(quest);
+        return reportOneShotExternalCompletion(quest);
+      }
       return { attempted: false, progressed: false, supportedCount: runnable.length };
     }
     if (!isRunnableQuest(quest)) {
@@ -1303,8 +1306,8 @@ export async function startRunner({
 
     if (mode === 'oneshot') {
       const status = completeOneShotQuest(oneShotSession, fresh.id);
+      await claimSilently(fresh);
       if (status === ONE_SHOT_QUEST_STATUS.COMPLETED_BY_BOT) {
-        await claimSilently(fresh);
         return reportOneShotBotCompletion(fresh);
       }
       return reportOneShotExternalCompletion(fresh);

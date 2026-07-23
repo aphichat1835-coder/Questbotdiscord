@@ -1413,7 +1413,8 @@ test('one-shot reports external completion in the quest reason without counting 
 
   await waitFor(() => getUserJobs('owner-external-completion').length === 0, 5000);
   const finalStatus = contents.at(-1);
-  assert.deepEqual(requests, ['progress:bot-a', 'claim:bot-a']);
+  assert.deepEqual(requests, ['progress:bot-a', 'claim:bot-a', 'claim:external-b']);
+  assert.equal(states.get('external-b').claimed, true);
   assert.match(finalStatus, /🔎 external-user: พบ 2 QUESTS/);
   assert.match(finalStatus, /🎉 external-user: ทำสำเร็จ 1 QUESTS/);
   assert.match(finalStatus, /1\. External Quest B/);
