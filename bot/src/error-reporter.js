@@ -3,6 +3,7 @@ import { config } from './config.js';
 let discordClient = null;
 const recentlyReported = new Map();
 const DEDUPE_MS = 60_000;
+const DISCORD_MESSAGE_LIMIT = 2000;
 const SENSITIVE_KEY = /authorization|token|secret|cookie|captcha|email/i;
 
 export function setErrorReporterClient(client) {
@@ -56,36 +57,51 @@ function canNotifyCriticalError(notify) {
 }
 
 function removeExpiredReports(now) {
-  for (const [reportedKey, reportedAt] of recentlyReported) {
-    if (now - reportedAt >= DEDUPE_MS) recentlyReported.delete(reportedKey);
+  for (const [reportedKey, reservation] of recentlyReported) {
+    if (now - reservation.reservedAt >= DEDUPE_MS) recentlyReported.delete(reportedKey);
   }
 }
 
 function reserveCriticalErrorReport(source, safeMessage, now = Date.now()) {
   removeExpiredReports(now);
   const key = `${source}:${safeMessage.slice(0, 250)}`;
-  if (now - (recentlyReported.get(key) ?? 0) < DEDUPE_MS) return false;
-  recentlyReported.set(key, now);
-  return true;
+  const previous = recentlyReported.get(key);
+  if (previous && now - previous.reservedAt < DEDUPE_MS) return null;
+
+  const reservation = { key, reservedAt: now };
+  recentlyReported.set(key, reservation);
+  return reservation;
+}
+
+function releaseCriticalErrorReport(reservation) {
+  if (recentlyReported.get(reservation.key) === reservation) {
+    recentlyReported.delete(reservation.key);
+  }
+}
+
+function criticalErrorContent(source, safeMessage) {
+  const headerStart = '🚨 **Critical Error — ';
+  const headerEnd = '**\n```\n';
+  const footer = '\n```';
+  const fixedLength = headerStart.length + headerEnd.length + footer.length;
+  const visibleSource = source.slice(0, Math.max(0, DISCORD_MESSAGE_LIMIT - fixedLength));
+  const prefix = `${headerStart}${visibleSource}${headerEnd}`;
+  const messageBudget = Math.max(0, DISCORD_MESSAGE_LIMIT - prefix.length - footer.length);
+  return `${prefix}${safeMessage.slice(0, messageBudget)}${footer}`;
 }
 
 async function sendCriticalErrorNotification(source, safeMessage) {
   try {
     const channel = await discordClient.channels.fetch(config.logChannelId);
-    if (!channel?.isTextBased?.()) return;
-    await channel.send({
-      content: [
-        `🚨 **Critical Error — ${source}**`,
-        '```',
-        safeMessage.slice(0, 1700),
-        '```',
-      ].join(String.fromCharCode(10)),
-    });
+    if (!channel?.isTextBased?.()) return false;
+    await channel.send({ content: criticalErrorContent(source, safeMessage) });
+    return true;
   } catch (reportError) {
     console.error(
       '❌ [ErrorReporter] Discord notification failed:',
       safeErrorMessage(reportError),
     );
+    return false;
   }
 }
 
@@ -95,6 +111,9 @@ export async function reportCriticalError(source, error, { notify = true } = {})
   console.error(`❌ [${safeSource}]`, safeMessage);
 
   if (!canNotifyCriticalError(notify)) return;
-  if (!reserveCriticalErrorReport(safeSource, safeMessage)) return;
-  await sendCriticalErrorNotification(safeSource, safeMessage);
+  const reservation = reserveCriticalErrorReport(safeSource, safeMessage);
+  if (!reservation) return;
+
+  const delivered = await sendCriticalErrorNotification(safeSource, safeMessage);
+  if (!delivered) releaseCriticalErrorReport(reservation);
 }

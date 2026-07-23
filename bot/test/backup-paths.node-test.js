@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 
@@ -13,6 +12,8 @@ const {
   resolveDatabaseBackupDirectory,
   resolveDatabaseBackupSlotPath,
 } = await import('../src/db.js');
+
+const databaseModuleUrl = new URL('../src/db.js', import.meta.url).href;
 
 test.after(() => closeDatabase());
 
@@ -42,10 +43,9 @@ test('backup destination resolver permits only the fixed local and persistent ro
 
 test('backupDatabaseSlot writes and clears a backup beneath the resolved local root', async () => {
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'questbot-backup-path-'));
-  const moduleUrl = pathToFileURL(path.resolve('src/db.js')).href;
   const databasePath = path.join(tempRoot, 'runtime.db');
   const script = `
-    const db = await import(${JSON.stringify(moduleUrl)});
+    const db = await import(${JSON.stringify(databaseModuleUrl)});
     const destination = await db.backupDatabaseSlot(0);
     const fs = await import('node:fs');
     const path = await import('node:path');
@@ -62,8 +62,13 @@ test('backupDatabaseSlot writes and clears a backup beneath the resolved local r
       cwd: tempRoot,
       env: { ...process.env, DATABASE_PATH: databasePath },
       encoding: 'utf8',
+      timeout: 10_000,
     });
-    assert.equal(child.status, 0, child.stderr || child.stdout);
+    assert.equal(
+      child.status,
+      0,
+      child.error?.message || child.stderr || child.stdout,
+    );
     const output = JSON.parse(child.stdout.trim().split('\n').at(-1));
     assert.equal(output.destination, './data/backups/questbot-slot-1.db');
     assert.equal(output.absolute.startsWith(tempRoot), true);
