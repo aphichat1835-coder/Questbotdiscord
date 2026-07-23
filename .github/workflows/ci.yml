@@ -34,10 +34,23 @@ jobs:
       - name: Extract and apply audited patch
         shell: bash
         run: |
+          if test -f HARDENING_ERROR.txt; then
+            echo "Previous hardening error captured; waiting for patch correction."
+            exit 0
+          fi
           awk 'BEGIN { capture=0 } /python3 - <<'\''PY'\''/ { capture=1; next } capture && /^          PY$/ { exit } capture { sub(/^          /, ""); print }' \
             .github/workflows/apply-final-hardening.yml > /tmp/apply-final-hardening.py
           test -s /tmp/apply-final-hardening.py
-          python3 /tmp/apply-final-hardening.py
+          if ! python3 /tmp/apply-final-hardening.py > /tmp/hardening.log 2>&1; then
+            tail -n 30 /tmp/hardening.log > HARDENING_ERROR.txt
+            cat HARDENING_ERROR.txt
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add HARDENING_ERROR.txt
+            git commit -m "debug: capture hardening patch failure"
+            git push origin HEAD:ss
+            exit 1
+          fi
           python3 - <<'PY'
           from pathlib import Path
           path = Path('.github/workflows/ci.yml')
@@ -48,14 +61,17 @@ jobs:
           PY
 
       - name: Install locked dependencies
+        if: ${{ hashFiles('HARDENING_ERROR.txt') == '' }}
         working-directory: bot
         run: npm ci --ignore-scripts --no-fund --no-audit
 
       - name: Rebuild trusted native dependency
+        if: ${{ hashFiles('HARDENING_ERROR.txt') == '' }}
         working-directory: bot
         run: npm rebuild better-sqlite3 --foreground-scripts
 
       - name: Validate patched project
+        if: ${{ hashFiles('HARDENING_ERROR.txt') == '' }}
         working-directory: bot
         run: |
           npm run validate:quest-fixture
@@ -64,6 +80,7 @@ jobs:
           npm audit --omit=dev --audit-level=high
 
       - name: Commit audited fixes
+        if: ${{ hashFiles('HARDENING_ERROR.txt') == '' }}
         shell: bash
         run: |
           git config user.name "github-actions[bot]"
