@@ -17,13 +17,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ss
-          fetch-depth: 0
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: npm
-          cache-dependency-path: bot/package-lock.json
+          fetch-depth: 1
+          show-progress: false
 
       - name: Apply quest status redesign
         shell: bash
