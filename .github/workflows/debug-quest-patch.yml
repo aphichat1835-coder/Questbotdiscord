@@ -1,0 +1,50 @@
+name: Debug quest patch
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/debug-quest-patch.yml
+
+permissions:
+  contents: write
+
+jobs:
+  debug:
+    if: github.event.pull_request.head.ref == 'ss' && github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ss
+          fetch-depth: 1
+          show-progress: false
+
+      - name: Run patch and capture exact error
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import base64
+          import re
+          import zlib
+
+          workflow = Path('.github/workflows/apply-quest-status-redesign.yml').read_text()
+          match = re.search(r"base64\.b64decode\('([^']+)'\)", workflow)
+          if not match:
+              raise SystemExit('compressed patch payload not found')
+          try:
+              exec(zlib.decompress(base64.b64decode(match.group(1))))
+          except BaseException as error:
+              Path('PATCH_ERROR.txt').write_text(f'{type(error).__name__}: {error}\n')
+          PY
+
+      - name: Publish diagnostic
+        shell: bash
+        run: |
+          test -f PATCH_ERROR.txt
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add PATCH_ERROR.txt
+          git commit -m "chore: record quest status patch error"
+          git push origin HEAD:ss
