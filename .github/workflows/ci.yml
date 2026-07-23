@@ -13,7 +13,7 @@ on:
 jobs:
   apply-hardening:
     name: Apply audited hardening
-    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/ss' && !contains(github.event.head_commit.message, '[hardening-applied]') }}
+    if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.ref == 'ss' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -38,6 +38,14 @@ jobs:
             .github/workflows/apply-final-hardening.yml > /tmp/apply-final-hardening.py
           test -s /tmp/apply-final-hardening.py
           python3 /tmp/apply-final-hardening.py
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('.github/workflows/ci.yml')
+          content = path.read_text(encoding='utf-8')
+          start = content.index('  apply-hardening:\n')
+          end = content.index('  repository-shape:\n')
+          path.write_text(content[:start] + content[end:], encoding='utf-8')
+          PY
 
       - name: Install locked dependencies
         working-directory: bot
