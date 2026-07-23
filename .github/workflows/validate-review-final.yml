@@ -1,5 +1,5 @@
 name: Validate final consolidated review batch
-# validation-trigger: 1
+# validation-trigger: 2
 
 permissions:
   contents: write
@@ -8,6 +8,9 @@ on:
   push:
     branches:
       - work/review-final-0ddc73e
+  pull_request:
+    branches:
+      - main
 
 jobs:
   validate:
