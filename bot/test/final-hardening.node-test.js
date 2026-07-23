@@ -112,7 +112,7 @@ test('run keeps inspecting tokens until a real slot is filled', async () => {
     channelId: 'test-channel',
     guildId: 'test-guild',
     user: { id: 'test-owner' },
-    member: { permissions: { has: () => false }, roles: { cache: { has: () => false } } },
+    member: { permissions: { has: () => true }, roles: { cache: { has: () => false } } },
     client: mockClient(),
     fields: { getTextInputValue: () => 'invalid-token\nvalid-token' },
     async deferReply() {},
