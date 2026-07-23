@@ -7,6 +7,9 @@ on:
   push:
     branches:
       - work/review-batch-v2-0ddc73e
+  pull_request:
+    branches:
+      - main
 
 jobs:
   validate:
