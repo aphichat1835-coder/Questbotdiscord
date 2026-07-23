@@ -27,6 +27,18 @@ import {
   listScheduledRunners,
   updateScheduledRunner,
 } from './scheduled-runner-store.js';
+import {
+  completeOneShotQuest,
+  createOneShotQuestSession,
+  failOneShotQuest,
+  getNextPendingOneShotQuest,
+  getOneShotSessionSummary,
+  isOneShotSessionComplete,
+  markOneShotProgressMutationSent,
+  markOneShotQuestRunning,
+  ONE_SHOT_QUEST_STATUS,
+  recordOneShotVerifiedProgress,
+} from './one-shot-quest-session.js';
 
 const DISCORD_API = 'https://discord.com/api/v9';
 const QUEST_LIST_PATHS = ['/quests/@me', '/users/@me/quests'];
@@ -819,12 +831,8 @@ export async function startRunner({
   let nextCheckAt  = initialNextCheckAt;
   let logoutReported = false;
   let countAlreadyReported = false;
-  let totalSupportedQuests = null;
-  let completedQuests = 0;
+  let oneShotSession = null;
   let oneShotSummaryReported = false;
-  const completedQuestIds = new Set();
-  const failedQuestIds = new Set();
-  const failedQuests = [];
   const claimRetryAt = new Map();
   const RENDER_THROTTLE_MS = 2000; // Discord allows ~5 edits/5s; stay safe at 1/2s
   const CLAIM_RETRY_DELAY_MS = 15 * 60 * 1000;
@@ -991,14 +999,6 @@ export async function startRunner({
   }
 
   async function reportRunnableCount(count) {
-    if (mode === 'oneshot') {
-      if (totalSupportedQuests != null) return;
-      totalSupportedQuests = count;
-      addLog(`🔎 ${username}: พบ ${count} QUESTS`);
-      addLog(`🎉 ${username}: ทำสำเร็จ ${completedQuests} QUESTS`);
-      await flush();
-      return;
-    }
     addLog(`🔎 ${username}: พบ ${count} QUESTS`);
     await render();
   }
@@ -1009,130 +1009,171 @@ export async function startRunner({
       : `${icon} ${username}: ${content}`;
   }
 
-  function remainingOneShotQuestCount(runnable, currentQuestId) {
-    return runnable.filter((item) => (
-      item.id !== currentQuestId && !failedQuestIds.has(item.id)
-    )).length;
+  function oneShotSummary() {
+    return getOneShotSessionSummary(oneShotSession);
   }
 
-  async function reportOneShotCompletion(quest) {
-    if (mode !== 'oneshot' || completedQuestIds.has(quest.id)) return;
-    completedQuestIds.add(quest.id);
-    completedQuests = Math.min(totalSupportedQuests ?? completedQuests + 1, completedQuests + 1);
-    addLog(`🔎 ${username}: พบ ${totalSupportedQuests ?? completedQuests} QUESTS`);
-    addLog(`🎉 ${username}: ทำสำเร็จ ${completedQuests} QUESTS`);
-    addLog('🧹 QUEST ACTIVITY CLEARED');
+  async function reportOneShotInitialState() {
+    const summary = oneShotSummary();
+    addLog(`🔎 ${username}: พบ ${summary.totalSupportedQuests} QUESTS`);
+    addLog(`🎉 ${username}: ทำสำเร็จ ${summary.completedByBotCount} QUESTS`);
     await flush();
   }
 
-  async function reportOneShotFailure(quest, reason, runnable) {
-    if (mode !== 'oneshot') return null;
-    if (!failedQuestIds.has(quest.id)) {
-      failedQuestIds.add(quest.id);
-      failedQuests.push({
-        name: String(quest.name || quest.id || 'Unknown Quest').slice(0, 120),
-        reason: String(reason || 'ไม่สามารถดำเนินการ Quest ได้').slice(0, 150),
-      });
-    }
-    addLog(`🔎 ${username}: พบ ${totalSupportedQuests ?? 0} QUESTS`);
-    addLog(`🎉 ${username}: ทำสำเร็จ ${completedQuests} QUESTS`);
+  async function reportOneShotTerminalState() {
+    const summary = oneShotSummary();
+    addLog(`🔎 ${username}: พบ ${summary.totalSupportedQuests} QUESTS`);
+    addLog(`🎉 ${username}: ทำสำเร็จ ${summary.completedByBotCount} QUESTS`);
     addLog('🧹 QUEST ACTIVITY CLEARED');
     await flush();
+    return summary;
+  }
+
+  function oneShotOutcome() {
+    const summary = oneShotSummary();
     return {
       attempted: true,
       progressed: true,
-      supportedCount: remainingOneShotQuestCount(runnable, quest.id),
+      supportedCount: summary.pendingCount,
     };
+  }
+
+  async function reportOneShotFailure(quest, reason) {
+    if (mode !== 'oneshot') return null;
+    failOneShotQuest(oneShotSession, quest.id, reason);
+    await reportOneShotTerminalState();
+    return oneShotOutcome();
+  }
+
+  async function reportOneShotExternalCompletion(quest) {
+    if (mode !== 'oneshot') return null;
+    completeOneShotQuest(oneShotSession, quest.id);
+    await reportOneShotTerminalState();
+    return oneShotOutcome();
+  }
+
+  async function reportOneShotBotCompletion(quest) {
+    if (mode !== 'oneshot') return null;
+    const status = completeOneShotQuest(oneShotSession, quest.id);
+    if (status !== ONE_SHOT_QUEST_STATUS.COMPLETED_BY_BOT) {
+      return reportOneShotExternalCompletion(quest);
+    }
+    await reportOneShotTerminalState();
+    return oneShotOutcome();
+  }
+
+  function oneShotFreshQuestFailureReason(error) {
+    if (error instanceof QuestCompatibilityError && /disappeared from Quest API/.test(error.message)) {
+      return 'ไม่พบ Quest ในรายการล่าสุดจาก Discord';
+    }
+    return 'ตรวจสอบสถานะ Quest ล่าสุดไม่สำเร็จ';
+  }
+
+  function oneShotUnavailableReason(quest) {
+    const reason = questUnavailableReason(quest);
+    if (reason === 'หมดเวลาแล้ว') return 'Quest หมดเวลาก่อนดำเนินการเสร็จ';
+    if (reason === 'Discord ยังไม่เปิดให้รับ Quest') {
+      return 'Discord ยังไม่เปิดให้ดำเนินการ Quest';
+    }
+    return reason || 'Quest ไม่พร้อมให้ดำเนินการ';
   }
 
   async function reportOneShotSummary() {
     if (mode !== 'oneshot' || oneShotSummaryReported) return;
     oneShotSummaryReported = true;
-    addLog(`🔎 ${username}: พบ ${totalSupportedQuests ?? 0} QUESTS`);
-    addLog(`🎉 ${username}: ทำสำเร็จ ${completedQuests} QUESTS`);
+    const summary = oneShotSummary();
+    addLog(`🔎 ${username}: พบ ${summary.totalSupportedQuests} QUESTS`);
+    addLog(`🎉 ${username}: ทำสำเร็จ ${summary.completedByBotCount} QUESTS`);
     addLog('🧹 QUEST ACTIVITY CLEARED');
 
-    if ((totalSupportedQuests ?? 0) === 0) {
+    if (summary.totalSupportedQuests === 0) {
       addLog('ℹ️ ไม่พบ Quest ที่บอทสามารถทำได้ในขณะนี้');
       await flush();
       return;
     }
 
-    if (failedQuests.length === 0 && completedQuests === totalSupportedQuests) {
+    if (summary.issues.length === 0
+        && summary.completedByBotCount === summary.totalSupportedQuests) {
       addLog('🎉 บอทได้เข้าไปทำ Quest ทั้งหมดเสร็จสิ้นทั้งหมดแล้ว');
       await flush();
       return;
     }
 
-    addLog(completedQuests === 0
+    addLog(summary.completedByBotCount === 0
       ? '❌ บอทไม่สามารถดำเนินการ Quest ให้สำเร็จได้'
       : '⚠️ มีบาง Quest ที่บอทดำเนินการไม่สำเร็จ');
-    failedQuests.forEach((failure, index) => {
-      addLog(`${index + 1}. ${failure.name}`);
-      addLog(`   └ ${failure.reason}`);
+    summary.issues.forEach((issue, index) => {
+      addLog(`${index + 1}. ${issue.name}`);
+      addLog(`   └ ${issue.reason}`);
     });
     await flush();
   }
 
   async function runQuestRound() {
     const allQuests = await fetchQuests(userToken, signal);
-    for (const quest of allQuests.filter((item) => item.completed && !item.claimed)) {
-      if (signal.aborted) throw new Error('aborted');
-      await claimSilently(quest);
-    }
+    let runnable;
+    let initialQuest;
 
-    const runnable = allQuests.filter((quest) => (
-      !quest.completed
-      && isRunnableQuest(quest)
-      && (mode !== 'oneshot' || !failedQuestIds.has(quest.id))
-    ));
     if (mode === 'oneshot') {
-      await reportRunnableCount(runnable.length);
+      if (!oneShotSession) {
+        const initialRunnable = allQuests.filter(
+          (quest) => !quest.completed && isRunnableQuest(quest),
+        );
+        oneShotSession = createOneShotQuestSession(initialRunnable);
+        await reportOneShotInitialState();
+      }
+
+      if (isOneShotSessionComplete(oneShotSession)) {
+        return { attempted: false, progressed: false, supportedCount: 0 };
+      }
+
+      initialQuest = getNextPendingOneShotQuest(oneShotSession);
+      if (!initialQuest) {
+        return { attempted: false, progressed: false, supportedCount: 0 };
+      }
+      runnable = [initialQuest];
     } else {
+      for (const quest of allQuests.filter((item) => item.completed && !item.claimed)) {
+        if (signal.aborted) throw new Error('aborted');
+        await claimSilently(quest);
+      }
+
+      runnable = allQuests.filter((quest) => !quest.completed && isRunnableQuest(quest));
       if (!countAlreadyReported) await reportRunnableCount(runnable.length);
       countAlreadyReported = false;
+      if (runnable.length === 0) {
+        return { attempted: false, progressed: false, supportedCount: 0 };
+      }
+      initialQuest = runnable[0];
     }
 
-    if (runnable.length === 0) {
-      return { attempted: false, progressed: false, supportedCount: 0 };
-    }
-
-    const initialQuest = runnable[0];
     let quest;
     try {
       quest = await fetchFreshQuest(userToken, initialQuest.id, signal);
     } catch (error) {
       rethrowFatalAuth(error);
       if (mode === 'oneshot') {
-        return reportOneShotFailure(
-initialQuest,
-'ตรวจสอบสถานะ Quest ล่าสุดไม่สำเร็จ',
-runnable,
-        );
+        return reportOneShotFailure(initialQuest, oneShotFreshQuestFailureReason(error));
       }
       addLog(`⚠️ ${username}: refresh failed — ${initialQuest.name} — ${error.message}`);
       await render();
       return { attempted: true, progressed: false, supportedCount: runnable.length };
     }
-    if (quest.completed || !isRunnableQuest(quest)) {
-      if (mode === 'oneshot' && quest.completed) {
-        await reportOneShotCompletion(quest);
-        return {
-attempted: true,
-progressed: true,
-supportedCount: remainingOneShotQuestCount(runnable, quest.id),
-        };
-      }
+
+    if (quest.completed) {
+      if (mode === 'oneshot') return reportOneShotExternalCompletion(quest);
+      return { attempted: false, progressed: false, supportedCount: runnable.length };
+    }
+    if (!isRunnableQuest(quest)) {
       if (mode === 'oneshot') {
-        return reportOneShotFailure(
-quest,
-questUnavailableReason(quest) || 'Quest ไม่พร้อมให้ดำเนินการ',
-runnable,
-        );
+        return reportOneShotFailure(quest, oneShotUnavailableReason(quest));
       }
       return { attempted: false, progressed: false, supportedCount: runnable.length };
     }
 
+    if (mode === 'oneshot') {
+      markOneShotQuestRunning(oneShotSession, quest.id, quest.progressSecs);
+    }
     addLog(questActivityLine('⏭️', `กำลังเตรียมทำ ${quest.name}`));
     await render();
 
@@ -1146,22 +1187,18 @@ runnable,
           signal,
         );
         if (!enrolled) {
-if (mode === 'oneshot') {
-  return reportOneShotFailure(
-    quest,
-    'Discord ยังไม่ยืนยันการรับ Quest',
-    runnable,
-  );
-}
-addLog(`⚠️ ${username}: ${quest.name} — Discord ยังไม่ยืนยันการรับ Quest`);
-await render();
-return { attempted: true, progressed: false, supportedCount: runnable.length };
+          if (mode === 'oneshot') {
+            return reportOneShotFailure(quest, 'Discord ยังไม่ยืนยันการรับ Quest');
+          }
+          addLog(`⚠️ ${username}: ${quest.name} — Discord ยังไม่ยืนยันการรับ Quest`);
+          await render();
+          return { attempted: true, progressed: false, supportedCount: runnable.length };
         }
         quest = enrolled;
       } catch (error) {
         rethrowFatalAuth(error);
         if (mode === 'oneshot') {
-return reportOneShotFailure(quest, 'รับ Quest ไม่สำเร็จ', runnable);
+          return reportOneShotFailure(quest, 'รับ Quest ไม่สำเร็จ');
         }
         addLog(`⚠️ ${username}: enroll failed — ${quest.name} — ${error.message}`);
         await render();
@@ -1183,6 +1220,14 @@ return reportOneShotFailure(quest, 'รับ Quest ไม่สำเร็จ'
       if (fresh.progressSecs > lastVerifiedProgressSecs || (fresh.completed && !completionSeen)) {
         recordQuestVerification(currentQuestStatusContext().key, 'progress', currentQuestStatusContext());
       }
+      if (mode === 'oneshot') {
+        recordOneShotVerifiedProgress(
+          oneShotSession,
+          quest.id,
+          fresh.progressSecs,
+          { completed: fresh.completed },
+        );
+      }
       lastVerifiedProgressSecs = Math.max(lastVerifiedProgressSecs, fresh.progressSecs);
       completionSeen ||= fresh.completed;
       while (nextCheckpoint <= 100 && percent >= nextCheckpoint) {
@@ -1194,6 +1239,11 @@ return reportOneShotFailure(quest, 'รับ Quest ไม่สำเร็จ'
       }
       await render();
     };
+    const onMutationAccepted = () => {
+      if (mode === 'oneshot') {
+        markOneShotProgressMutationSent(oneShotSession, quest.id);
+      }
+    };
 
     const runner = isVideoEvent(quest.eventName) ? runVideoQuest : runGameQuest;
     let runnerError = null;
@@ -1204,6 +1254,7 @@ return reportOneShotFailure(quest, 'รับ Quest ไม่สำเร็จ'
       onServerProgress,
       speedMultiplier,
       heartbeatInterval,
+      onMutationAccepted,
     ).catch((error) => {
       rethrowFatalAuth(error);
       runnerError = error;
@@ -1215,7 +1266,7 @@ return reportOneShotFailure(quest, 'รับ Quest ไม่สำเร็จ'
     if (signal.aborted) throw new Error('aborted');
     if (runnerError) {
       if (mode === 'oneshot') {
-        return reportOneShotFailure(quest, 'การส่งความคืบหน้าไม่สำเร็จ', runnable);
+        return reportOneShotFailure(quest, 'การส่งความคืบหน้าไม่สำเร็จ');
       }
       await render();
       return { attempted: true, progressed: false, supportedCount: runnable.length };
@@ -1232,11 +1283,7 @@ return reportOneShotFailure(quest, 'รับ Quest ไม่สำเร็จ'
     } catch (error) {
       rethrowFatalAuth(error);
       if (mode === 'oneshot') {
-        return reportOneShotFailure(
-quest,
-'ตรวจสอบผลลัพธ์กับ Discord ไม่สำเร็จ',
-runnable,
-        );
+        return reportOneShotFailure(quest, 'ตรวจสอบผลลัพธ์กับ Discord ไม่สำเร็จ');
       }
       addLog(`⚠️ ${username}: verify failed — ${error.message}`);
       await render();
@@ -1244,11 +1291,7 @@ runnable,
     }
     if (!fresh) {
       if (mode === 'oneshot') {
-        return reportOneShotFailure(
-quest,
-'Discord ยังไม่ยืนยันสถานะเสร็จ',
-runnable,
-        );
+        return reportOneShotFailure(quest, 'Discord ยังไม่ยืนยันสถานะเสร็จ');
       }
       addLog(`⚠️ ${username}: ${quest.name} — Discord ยังไม่ส่ง completed_at หลังตรวจ 3 ครั้ง`);
       await render();
@@ -1257,17 +1300,17 @@ runnable,
 
     await onServerProgress(fresh);
     recordQuestVerification(currentQuestStatusContext().key, 'completion', currentQuestStatusContext());
-    await claimSilently(fresh);
 
     if (mode === 'oneshot') {
-      await reportOneShotCompletion(fresh);
-      return {
-        attempted: true,
-        progressed: true,
-        supportedCount: remainingOneShotQuestCount(runnable, quest.id),
-      };
+      const status = completeOneShotQuest(oneShotSession, fresh.id);
+      if (status === ONE_SHOT_QUEST_STATUS.COMPLETED_BY_BOT) {
+        await claimSilently(fresh);
+        return reportOneShotBotCompletion(fresh);
+      }
+      return reportOneShotExternalCompletion(fresh);
     }
 
+    await claimSilently(fresh);
     const latestQuests = await fetchQuests(userToken, signal);
     const supportedRemaining = latestQuests.filter(
       (item) => !item.completed && isRunnableQuest(item),
@@ -1543,7 +1586,7 @@ async function fetchFreshQuest(token, questId, signal) {
   return fresh;
 }
 
-async function runVideoQuest(token, quest, signal, onServerProgress, _speedMultiplier) {
+async function runVideoQuest(token, quest, signal, onServerProgress, _speedMultiplier, _heartbeatSecs, onMutationAccepted = () => {}) {
   let fresh = quest;
   let current = fresh.progressSecs;
   const target = fresh.secondsNeeded;
@@ -1572,7 +1615,8 @@ async function runVideoQuest(token, quest, signal, onServerProgress, _speedMulti
     }
     allowanceWaits = 0;
 
-    await sendVideoProgress(token, quest.id, nextTimestamp, signal);
+    const mutation = await sendVideoProgress(token, quest.id, nextTimestamp, signal);
+    if (!mutation?.verifiedAfterFailure) onMutationAccepted();
     await sleep(1000, signal);
     fresh = await fetchFreshQuest(token, quest.id, signal);
     await onServerProgress(fresh);
@@ -1617,15 +1661,23 @@ function assertGameProgress(unchangedChecks) {
   }
 }
 
-async function finishGameQuest(token, quest, signal, onServerProgress, useApplicationPayload) {
-  await sendQuestHeartbeat(token, quest, true, useApplicationPayload, signal);
+async function finishGameQuest(
+  token,
+  quest,
+  signal,
+  onServerProgress,
+  useApplicationPayload,
+  onMutationAccepted,
+) {
+  const mutation = await sendQuestHeartbeat(token, quest, true, useApplicationPayload, signal);
+  if (!mutation?.verifiedAfterFailure) onMutationAccepted();
   await sleep(1000, signal);
   const fresh = await fetchFreshQuest(token, quest.id, signal);
   await onServerProgress(fresh);
   return fresh;
 }
 
-async function runGameQuest(token, quest, signal, onServerProgress, _speedMultiplier, heartbeatSecs) {
+async function runGameQuest(token, quest, signal, onServerProgress, _speedMultiplier, heartbeatSecs, onMutationAccepted = () => {}) {
   let fresh = quest;
   let current = fresh.progressSecs;
   const intervalSecs = Math.max(1, Number(heartbeatSecs) || 30);
@@ -1634,7 +1686,14 @@ async function runGameQuest(token, quest, signal, onServerProgress, _speedMultip
 
   while (!fresh.completed && current < fresh.secondsNeeded) {
     if (signal.aborted) throw new Error('aborted');
-    await sendQuestHeartbeat(token, fresh, false, forceApplicationPayload, signal);
+    const mutation = await sendQuestHeartbeat(
+      token,
+      fresh,
+      false,
+      forceApplicationPayload,
+      signal,
+    );
+    if (!mutation?.verifiedAfterFailure) onMutationAccepted();
     await sleep(1000, signal);
     fresh = await fetchFreshQuest(token, quest.id, signal);
     await onServerProgress(fresh);
@@ -1662,5 +1721,6 @@ async function runGameQuest(token, quest, signal, onServerProgress, _speedMultip
     signal,
     onServerProgress,
     forceApplicationPayload,
+    onMutationAccepted,
   );
 }

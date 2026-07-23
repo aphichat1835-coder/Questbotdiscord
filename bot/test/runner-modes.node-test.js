@@ -765,7 +765,7 @@ test('claim failures stay out of the channel while one-shot still logs out', asy
   assert.equal(finalStatus.match(/🔒 LOGOUT/g)?.length, 1);
 });
 
-test('a failed or CAPTCHA-blocked claim is attempted only once while other quests continue', async () => {
+test('completed quests outside the locked manifest are not claimed while session quests continue', async () => {
   const contents = [];
   const states = new Map([
     ['manual-claim', { completed: true, claimed: false }],
@@ -825,7 +825,7 @@ test('a failed or CAPTCHA-blocked claim is attempted only once while other quest
   });
 
   await waitFor(() => getUserJobs('owner-claim-cooldown').length === 0, 5000);
-  assert.equal(blockedClaimAttempts, 1);
+  assert.equal(blockedClaimAttempts, 0);
   assert.equal(states.get('next-quest-a').claimed, true);
   assert.equal(states.get('next-quest-b').claimed, true);
   assert.doesNotMatch(contents.join('\n'), /captcha|claim failed|CLAIMED|ส่ง Claim/i);
@@ -1286,4 +1286,138 @@ test('run modal rechecks permissions when the modal is submitted', async () => {
     },
   });
   assert.match(runReply.content, /สิทธิ์ของคุณเปลี่ยนไป/);
+});
+
+
+test('one-shot locks its quest manifest when new quests appear mid-session', async () => {
+  const contents = [];
+  const requests = [];
+  const states = new Map([
+    ['locked-a', { completed: false, claimed: false }],
+    ['locked-b', { completed: false, claimed: false }],
+    ['late-c', { completed: false, claimed: false }],
+  ]);
+  let includeLateQuest = false;
+
+  const payload = () => ({
+    quests: [...states.entries()]
+      .filter(([id]) => id !== 'late-c' || includeLateQuest)
+      .map(([id, state]) => ({
+        id,
+        config: {
+          messages: { quest_name: id },
+          task_config: { tasks: { WATCH_VIDEO: { target: 1 } } },
+        },
+        user_status: {
+          enrolled_at: '2026-07-03T00:00:00Z',
+          completed_at: state.completed ? '2026-07-03T00:01:00Z' : null,
+          claimed_at: state.claimed ? '2026-07-03T00:02:00Z' : null,
+          progress: { WATCH_VIDEO: { value: state.completed ? 1 : 0 } },
+        },
+      })),
+  });
+
+  global.fetch = async (url, options = {}) => {
+    const path = fetchInputUrl(url);
+    if (isQuestListUrl(path)) return jsonResponse(payload());
+    const questId = [...states.keys()].find((id) => path.includes(id));
+    if (path.endsWith('/video-progress')) {
+      requests.push(`progress:${questId}`);
+      states.get(questId).completed = JSON.parse(options.body).timestamp >= 1;
+      if (questId === 'locked-a') includeLateQuest = true;
+      return jsonResponse({ completed_at: new Date().toISOString() });
+    }
+    if (path.endsWith('/claim-reward')) {
+      requests.push(`claim:${questId}`);
+      states.get(questId).claimed = true;
+      return jsonResponse({ claimed_at: new Date().toISOString() });
+    }
+    throw new Error(`Unexpected fetch: ${path}`);
+  };
+
+  await startRunner({
+    jobKey: 'oneshot:locked-manifest',
+    ownerId: 'owner-locked-manifest',
+    userToken: 'token-locked-manifest',
+    channelId: 'channel-locked-manifest',
+    client: mockClient(contents),
+    mode: 'oneshot',
+    accountId: 'account-locked-manifest',
+    username: 'locked-user',
+  });
+
+  await waitFor(() => getUserJobs('owner-locked-manifest').length === 0, 7000);
+  const finalStatus = contents.at(-1);
+  assert.deepEqual(requests.filter((item) => item.startsWith('progress:')), [
+    'progress:locked-a',
+    'progress:locked-b',
+  ]);
+  assert.doesNotMatch(requests.join('\n'), /late-c/);
+  assert.match(finalStatus, /🔎 locked-user: พบ 2 QUESTS/);
+  assert.match(finalStatus, /🎉 locked-user: ทำสำเร็จ 2 QUESTS/);
+  assert.doesNotMatch(contents.join('\n'), /late-c/);
+});
+
+test('one-shot reports external completion in the quest reason without counting it as bot work', async () => {
+  const contents = [];
+  const requests = [];
+  const states = new Map([
+    ['bot-a', { completed: false, claimed: false }],
+    ['external-b', { completed: false, claimed: false }],
+  ]);
+
+  const payload = () => ({
+    quests: [...states.entries()].map(([id, state]) => ({
+      id,
+      config: {
+        messages: { quest_name: id === 'bot-a' ? 'Bot Quest A' : 'External Quest B' },
+        task_config: { tasks: { WATCH_VIDEO: { target: 1 } } },
+      },
+      user_status: {
+        enrolled_at: '2026-07-03T00:00:00Z',
+        completed_at: state.completed ? '2026-07-03T00:01:00Z' : null,
+        claimed_at: state.claimed ? '2026-07-03T00:02:00Z' : null,
+        progress: { WATCH_VIDEO: { value: state.completed ? 1 : 0 } },
+      },
+    })),
+  });
+
+  global.fetch = async (url, options = {}) => {
+    const path = fetchInputUrl(url);
+    if (isQuestListUrl(path)) return jsonResponse(payload());
+    const questId = [...states.keys()].find((id) => path.includes(id));
+    if (path.endsWith('/video-progress')) {
+      requests.push(`progress:${questId}`);
+      states.get(questId).completed = JSON.parse(options.body).timestamp >= 1;
+      if (questId === 'bot-a') states.get('external-b').completed = true;
+      return jsonResponse({ completed_at: new Date().toISOString() });
+    }
+    if (path.endsWith('/claim-reward')) {
+      requests.push(`claim:${questId}`);
+      states.get(questId).claimed = true;
+      return jsonResponse({ claimed_at: new Date().toISOString() });
+    }
+    throw new Error(`Unexpected fetch: ${path}`);
+  };
+
+  await startRunner({
+    jobKey: 'oneshot:external-completion',
+    ownerId: 'owner-external-completion',
+    userToken: 'token-external-completion',
+    channelId: 'channel-external-completion',
+    client: mockClient(contents),
+    mode: 'oneshot',
+    accountId: 'account-external-completion',
+    username: 'external-user',
+  });
+
+  await waitFor(() => getUserJobs('owner-external-completion').length === 0, 5000);
+  const finalStatus = contents.at(-1);
+  assert.deepEqual(requests, ['progress:bot-a', 'claim:bot-a']);
+  assert.match(finalStatus, /🔎 external-user: พบ 2 QUESTS/);
+  assert.match(finalStatus, /🎉 external-user: ทำสำเร็จ 1 QUESTS/);
+  assert.match(finalStatus, /1\. External Quest B/);
+  assert.match(finalStatus, /└ Quest เสร็จจากภายนอก จึงไม่นับเป็น Quest ที่บอททำ/);
+  assert.doesNotMatch(finalStatus, /ℹ️ มี Quest ที่เสร็จจากภายนอก/);
+  assert.equal(finalStatus.match(/🔒 LOGOUT/g)?.length, 1);
 });
