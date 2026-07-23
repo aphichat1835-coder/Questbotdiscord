@@ -45,7 +45,11 @@ jobs:
           from pathlib import Path
           path = Path('/tmp/apply-final-hardening.py')
           content = path.read_text(encoding='utf-8')
-          content = content.replace(".replace('          ', '')", '')
+          start_marker = "replace(\n  'bot/src/discord-runner.js',\n  \"\"\"      try {"
+          end_marker = "replace(\n  'bot/src/discord-runner.js',\n  \"\"\"    let nextCheckpoint"
+          start = content.index(start_marker)
+          end = content.index(end_marker, start)
+          content = content[:start] + content[end:]
           content = content.replace(
               "raise SystemExit(f'{path}: expected {count} exact matches, found {actual}')",
               "raise SystemExit(f'{path}: expected {count} exact matches, found {actual}; target={old[:160]!r}')",
@@ -68,11 +72,44 @@ jobs:
           fi
           python3 - <<'PY'
           from pathlib import Path
-          path = Path('.github/workflows/ci.yml')
+
+          path = Path('bot/src/discord-runner.js')
           content = path.read_text(encoding='utf-8')
-          start = content.index('  apply-hardening:\n')
-          end = content.index('  repository-shape:\n')
-          path.write_text(content[:start] + content[end:], encoding='utf-8')
+          old = """      try {
+                if (!liveMsg) {
+                  const ch = await resolveOutputChannel();
+                  if (!ch?.isTextBased?.()) return;
+                  liveMsg = await ch.send({ content });
+                } else {
+                  await liveMsg.edit({ content });
+                }
+              } catch (err) {
+                console.warn(`[Runner:${jobKey}] status message failed — ${err.message}`);
+              }
+          """
+          new = """      const editingExisting = Boolean(liveMsg);
+              try {
+                if (!liveMsg) {
+                  const ch = await resolveOutputChannel();
+                  if (!ch?.isTextBased?.()) return;
+                  liveMsg = await ch.send({ content });
+                } else {
+                  await liveMsg.edit({ content });
+                }
+              } catch (err) {
+                if (editingExisting) liveMsg = null;
+                console.warn(`[Runner:${jobKey}] status message failed — ${err.message}`);
+              }
+          """
+          if content.count(old) != 1:
+              raise SystemExit(f'status message block expected once, found {content.count(old)}')
+          path.write_text(content.replace(old, new, 1), encoding='utf-8')
+
+          workflow = Path('.github/workflows/ci.yml')
+          workflow_content = workflow.read_text(encoding='utf-8')
+          start = workflow_content.index('  apply-hardening:\n')
+          end = workflow_content.index('  repository-shape:\n')
+          workflow.write_text(workflow_content[:start] + workflow_content[end:], encoding='utf-8')
           PY
 
       - name: Install locked dependencies
