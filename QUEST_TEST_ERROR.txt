@@ -1,0 +1,220 @@
+  duration_ms: 0.201376
+  type: 'test'
+  ...
+# Subtest: database backup slot creates a readable SQLite snapshot
+ok 63 - database backup slot creates a readable SQLite snapshot
+  ---
+  duration_ms: 5.125225
+  type: 'test'
+  ...
+# 💾 Database backup completed → slot 2/2
+# 💾 Database backup completed → slot 1/2
+# 💾 Database backup completed → slot 2/2
+# Subtest: scheduled database backups rotate through the configured fixed slots
+ok 64 - scheduled database backups rotate through the configured fixed slots
+  ---
+  duration_ms: 9.284444
+  type: 'test'
+  ...
+# Subtest: run modal rechecks permissions when the modal is submitted
+ok 65 - run modal rechecks permissions when the modal is submitted
+  ---
+  duration_ms: 0.28928
+  type: 'test'
+  ...
+# Subtest: nextScheduledCheck uses 00:00, 08:00 and 16:00 in Asia/Bangkok
+ok 66 - nextScheduledCheck uses 00:00, 08:00 and 16:00 in Asia/Bangkok
+  ---
+  duration_ms: 26.405718
+  type: 'test'
+  ...
+# Subtest: successful or attempted work starts three five-minute rechecks
+ok 67 - successful or attempted work starts three five-minute rechecks
+  ---
+  duration_ms: 1.074018
+  type: 'test'
+  ...
+# Subtest: three empty verification checks exhaust the burst
+ok 68 - three empty verification checks exhaust the burst
+  ---
+  duration_ms: 0.204092
+  type: 'test'
+  ...
+# Subtest: new successful work resets the verification count
+ok 69 - new successful work resets the verification count
+  ---
+  duration_ms: 0.16598
+  type: 'test'
+  ...
+# Subtest: an empty regular scheduled check does not start a verification burst
+ok 70 - an empty regular scheduled check does not start a verification burst
+  ---
+  duration_ms: 0.158677
+  type: 'test'
+  ...
+# Subtest: nextDailyTime and date keys are timezone-safe
+ok 71 - nextDailyTime and date keys are timezone-safe
+  ---
+  duration_ms: 1.329906
+  type: 'test'
+  ...
+# Subtest: schedule jitter stays within the configured window
+ok 72 - schedule jitter stays within the configured window
+  ---
+  duration_ms: 0.292337
+  type: 'test'
+  ...
+# Subtest: runner headers keep their own quest count across later edits
+ok 73 - runner headers keep their own quest count across later edits
+  ---
+  duration_ms: 1.698115
+  type: 'test'
+  ...
+# Subtest: separate runner messages never share quest totals
+not ok 74 - separate runner messages never share quest totals
+  ---
+  duration_ms: 1.152916
+  type: 'test'
+  location: '/home/runner/work/Questbotdiscord/Questbotdiscord/bot/test/runner-status-header.node-test.js:30:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    The input did not match the regular expression /พร้อมทำ : 2/. Input:
+    
+    '```\n' +
+      '✅ LOGIN : a\n' +
+      '🔍 บอทตรวจพบ Quest ที่ทำได้ทั้งหมด : 2\n' +
+      '🎉 บอททำ Quest ให้อัตโนมัติไปแล้วทั้งหมด : 0\n' +
+      '────────────────────────\n' +
+      '⌛ a: 25%\n' +
+      '```'
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected:
+  actual: |-
+    ```
+    ✅ LOGIN : a
+    🔍 บอทตรวจพบ Quest ที่ทำได้ทั้งหมด : 2
+    🎉 บอททำ Quest ให้อัตโนมัติไปแล้วทั้งหมด : 0
+    ────────────────────────
+    ⌛ a: 25%
+    ```
+  operator: 'match'
+  stack: |-
+    TestContext.<anonymous> (file:///home/runner/work/Questbotdiscord/Questbotdiscord/bot/test/runner-status-header.node-test.js:36:10)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1047:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:744:18)
+    Test.postRun (node:internal/test_runner/test:1173:19)
+    Test.run (node:internal/test_runner/test:1101:12)
+    async startSubtestAfterBootstrap (node:internal/test_runner/harness:296:3)
+  ...
+# Subtest: runner status always fits the Discord message limit
+ok 75 - runner status always fits the Discord message limit
+  ---
+  duration_ms: 1.820633
+  type: 'test'
+  ...
+# Subtest: installed wrapper only reformats runner messages
+not ok 76 - installed wrapper only reformats runner messages
+  ---
+  duration_ms: 1.188833
+  type: 'test'
+  location: '/home/runner/work/Questbotdiscord/Questbotdiscord/bot/test/runner-status-header.node-test.js:62:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    The input did not match the regular expression /พร้อมทำ : 4/. Input:
+    
+    '```\n' +
+      '✅ LOGIN : account-a\n' +
+      '🔍 บอทตรวจพบ Quest ที่ทำได้ทั้งหมด : 4\n' +
+      '🎉 บอททำ Quest ให้อัตโนมัติไปแล้วทั้งหมด : 0\n' +
+      '────────────────────────\n' +
+      '```'
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected:
+  actual: |-
+    ```
+    ✅ LOGIN : account-a
+    🔍 บอทตรวจพบ Quest ที่ทำได้ทั้งหมด : 4
+    🎉 บอททำ Quest ให้อัตโนมัติไปแล้วทั้งหมด : 0
+    ────────────────────────
+    ```
+  operator: 'match'
+  stack: |-
+    TestContext.<anonymous> (file:///home/runner/work/Questbotdiscord/Questbotdiscord/bot/test/runner-status-header.node-test.js:89:10)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: runner token encryption round-trips without exposing plaintext
+ok 77 - runner token encryption round-trips without exposing plaintext
+  ---
+  duration_ms: 115.852374
+  type: 'test'
+  ...
+# Subtest: wrong secret cannot decrypt a runner token
+ok 78 - wrong secret cannot decrypt a runner token
+  ---
+  duration_ms: 87.343385
+  type: 'test'
+  ...
+# Subtest: encrypted token is bound to its owner and Discord account
+ok 79 - encrypted token is bound to its owner and Discord account
+  ---
+  duration_ms: 78.717949
+  type: 'test'
+  ...
+# Subtest: short encryption secrets are rejected
+ok 80 - short encryption secrets are rejected
+  ---
+  duration_ms: 0.400028
+  type: 'test'
+  ...
+# Subtest: Quest status store keeps accounts isolated and aggregates explicitly
+ok 81 - Quest status store keeps accounts isolated and aggregates explicitly
+  ---
+  duration_ms: 2.382133
+  type: 'test'
+  ...
+# Subtest: verified mutation does not resend when fresh state confirms success
+ok 82 - verified mutation does not resend when fresh state confirms success
+  ---
+  duration_ms: 0.460952
+  type: 'test'
+  ...
+# Subtest: verified mutation retries once only after fresh state is still absent
+ok 83 - verified mutation retries once only after fresh state is still absent
+  ---
+  duration_ms: 0.451083
+  type: 'test'
+  ...
+# Subtest: verified mutation never retries deterministic client errors
+ok 84 - verified mutation never retries deterministic client errors
+  ---
+  duration_ms: 0.637342
+  type: 'test'
+  ...
+# Subtest: fetchQuests writes independent status snapshots for concurrent accounts
+ok 85 - fetchQuests writes independent status snapshots for concurrent accounts
+  ---
+  duration_ms: 27.508118
+  type: 'test'
+  ...
+1..85
+# tests 85
+# suites 0
+# pass 79
+# fail 6
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 14173.551872
+
+> neverdie-quest-bot@2.0.0 check
+> find src scripts \( -name '*.js' -o -name '*.mjs' \) -print0 | xargs -0 -n1 node --check
+
+
+TEST_STATUS=1
+CHECK_STATUS=0
