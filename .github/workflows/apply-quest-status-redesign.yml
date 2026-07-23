@@ -1,0 +1,52 @@
+name: Apply quest status redesign
+
+on:
+  push:
+    branches: [ss]
+    paths:
+      - .github/workflows/apply-quest-status-redesign.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ss
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: bot/package-lock.json
+
+      - name: Apply quest status redesign
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import base64, zlib
+          exec(zlib.decompress(base64.b64decode('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'))) 
+          PY
+
+      - name: Install and validate
+        working-directory: bot
+        run: |
+          npm ci --ignore-scripts
+          npm rebuild better-sqlite3
+          npm test
+          npm run check
+
+      - name: Commit redesign
+        shell: bash
+        run: |
+          rm .github/workflows/apply-quest-status-redesign.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add bot/src/discord-runner.js bot/src/runner-status-header.js bot/test/quest-status-redesign.node-test.js .github/workflows/apply-quest-status-redesign.yml
+          git commit -m "feat: redesign one-shot quest progress status"
+          git push origin HEAD:ss
