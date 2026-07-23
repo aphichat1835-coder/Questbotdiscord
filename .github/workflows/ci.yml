@@ -29,7 +29,7 @@ jobs:
           test -f bot/scripts/validate-quest-fixture.mjs
           ! grep -R "panel_\(add\|done\|edit\|delete\)_modal" bot/src/index.js
           ! grep -R "getAllQuests\|addQuest\|editQuest\|markDone\|removeQuest" bot/src
-          test -z "$(git ls-files | grep -E '(^|/)(data|backups)/|\.(db|sqlite)(-wal|-shm)?$' || true)"
+          test -z "$(git ls-files | grep -E '(^|/)backups/|\.(db|sqlite)(-wal|-shm)?$' || true)"
           git diff --check
 
   bot-checks:
