@@ -79,10 +79,10 @@ test('final summary keeps failures at the end without a failed-count header', ()
 test('runner source uses the locked session and defers terminal issue details', async () => {
   const source = await readFile(new URL('../src/discord-runner.js', import.meta.url), 'utf8');
   assert.match(source, /createOneShotQuestSession/);
-  assert.match(source, /await reportOneShotBotCompletion\(fresh\)/);
-  assert.match(source, /await reportOneShotExternalCompletion\(quest\)/);
+  assert.match(source, /reportOneShotBotCompletion\(fresh\)/);
+  assert.match(source, /reportOneShotExternalCompletion\(quest\)/);
   assert.match(source, /addLog\('🧹 QUEST ACTIVITY CLEARED'\)/);
   assert.match(source, /getOneShotSessionSummary/);
-  assert.match(source, /await reportOneShotSummary\(\)/);
+  assert.match(source, /reportOneShotSummary\(\)/);
   assert.doesNotMatch(source, /⚠️ Quest ที่ดำเนินการไม่สำเร็จ\s*:/);
 });
