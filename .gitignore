@@ -2,28 +2,27 @@
 node_modules/
 .pnpm-store/
 
-# Frontend build output
-dist/
-.vite/
-coverage/
-
-# Rust/Tauri build output
-target/
-src-tauri/target/
-src-runner/target/
-src-cdp-launcher/target/
-
-# Generated sidecar/binaries
-src-tauri/data/discord-quest-runner
-src-tauri/data/discord-quest-runner.exe
-src-tauri/data/runner-version.txt
-src-tauri/binaries/
-
 # Local environment and secrets
 .env
 .env.*
 !.env.example
 *.local
+
+# Runtime databases and backups
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+bot/data/
+bot/data/backups/
+data/
+
+# Test and coverage output
+coverage/
+.nyc_output/
+test-output.log
 
 # Logs
 *.log
@@ -32,17 +31,13 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
-# OS/editor files
-.DS_Store
-Thumbs.db
-.vscode/
-.idea/
-
-# Python cache
-__pycache__/
-*.py[cod]
-
 # Temporary files
 .tmp/
 tmp/
 .cache/
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
