@@ -38,6 +38,11 @@ test('settleWithTimeout does not report a timeout after tasks finish', async () 
 test('runner quality refactor keeps static-analysis regressions out', async () => {
   const runner = await readFile(new URL('../src/discord-runner.js', import.meta.url), 'utf8');
   const worker = await readFile(new URL('../src/worker.js', import.meta.url), 'utf8');
+  const httpRetry = await readFile(new URL('../src/http-retry.js', import.meta.url), 'utf8');
+  const mutationRetry = await readFile(new URL('../src/mutation-retry.js', import.meta.url), 'utf8');
+  const stopCommand = await readFile(new URL('../src/commands/stop.js', import.meta.url), 'utf8');
+  const db = await readFile(new URL('../src/db.js', import.meta.url), 'utf8');
+  const errorReporter = await readFile(new URL('../src/error-reporter.js', import.meta.url), 'utf8');
 
   assert.doesNotMatch(runner, /Promise\.allSettled\(\[\.\.\.activeRunPromises\]\)/);
   assert.doesNotMatch(worker, /Promise\.allSettled\(\[\.\.\.activeTasks\]\)/);
@@ -61,9 +66,21 @@ test('runner quality refactor keeps static-analysis regressions out', async () =
     executeProgressIndex,
   );
   const executeProgressEnd = runner.indexOf(
-    'async function verificationFailureOutcome',
+    'async function verifyQuestCompletion',
     executeProgressIndex,
   );
   assert.ok(abortAfterRunnerIndex > executeProgressIndex);
   assert.ok(abortAfterRunnerIndex < executeProgressEnd);
+
+  assert.doesNotMatch(runner, /process\.env\.DISCORD_(?:CLIENT|CHROME|ELECTRON|BUILD|NATIVE)/);
+  assert.equal((runner.match(/async function questFailureOutcome/g) ?? []).length, 1);
+  assert.doesNotMatch(runner, /verificationFailureOutcome|enrollmentFailureOutcome/);
+  assert.match(httpRetry, /abortableDelay\(ms, signal\)/);
+  assert.match(mutationRetry, /abortableDelay\(ms, signal, \{ unref: true \}\)/);
+  assert.doesNotMatch(stopCommand, /function summarizeStopResults/);
+  assert.match(db, /resolveDatabaseBackupSlotPath/);
+  assert.doesNotMatch(db, /backupLocalSlot|backupPersistentSlot|clearLocalInactiveSlots|clearPersistentInactiveSlots/);
+  assert.match(errorReporter, /function reserveCriticalErrorReport/);
+  assert.match(httpRetry, /async function consumeRetryableResponse/);
+  assert.match(httpRetry, /async function handleFetchFailure/);
 });

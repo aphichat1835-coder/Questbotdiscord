@@ -12,9 +12,11 @@ node_modules/
 *.db
 *.db-wal
 *.db-shm
+*.db-journal
 *.sqlite
 *.sqlite-wal
 *.sqlite-shm
+*.sqlite-journal
 bot/data/
 bot/data/backups/
 data/

@@ -44,7 +44,7 @@ function trackStoppingJob(jobKey, key, done) {
   return completion;
 }
 
-function summarizeResults(results) {
+export function summarizeStopResults(results) {
   const accepted = results.filter((item) => item.accepted).length;
   const completed = results.filter((item) => item.accepted && item.cleanupComplete).length;
   return {
@@ -119,7 +119,7 @@ export async function stopAllForUserAndWaitDetailed(ownerId, {
     removeSchedule,
     timeoutMs,
   })));
-  return summarizeResults(results);
+  return summarizeStopResults(results);
 }
 
 export async function stopAllForUserAndWait(ownerId, options = {}) {

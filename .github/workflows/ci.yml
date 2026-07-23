@@ -27,9 +27,9 @@ jobs:
           test ! -d src-cdp-launcher
           test -f bot/fixtures/quest-api.sample.json
           test -f bot/scripts/validate-quest-fixture.mjs
-          ! grep -R "panel_\(add\|done\|edit\|delete\)_modal" bot/src/index.js
-          ! grep -R "getAllQuests\|addQuest\|editQuest\|markDone\|removeQuest" bot/src
-          test -z "$(git ls-files | grep -E '(^|/)backups/|\.(db|sqlite)(-wal|-shm)?$' || true)"
+          test -z "$(grep -R 'panel_\(add\|done\|edit\|delete\)_modal' bot/src/index.js || true)"
+          test -z "$(grep -R 'getAllQuests\|addQuest\|editQuest\|markDone\|removeQuest' bot/src || true)"
+          test -z "$(git ls-files | grep -E '(^|/)backups/|\.(db|sqlite)(-(wal|shm|journal))?$' || true)"
           git diff --check
 
   bot-checks:
@@ -61,10 +61,15 @@ jobs:
       - name: Enforce approved database backup destinations
         shell: bash
         run: |
-          test "$(grep -c "await db.backup(" src/db.js)" -eq 16
-          ! grep -n "db.backup(" src/db.js | grep -vE "db.backup\('(\./data|/var/data)/backups/"
-          ! grep -R "backupDatabase(destination" src test
-          ! grep -R "DATABASE_BACKUP_DIR" src scripts test .env.example README.md
+          node --test test/backup-paths.node-test.js
+          if grep -R 'backupDatabase(destination' src test; then
+            echo "Unsupported arbitrary backup destination API detected"
+            exit 1
+          fi
+          if grep -R 'DATABASE_BACKUP_DIR' src scripts .env.example; then
+            echo "Unsupported DATABASE_BACKUP_DIR runtime/config usage detected"
+            exit 1
+          fi
           test ! -f src/path-safety.js
           test ! -f test/path-safety.node-test.js
 
