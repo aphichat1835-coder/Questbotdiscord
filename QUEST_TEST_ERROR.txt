@@ -1,220 +1,281 @@
-  duration_ms: 0.201376
-  type: 'test'
-  ...
-# Subtest: database backup slot creates a readable SQLite snapshot
-ok 63 - database backup slot creates a readable SQLite snapshot
-  ---
-  duration_ms: 5.125225
-  type: 'test'
-  ...
-# 💾 Database backup completed → slot 2/2
-# 💾 Database backup completed → slot 1/2
-# 💾 Database backup completed → slot 2/2
-# Subtest: scheduled database backups rotate through the configured fixed slots
-ok 64 - scheduled database backups rotate through the configured fixed slots
-  ---
-  duration_ms: 9.284444
-  type: 'test'
-  ...
-# Subtest: run modal rechecks permissions when the modal is submitted
-ok 65 - run modal rechecks permissions when the modal is submitted
-  ---
-  duration_ms: 0.28928
-  type: 'test'
-  ...
-# Subtest: nextScheduledCheck uses 00:00, 08:00 and 16:00 in Asia/Bangkok
-ok 66 - nextScheduledCheck uses 00:00, 08:00 and 16:00 in Asia/Bangkok
-  ---
-  duration_ms: 26.405718
-  type: 'test'
-  ...
-# Subtest: successful or attempted work starts three five-minute rechecks
-ok 67 - successful or attempted work starts three five-minute rechecks
-  ---
-  duration_ms: 1.074018
-  type: 'test'
-  ...
-# Subtest: three empty verification checks exhaust the burst
-ok 68 - three empty verification checks exhaust the burst
-  ---
-  duration_ms: 0.204092
-  type: 'test'
-  ...
-# Subtest: new successful work resets the verification count
-ok 69 - new successful work resets the verification count
-  ---
-  duration_ms: 0.16598
-  type: 'test'
-  ...
-# Subtest: an empty regular scheduled check does not start a verification burst
-ok 70 - an empty regular scheduled check does not start a verification burst
-  ---
-  duration_ms: 0.158677
-  type: 'test'
-  ...
-# Subtest: nextDailyTime and date keys are timezone-safe
-ok 71 - nextDailyTime and date keys are timezone-safe
-  ---
-  duration_ms: 1.329906
-  type: 'test'
-  ...
-# Subtest: schedule jitter stays within the configured window
-ok 72 - schedule jitter stays within the configured window
-  ---
-  duration_ms: 0.292337
-  type: 'test'
-  ...
-# Subtest: runner headers keep their own quest count across later edits
-ok 73 - runner headers keep their own quest count across later edits
-  ---
-  duration_ms: 1.698115
-  type: 'test'
-  ...
-# Subtest: separate runner messages never share quest totals
-not ok 74 - separate runner messages never share quest totals
-  ---
-  duration_ms: 1.152916
-  type: 'test'
-  location: '/home/runner/work/Questbotdiscord/Questbotdiscord/bot/test/runner-status-header.node-test.js:30:1'
-  failureType: 'testCodeFailure'
-  error: |-
-    The input did not match the regular expression /พร้อมทำ : 2/. Input:
-    
-    '```\n' +
-      '✅ LOGIN : a\n' +
-      '🔍 บอทตรวจพบ Quest ที่ทำได้ทั้งหมด : 2\n' +
-      '🎉 บอททำ Quest ให้อัตโนมัติไปแล้วทั้งหมด : 0\n' +
-      '────────────────────────\n' +
-      '⌛ a: 25%\n' +
-      '```'
-    
-  code: 'ERR_ASSERTION'
-  name: 'AssertionError'
-  expected:
-  actual: |-
-    ```
-    ✅ LOGIN : a
-    🔍 บอทตรวจพบ Quest ที่ทำได้ทั้งหมด : 2
-    🎉 บอททำ Quest ให้อัตโนมัติไปแล้วทั้งหมด : 0
-    ────────────────────────
-    ⌛ a: 25%
-    ```
-  operator: 'match'
-  stack: |-
-    TestContext.<anonymous> (file:///home/runner/work/Questbotdiscord/Questbotdiscord/bot/test/runner-status-header.node-test.js:36:10)
-    Test.runInAsyncScope (node:async_hooks:214:14)
-    Test.run (node:internal/test_runner/test:1047:25)
-    Test.processPendingSubtests (node:internal/test_runner/test:744:18)
-    Test.postRun (node:internal/test_runner/test:1173:19)
-    Test.run (node:internal/test_runner/test:1101:12)
-    async startSubtestAfterBootstrap (node:internal/test_runner/harness:296:3)
-  ...
-# Subtest: runner status always fits the Discord message limit
-ok 75 - runner status always fits the Discord message limit
-  ---
-  duration_ms: 1.820633
-  type: 'test'
-  ...
-# Subtest: installed wrapper only reformats runner messages
-not ok 76 - installed wrapper only reformats runner messages
-  ---
-  duration_ms: 1.188833
-  type: 'test'
-  location: '/home/runner/work/Questbotdiscord/Questbotdiscord/bot/test/runner-status-header.node-test.js:62:1'
-  failureType: 'testCodeFailure'
-  error: |-
-    The input did not match the regular expression /พร้อมทำ : 4/. Input:
-    
-    '```\n' +
-      '✅ LOGIN : account-a\n' +
-      '🔍 บอทตรวจพบ Quest ที่ทำได้ทั้งหมด : 4\n' +
-      '🎉 บอททำ Quest ให้อัตโนมัติไปแล้วทั้งหมด : 0\n' +
-      '────────────────────────\n' +
-      '```'
-    
-  code: 'ERR_ASSERTION'
-  name: 'AssertionError'
-  expected:
-  actual: |-
-    ```
-    ✅ LOGIN : account-a
-    🔍 บอทตรวจพบ Quest ที่ทำได้ทั้งหมด : 4
-    🎉 บอททำ Quest ให้อัตโนมัติไปแล้วทั้งหมด : 0
-    ────────────────────────
-    ```
-  operator: 'match'
-  stack: |-
-    TestContext.<anonymous> (file:///home/runner/work/Questbotdiscord/Questbotdiscord/bot/test/runner-status-header.node-test.js:89:10)
-    async Test.run (node:internal/test_runner/test:1054:7)
-    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
-  ...
-# Subtest: runner token encryption round-trips without exposing plaintext
-ok 77 - runner token encryption round-trips without exposing plaintext
-  ---
-  duration_ms: 115.852374
-  type: 'test'
-  ...
-# Subtest: wrong secret cannot decrypt a runner token
-ok 78 - wrong secret cannot decrypt a runner token
-  ---
-  duration_ms: 87.343385
-  type: 'test'
-  ...
-# Subtest: encrypted token is bound to its owner and Discord account
-ok 79 - encrypted token is bound to its owner and Discord account
-  ---
-  duration_ms: 78.717949
-  type: 'test'
-  ...
-# Subtest: short encryption secrets are rejected
-ok 80 - short encryption secrets are rejected
-  ---
-  duration_ms: 0.400028
-  type: 'test'
-  ...
-# Subtest: Quest status store keeps accounts isolated and aggregates explicitly
-ok 81 - Quest status store keeps accounts isolated and aggregates explicitly
-  ---
-  duration_ms: 2.382133
-  type: 'test'
-  ...
-# Subtest: verified mutation does not resend when fresh state confirms success
-ok 82 - verified mutation does not resend when fresh state confirms success
-  ---
-  duration_ms: 0.460952
-  type: 'test'
-  ...
-# Subtest: verified mutation retries once only after fresh state is still absent
-ok 83 - verified mutation retries once only after fresh state is still absent
-  ---
-  duration_ms: 0.451083
-  type: 'test'
-  ...
-# Subtest: verified mutation never retries deterministic client errors
-ok 84 - verified mutation never retries deterministic client errors
-  ---
-  duration_ms: 0.637342
-  type: 'test'
-  ...
-# Subtest: fetchQuests writes independent status snapshots for concurrent accounts
-ok 85 - fetchQuests writes independent status snapshots for concurrent accounts
-  ---
-  duration_ms: 27.508118
-  type: 'test'
-  ...
-1..85
-# tests 85
-# suites 0
-# pass 79
-# fail 6
-# cancelled 0
-# skipped 0
-# todo 0
-# duration_ms 14173.551872
-
-> neverdie-quest-bot@2.0.0 check
-> find src scripts \( -name '*.js' -o -name '*.mjs' \) -print0 | xargs -0 -n1 node --check
-
-
-TEST_STATUS=1
-CHECK_STATUS=0
+262-ok 42 - runner records completion and claim only after Discord returns completed_at and claimed_at
+263-  ---
+264-  duration_ms: 1010.62537
+265-  type: 'test'
+266-  ...
+267-# Subtest: one-shot runner rescans after each quest and reports the requested flow in order
+268:not ok 43 - one-shot runner rescans after each quest and reports the requested flow in order
+269-  ---
+270-  duration_ms: 2011.251297
+271-  type: 'test'
+272-  location: '/home/runner/work/Questbotdiscord/Questbotdiscord/bot/test/runner-modes.node-test.js:456:1'
+273-  failureType: 'testCodeFailure'
+274-  error: '✅ LOGIN : multi-quest-user must appear in order'
+275-  code: 'ERR_ASSERTION'
+276-  name: 'AssertionError'
+277-  expected: true
+278-  actual: false
+279-  operator: '=='
+280-  stack: |-
+281-    TestContext.<anonymous> (file:///home/runner/work/Questbotdiscord/Questbotdiscord/bot/test/runner-modes.node-test.js:542:12)
+282-    async Test.run (node:internal/test_runner/test:1054:7)
+283-    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+284-  ...
+285-# Subtest: runner counts only runnable quests and hides expired, future, blocked, unsupported and completed quests
+286:not ok 44 - runner counts only runnable quests and hides expired, future, blocked, unsupported and completed quests
+287-  ---
+288-  duration_ms: 1005.710677
+289-  type: 'test'
+290-  location: '/home/runner/work/Questbotdiscord/Questbotdiscord/bot/test/runner-modes.node-test.js:551:1'
+291-  failureType: 'testCodeFailure'
+292-  error: |-
+293-    The input did not match the regular expression /กำลังจะทำ Runnable Quest/. Input:
+294-    
+295-    '```\n' +
+296-      '✅ LOGIN : filtered-user\n' +
+297-      '🔎 filtered-user: พบ 1 QUESTS\n' +
+298-      '🎉 filtered-user: ทำสำเร็จ 0 QUESTS\n' +
+299-      '⏭️ กำลังเตรียมทำ Runnable Quest\n' +
+300-      '▶️ กำลังทำ Runnable Quest\n' +
+301-      '⌛ Runnable Quest 0%\n' +
+302-      '⌛ Runnable Quest 25%\n' +
+303-      '⌛ Runnable Quest 50%\n' +
+304-      '⌛ Runnable Quest 75%\n' +
+305-      '⌛ Runnable Quest 100%\n' +
+306-      '🔎 filtered-user: พบ 1 QUESTS\n' +
+307-      '🎉 filtered-user: ทำสำเร็จ 1 QUESTS\n' +
+308-      '🧹 QUEST ACTIVITY CLEARED\n' +
+309-      '🔎 filtered-user: พบ 1 QUESTS\n' +
+310-      '🎉 filtered-user: ทำสำเร็จ 1 QUESTS\n' +
+311-      '🧹 QUEST ACTIVITY CLEARED\n' +
+312-      '🎉 บอทได้เข้าไปทำ Quest ทั้งหมดเสร็จสิ้นทั้งหมดแล้ว\n' +
+313-      '🔒 LOGOUT : filtered-user\n' +
+314-      '```'
+315-    
+316-  code: 'ERR_ASSERTION'
+317-  name: 'AssertionError'
+318-  expected:
+319-  actual: |-
+320-    ```
+321-    ✅ LOGIN : filtered-user
+322-    🔎 filtered-user: พบ 1 QUESTS
+323-    🎉 filtered-user: ทำสำเร็จ 0 QUESTS
+324-    ⏭️ กำลังเตรียมทำ Runnable Quest
+325-    ▶️ กำลังทำ Runnable Quest
+326-    ⌛ Runnable Quest 0%
+327-    ⌛ Runnable Quest 25%
+328-    ⌛ Runnable Quest 50%
+--
+341-  stack: |-
+342-    TestContext.<anonymous> (file:///home/runner/work/Questbotdiscord/Questbotdiscord/bot/test/runner-modes.node-test.js:650:10)
+343-    async Test.run (node:internal/test_runner/test:1054:7)
+344-    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+345-  ...
+346-# Subtest: runner reports existing Discord progress before the remaining checkpoints
+347:not ok 45 - runner reports existing Discord progress before the remaining checkpoints
+348-  ---
+349-  duration_ms: 1010.433853
+350-  type: 'test'
+351-  location: '/home/runner/work/Questbotdiscord/Questbotdiscord/bot/test/runner-modes.node-test.js:658:1'
+352-  failureType: 'testCodeFailure'
+353-  error: '⌛ partial-user: Partial Quest 40% must appear in order'
+354-  code: 'ERR_ASSERTION'
+355-  name: 'AssertionError'
+356-  expected: true
+357-  actual: false
+358-  operator: '=='
+359-  stack: |-
+360-    TestContext.<anonymous> (file:///home/runner/work/Questbotdiscord/Questbotdiscord/bot/test/runner-modes.node-test.js:712:12)
+361-    async Test.run (node:internal/test_runner/test:1054:7)
+362-    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+363-  ...
+364-# Subtest: claim failures stay out of the channel while one-shot still logs out
+365-ok 46 - claim failures stay out of the channel while one-shot still logs out
+366-  ---
+367-  duration_ms: 11.530852
+368-  type: 'test'
+369-  ...
+370-# Subtest: a failed or CAPTCHA-blocked claim is attempted only once while other quests continue
+371-ok 47 - a failed or CAPTCHA-blocked claim is attempted only once while other quests continue
+372-  ---
+373-  duration_ms: 2006.512909
+374-  type: 'test'
+375-  ...
+376-# Subtest: PLAY_ON_DESKTOP switches to application_id when the first heartbeat payload makes no progress
+377-ok 48 - PLAY_ON_DESKTOP switches to application_id when the first heartbeat payload makes no progress
+378-  ---
+379-  duration_ms: 3004.643476
+380-  type: 'test'
+381-  ...
+382-# Subtest: one-shot runner exits after the first empty quest scan and logs out exactly once
+383-ok 49 - one-shot runner exits after the first empty quest scan and logs out exactly once
+384-  ---
+385-  duration_ms: 10.617222
+386-  type: 'test'
+387-  ...
+388-# Subtest: scheduled runner stays active after an empty scan until explicitly stopped
+389-ok 50 - scheduled runner stays active after an empty scan until explicitly stopped
+--
+403-#     at async fetchQuests (file:///home/runner/work/Questbotdiscord/Questbotdiscord/bot/src/discord-runner.js:405:19)
+404-#     at async runQuestRound (file:///home/runner/work/Questbotdiscord/Questbotdiscord/bot/src/discord-runner.js:1078:23)
+405-#     at async runRoundSafely (file:///home/runner/work/Questbotdiscord/Questbotdiscord/bot/src/discord-runner.js:1309:23)
+406-#     at async runQuestLoop (file:///home/runner/work/Questbotdiscord/Questbotdiscord/bot/src/discord-runner.js:1387:23)
+407-#     at async executeRunnerLifecycle (file:///home/runner/work/Questbotdiscord/Questbotdiscord/bot/src/discord-runner.js:1446:7)
+408-# Subtest: one-shot runner logs out once after three attempts make no progress
+409:not ok 52 - one-shot runner logs out once after three attempts make no progress
+410-  ---
+411-  duration_ms: 11.011953
+412-  type: 'test'
+413-  location: '/home/runner/work/Questbotdiscord/Questbotdiscord/bot/test/runner-modes.node-test.js:983:1'
+414-  failureType: 'testCodeFailure'
+415-  error: |-
+416-    Expected values to be strictly equal:
+417-    
+418-    1 !== 3
+419-    
+420-  code: 'ERR_ASSERTION'
+421-  name: 'AssertionError'
+422-  expected: 3
+423-  actual: 1
+424-  operator: 'strictEqual'
+425-  stack: |-
+426-    TestContext.<anonymous> (file:///home/runner/work/Questbotdiscord/Questbotdiscord/bot/test/runner-modes.node-test.js:1021:10)
+427-    async Test.run (node:internal/test_runner/test:1054:7)
+428-    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+429-  ...
+430-# ♻️ Scheduled Runners restored: 1, failed: 0
+431-# Subtest: one-shot runner logs out once when the Quest API fails
+432-ok 53 - one-shot runner logs out once when the Quest API fails
+433-  ---
+434-  duration_ms: 10.570024
+435-  type: 'test'
+436-  ...
+437-# Subtest: saved scheduled runners are restored with their persisted next check
+438-ok 54 - saved scheduled runners are restored with their persisted next check
+439-  ---
+440-  duration_ms: 75.147819
+441-  type: 'test'
+442-  ...
+443-# ❌ [Runner authentication] Error: invalid-user: Discord API 401; runner disabled
+444-#     at handleRunnerFailure (file:///home/runner/work/Questbotdiscord/Questbotdiscord/bot/src/discord-runner.js:1418:9)
+445-#     at async executeRunnerLifecycle (file:///home/runner/work/Questbotdiscord/Questbotdiscord/bot/src/discord-runner.js:1449:7)
+446-# Subtest: /run replies publicly and starts a persisted scheduled runner
+447-ok 55 - /run replies publicly and starts a persisted scheduled runner
+448-  ---
+449-  duration_ms: 48.951771
+450-  type: 'test'
+451-  ...
+--
+561-ok 73 - runner headers keep their own quest count across later edits
+562-  ---
+563-  duration_ms: 1.687256
+564-  type: 'test'
+565-  ...
+566-# Subtest: separate runner messages never share quest totals
+567:not ok 74 - separate runner messages never share quest totals
+568-  ---
+569-  duration_ms: 1.120766
+570-  type: 'test'
+571-  location: '/home/runner/work/Questbotdiscord/Questbotdiscord/bot/test/runner-status-header.node-test.js:30:1'
+572-  failureType: 'testCodeFailure'
+573-  error: |-
+574-    The input did not match the regular expression /พร้อมทำ : 2/. Input:
+575-    
+576-    '```\n' +
+577-      '✅ LOGIN : a\n' +
+578-      '🔍 บอทตรวจพบ Quest ที่ทำได้ทั้งหมด : 2\n' +
+579-      '🎉 บอททำ Quest ให้อัตโนมัติไปแล้วทั้งหมด : 0\n' +
+580-      '────────────────────────\n' +
+581-      '⌛ a: 25%\n' +
+582-      '```'
+583-    
+584-  code: 'ERR_ASSERTION'
+585-  name: 'AssertionError'
+586-  expected:
+587-  actual: |-
+588-    ```
+589-    ✅ LOGIN : a
+590-    🔍 บอทตรวจพบ Quest ที่ทำได้ทั้งหมด : 2
+591-    🎉 บอททำ Quest ให้อัตโนมัติไปแล้วทั้งหมด : 0
+592-    ────────────────────────
+593-    ⌛ a: 25%
+594-    ```
+595-  operator: 'match'
+596-  stack: |-
+597-    TestContext.<anonymous> (file:///home/runner/work/Questbotdiscord/Questbotdiscord/bot/test/runner-status-header.node-test.js:36:10)
+598-    Test.runInAsyncScope (node:async_hooks:214:14)
+599-    Test.run (node:internal/test_runner/test:1047:25)
+600-    Test.processPendingSubtests (node:internal/test_runner/test:744:18)
+601-    Test.postRun (node:internal/test_runner/test:1173:19)
+602-    Test.run (node:internal/test_runner/test:1101:12)
+603-    async startSubtestAfterBootstrap (node:internal/test_runner/harness:296:3)
+604-  ...
+605-# Subtest: runner status always fits the Discord message limit
+606-ok 75 - runner status always fits the Discord message limit
+607-  ---
+608-  duration_ms: 1.442779
+609-  type: 'test'
+610-  ...
+611-# Subtest: installed wrapper only reformats runner messages
+612:not ok 76 - installed wrapper only reformats runner messages
+613-  ---
+614-  duration_ms: 1.258024
+615-  type: 'test'
+616-  location: '/home/runner/work/Questbotdiscord/Questbotdiscord/bot/test/runner-status-header.node-test.js:62:1'
+617-  failureType: 'testCodeFailure'
+618-  error: |-
+619-    The input did not match the regular expression /พร้อมทำ : 4/. Input:
+620-    
+621-    '```\n' +
+622-      '✅ LOGIN : account-a\n' +
+623-      '🔍 บอทตรวจพบ Quest ที่ทำได้ทั้งหมด : 4\n' +
+624-      '🎉 บอททำ Quest ให้อัตโนมัติไปแล้วทั้งหมด : 0\n' +
+625-      '────────────────────────\n' +
+626-      '```'
+627-    
+628-  code: 'ERR_ASSERTION'
+629-  name: 'AssertionError'
+630-  expected:
+631-  actual: |-
+632-    ```
+633-    ✅ LOGIN : account-a
+634-    🔍 บอทตรวจพบ Quest ที่ทำได้ทั้งหมด : 4
+635-    🎉 บอททำ Quest ให้อัตโนมัติไปแล้วทั้งหมด : 0
+636-    ────────────────────────
+637-    ```
+638-  operator: 'match'
+639-  stack: |-
+640-    TestContext.<anonymous> (file:///home/runner/work/Questbotdiscord/Questbotdiscord/bot/test/runner-status-header.node-test.js:89:10)
+641-    async Test.run (node:internal/test_runner/test:1054:7)
+642-    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+643-  ...
+644-# Subtest: runner token encryption round-trips without exposing plaintext
+645-ok 77 - runner token encryption round-trips without exposing plaintext
+646-  ---
+647-  duration_ms: 113.06058
+648-  type: 'test'
+649-  ...
+650-# Subtest: wrong secret cannot decrypt a runner token
+651-ok 78 - wrong secret cannot decrypt a runner token
+652-  ---
+653-  duration_ms: 89.925878
+654-  type: 'test'
+--
+696-  type: 'test'
+697-  ...
+698-1..85
+699-# tests 85
+700-# suites 0
+701-# pass 79
+702:# fail 6
+703-# cancelled 0
+704-# skipped 0
+705-# todo 0
+706-# duration_ms 14107.362705
+707-
+708-> neverdie-quest-bot@2.0.0 check
+709-> find src scripts \( -name '*.js' -o -name '*.mjs' \) -print0 | xargs -0 -n1 node --check
+710-
+711-
+712:TEST_STATUS=1
+713:CHECK_STATUS=0
