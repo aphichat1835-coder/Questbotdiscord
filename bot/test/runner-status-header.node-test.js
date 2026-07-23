@@ -33,8 +33,8 @@ test('separate runner messages never share quest totals', () => {
   formatRunnerStatusContent('```\n✅ LOGIN : a\n🔎 a: พบ 2 QUESTS\n```', a);
   formatRunnerStatusContent('```\n✅ LOGIN : b\n🔎 b: พบ 7 QUESTS\n```', b);
 
-  assert.match(formatRunnerStatusContent('```\n⌛ a: 25%\n```', a), /พร้อมทำ : 2/);
-  assert.match(formatRunnerStatusContent('```\n⌛ b: 25%\n```', b), /พร้อมทำ : 7/);
+  assert.match(formatRunnerStatusContent('```\n⌛ a: 25%\n```', a), /ทำได้ทั้งหมด : 2/);
+  assert.match(formatRunnerStatusContent('```\n⌛ b: 25%\n```', b), /ทำได้ทั้งหมด : 7/);
 });
 
 test('runner status always fits the Discord message limit', () => {
@@ -86,6 +86,6 @@ test('installed wrapper only reformats runner messages', async () => {
   await runnerMessage.edit({ content: '```\n⌛ account-a: 50%\n```' });
 
   assert.equal(sent[0].content, 'hello');
-  assert.match(sent[1].content, /พร้อมทำ : 4/);
-  assert.match(edited[0].content, /พร้อมทำ : 4/);
+  assert.match(sent[1].content, /ทำได้ทั้งหมด : 4/);
+  assert.match(edited[0].content, /ทำได้ทั้งหมด : 4/);
 });

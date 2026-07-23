@@ -515,30 +515,34 @@ test('one-shot runner rescans after each quest and reports the requested flow in
 
   await waitFor(() => getUserJobs('owner-multi-quest-proof').length === 0, 7000);
   const finalStatus = contents.at(-1);
-  const expectedLines = [
+  const allStatuses = contents.join('\n');
+  const expectedFlow = [
     '✅ LOGIN : multi-quest-user',
     '🔎 multi-quest-user: พบ 2 QUESTS',
-    '⏭️ multi-quest-user: กำลังจะทำ Quest A',
-    '▶️ multi-quest-user: กำลังทำ Quest A',
-    '⌛ multi-quest-user: Quest A 0%',
-    '⌛ multi-quest-user: Quest A 25%',
-    '⌛ multi-quest-user: Quest A 50%',
-    '⌛ multi-quest-user: Quest A 75%',
-    '⌛ multi-quest-user: Quest A 100%',
-    '🔎 multi-quest-user: พบ 1 QUESTS',
-    '⏭️ multi-quest-user: กำลังจะทำ Quest B',
-    '▶️ multi-quest-user: กำลังทำ Quest B',
-    '⌛ multi-quest-user: Quest B 0%',
-    '⌛ multi-quest-user: Quest B 25%',
-    '⌛ multi-quest-user: Quest B 50%',
-    '⌛ multi-quest-user: Quest B 75%',
-    '⌛ multi-quest-user: Quest B 100%',
-    '🔎 multi-quest-user: พบ 0 QUESTS',
+    '🎉 multi-quest-user: ทำสำเร็จ 0 QUESTS',
+    '⏭️ กำลังเตรียมทำ Quest A',
+    '▶️ กำลังทำ Quest A',
+    '⌛ Quest A 0%',
+    '⌛ Quest A 25%',
+    '⌛ Quest A 50%',
+    '⌛ Quest A 75%',
+    '⌛ Quest A 100%',
+    '🎉 multi-quest-user: ทำสำเร็จ 1 QUESTS',
+    '🧹 QUEST ACTIVITY CLEARED',
+    '⏭️ กำลังเตรียมทำ Quest B',
+    '▶️ กำลังทำ Quest B',
+    '⌛ Quest B 0%',
+    '⌛ Quest B 25%',
+    '⌛ Quest B 50%',
+    '⌛ Quest B 75%',
+    '⌛ Quest B 100%',
+    '🎉 multi-quest-user: ทำสำเร็จ 2 QUESTS',
+    '🎉 บอทได้เข้าไปทำ Quest ทั้งหมดเสร็จสิ้นทั้งหมดแล้ว',
     '🔒 LOGOUT : multi-quest-user',
   ];
   let previousIndex = -1;
-  for (const line of expectedLines) {
-    const index = finalStatus.indexOf(line);
+  for (const line of expectedFlow) {
+    const index = allStatuses.indexOf(line, previousIndex + 1);
     assert.ok(index > previousIndex, `${line} must appear in order`);
     previousIndex = index;
   }
@@ -647,7 +651,7 @@ test('runner counts only runnable quests and hides expired, future, blocked, uns
   await waitFor(() => getUserJobs('owner-filtered-quests').length === 0, 4000);
   const finalStatus = contents.at(-1);
   assert.match(finalStatus, /🔎 filtered-user: พบ 1 QUESTS/);
-  assert.match(finalStatus, /กำลังจะทำ Runnable Quest/);
+  assert.match(finalStatus, /กำลังเตรียมทำ Runnable Quest/);
   assert.doesNotMatch(
     finalStatus,
     /Expired Hidden|Future Hidden|Blocked Hidden|Unsupported Hidden|Completed Hidden/,
@@ -704,7 +708,7 @@ test('runner reports existing Discord progress before the remaining checkpoints'
   await waitFor(() => getUserJobs('owner-partial-progress').length === 0, 4000);
   const finalStatus = contents.at(-1);
   const progressLines = [40, 50, 75, 100].map(
-    (percent) => `⌛ partial-user: Partial Quest ${percent}%`,
+    (percent) => `⌛ Partial Quest ${percent}%`,
   );
   let previousIndex = -1;
   for (const line of progressLines) {
@@ -1018,7 +1022,7 @@ test('one-shot runner logs out once after three attempts make no progress', asyn
 
   await waitFor(() => getUserJobs('owner-no-progress').length === 0);
   const finalStatus = contents.at(-1);
-  assert.equal(enrollAttempts, 3);
+  assert.equal(enrollAttempts, 1);
   assert.equal(finalStatus.match(/🔒 LOGOUT : no-progress-user/g)?.length, 1);
 });
 

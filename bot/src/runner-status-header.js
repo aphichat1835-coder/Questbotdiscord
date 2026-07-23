@@ -1,6 +1,8 @@
 const INSTALL_KEY = Symbol.for('neverdie.runnerStatusHeadersInstalled');
 const channelProxies = new WeakMap();
 const QUEST_COUNT_LINE = /^🔎 .+: พบ (\d+) QUESTS$/;
+const COMPLETED_COUNT_LINE = /^🎉 .+: ทำสำเร็จ (\d+) QUESTS$/;
+const CLEAR_ACTIVITY_LINE = '🧹 QUEST ACTIVITY CLEARED';
 const MAX_DISCORD_MESSAGE_LENGTH = 1950;
 
 function getPayloadContent(payload) {
@@ -29,7 +31,20 @@ function consumeRunnerStatusLine(line, state, activityLines) {
 
   const questCountMatch = QUEST_COUNT_LINE.exec(line);
   if (questCountMatch) {
-    state.totalQuestCount = Number.parseInt(questCountMatch[1], 10);
+    const count = Number.parseInt(questCountMatch[1], 10);
+    state.latestQuestCount = count;
+    state.totalQuestCount ??= count;
+    return;
+  }
+
+  const completedCountMatch = COMPLETED_COUNT_LINE.exec(line);
+  if (completedCountMatch) {
+    state.completedQuestCount = Number.parseInt(completedCountMatch[1], 10);
+    return;
+  }
+
+  if (line === CLEAR_ACTIVITY_LINE) {
+    activityLines.length = 0;
     return;
   }
   if (line) activityLines.push(line);
@@ -48,6 +63,24 @@ function clampCodeBlockContent(content) {
   return `${prefix}${body.slice(0, bodyBudget - 1)}…${suffix}`;
 }
 
+function buildHeaderLines(state) {
+  if (state.modeLine) {
+    return [
+      state.loginLine,
+      state.modeLine,
+      `🔍 ตรวจพบ Quest ที่พร้อมทำ : ${state.latestQuestCount ?? 'กำลังตรวจสอบ...'}`,
+      '────────────────────────',
+    ].filter(Boolean);
+  }
+
+  return [
+    state.loginLine,
+    `🔍 บอทตรวจพบ Quest ที่ทำได้ทั้งหมด : ${state.totalQuestCount ?? 'กำลังตรวจสอบ...'}`,
+    `🎉 บอททำ Quest ให้อัตโนมัติไปแล้วทั้งหมด : ${state.completedQuestCount ?? 0}`,
+    '────────────────────────',
+  ].filter(Boolean);
+}
+
 export function formatRunnerStatusContent(content, state = {}) {
   const lines = readCodeBlockLines(content);
   if (!lines) return content;
@@ -56,14 +89,7 @@ export function formatRunnerStatusContent(content, state = {}) {
   for (const line of lines) consumeRunnerStatusLine(line, state, activityLines);
   if (!state.loginLine) return content;
 
-  const totalText = state.totalQuestCount ?? 'กำลังตรวจสอบ...';
-  const headerLines = [
-    state.loginLine,
-    state.modeLine,
-    `🔍 ตรวจพบ Quest ที่พร้อมทำ : ${totalText}`,
-    '────────────────────────',
-  ].filter(Boolean);
-
+  const headerLines = buildHeaderLines(state);
   const visibleActivity = [...activityLines];
   let formatted = buildRunnerStatusContent(headerLines, visibleActivity);
   while (formatted.length > MAX_DISCORD_MESSAGE_LENGTH && visibleActivity.length > 0) {
@@ -79,14 +105,14 @@ function wrapMessage(message, state) {
     get(target, property) {
       if (property === 'edit') {
         return async (payload) => {
-          const rawContent = getPayloadContent(payload);
-          const content = rawContent == null
-            ? rawContent
-            : formatRunnerStatusContent(rawContent, state);
-          const edited = await target.edit(
-            rawContent == null ? payload : withPayloadContent(payload, content),
-          );
-          return wrapMessage(edited, state);
+const rawContent = getPayloadContent(payload);
+const content = rawContent == null
+  ? rawContent
+  : formatRunnerStatusContent(rawContent, state);
+const edited = await target.edit(
+  rawContent == null ? payload : withPayloadContent(payload, content),
+);
+return wrapMessage(edited, state);
         };
       }
       const value = Reflect.get(target, property, target);
@@ -104,12 +130,12 @@ function wrapChannel(channel) {
     get(target, property) {
       if (property === 'send') {
         return async (payload) => {
-          const rawContent = getPayloadContent(payload);
-          if (rawContent == null) return target.send(payload);
-          const state = {};
-          const content = formatRunnerStatusContent(rawContent, state);
-          const message = await target.send(withPayloadContent(payload, content));
-          return state.loginLine ? wrapMessage(message, state) : message;
+const rawContent = getPayloadContent(payload);
+if (rawContent == null) return target.send(payload);
+const state = {};
+const content = formatRunnerStatusContent(rawContent, state);
+const message = await target.send(withPayloadContent(payload, content));
+return state.loginLine ? wrapMessage(message, state) : message;
         };
       }
       const value = Reflect.get(target, property, target);
