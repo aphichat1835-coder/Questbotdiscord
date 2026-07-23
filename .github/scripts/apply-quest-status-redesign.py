@@ -1,0 +1,122 @@
+from pathlib import Path
+import base64
+import re
+import subprocess
+import zlib
+
+
+def replace_once(text, old, new, label):
+    count = text.count(old)
+    if count != 1:
+        raise SystemExit(f'{label}: expected 1 match, found {count}')
+    return text.replace(old, new, 1)
+
+
+historical = subprocess.check_output([
+    'git', 'show',
+    'c0c8167194af4c5db5015a065300a143013101f8:.github/workflows/apply-quest-status-redesign.yml',
+], text=True)
+payload = re.search(r"base64\.b64decode\('([^']+)'\)", historical)
+if not payload:
+    raise SystemExit('historical patch payload not found')
+script = zlib.decompress(base64.b64decode(payload.group(1))).decode()
+
+old = '''    \"\"\"        if (!enrolled) {\naddLog(`⚠️ ${username}: ${quest.name} — Discord ยังไม่ยืนยันการรับ Quest`);\nawait render();\nreturn { attempted: true, progressed: false, supportedCount: runnable.length };\n        }\n        quest = enrolled;\n      } catch (error) {\n        rethrowFatalAuth(error);\n        addLog(`⚠️ ${username}: enroll failed — ${quest.name} — ${error.message}`);\n        await render();\n        return { attempted: true, progressed: false, supportedCount: runnable.length };\n      }\n    }\n\n    addLog(`▶️ ${username}: กำลังทำ ${quest.name}`);\n    const initialPercent = Math.min(100, Math.max(0, Math.floor(quest.progress)));\n    addLog(`⌛ ${username}: ${quest.name} ${initialPercent}%`);\n\"\"\",'''
+new = '''    \"\"\"        if (!enrolled) {\n          addLog(`⚠️ ${username}: ${quest.name} — Discord ยังไม่ยืนยันการรับ Quest`);\n          await render();\n          return { attempted: true, progressed: false, supportedCount: runnable.length };\n        }\n        quest = enrolled;\n      } catch (error) {\n        rethrowFatalAuth(error);\n        addLog(`⚠️ ${username}: enroll failed — ${quest.name} — ${error.message}`);\n        await render();\n        return { attempted: true, progressed: false, supportedCount: runnable.length };\n      }\n    }\n\n    addLog(`▶️ ${username}: กำลังทำ ${quest.name}`);\n    const initialPercent = Math.min(100, Math.max(0, Math.floor(quest.progress)));\n    addLog(`⌛ ${username}: ${quest.name} ${initialPercent}%`);\n\"\"\",'''
+if script.count(old) != 1:
+    raise SystemExit(f'correction target count: {script.count(old)}')
+exec(compile(script.replace(old, new, 1), 'quest-status-redesign', 'exec'))
+
+header_test_path = Path('bot/test/runner-status-header.node-test.js')
+header_test = header_test_path.read_text()
+header_test = header_test.replace('/พร้อมทำ : 2/', '/ทำได้ทั้งหมด : 2/')
+header_test = header_test.replace('/พร้อมทำ : 7/', '/ทำได้ทั้งหมด : 7/')
+header_test = header_test.replace('/พร้อมทำ : 4/', '/ทำได้ทั้งหมด : 4/')
+header_test_path.write_text(header_test)
+
+modes_path = Path('bot/test/runner-modes.node-test.js')
+modes = modes_path.read_text()
+old_flow = '''  const finalStatus = contents.at(-1);
+  const expectedLines = [
+    '✅ LOGIN : multi-quest-user',
+    '🔎 multi-quest-user: พบ 2 QUESTS',
+    '⏭️ multi-quest-user: กำลังจะทำ Quest A',
+    '▶️ multi-quest-user: กำลังทำ Quest A',
+    '⌛ multi-quest-user: Quest A 0%',
+    '⌛ multi-quest-user: Quest A 25%',
+    '⌛ multi-quest-user: Quest A 50%',
+    '⌛ multi-quest-user: Quest A 75%',
+    '⌛ multi-quest-user: Quest A 100%',
+    '🔎 multi-quest-user: พบ 1 QUESTS',
+    '⏭️ multi-quest-user: กำลังจะทำ Quest B',
+    '▶️ multi-quest-user: กำลังทำ Quest B',
+    '⌛ multi-quest-user: Quest B 0%',
+    '⌛ multi-quest-user: Quest B 25%',
+    '⌛ multi-quest-user: Quest B 50%',
+    '⌛ multi-quest-user: Quest B 75%',
+    '⌛ multi-quest-user: Quest B 100%',
+    '🔎 multi-quest-user: พบ 0 QUESTS',
+    '🔒 LOGOUT : multi-quest-user',
+  ];
+  let previousIndex = -1;
+  for (const line of expectedLines) {
+    const index = finalStatus.indexOf(line);
+    assert.ok(index > previousIndex, `${line} must appear in order`);
+    previousIndex = index;
+  }
+  assert.doesNotMatch(finalStatus, /CLAIM|DONE|ข้าม|เควสที่ยังไม่เสร็จทั้งหมด/);
+  assert.equal(finalStatus.match(/🔒 LOGOUT/g)?.length, 1);'''
+new_flow = '''  const finalStatus = contents.at(-1);
+  const allStatuses = contents.join('\\n');
+  const expectedFlow = [
+    '✅ LOGIN : multi-quest-user',
+    '🔎 multi-quest-user: พบ 2 QUESTS',
+    '🎉 multi-quest-user: ทำสำเร็จ 0 QUESTS',
+    '⏭️ กำลังเตรียมทำ Quest A',
+    '▶️ กำลังทำ Quest A',
+    '⌛ Quest A 0%',
+    '⌛ Quest A 25%',
+    '⌛ Quest A 50%',
+    '⌛ Quest A 75%',
+    '⌛ Quest A 100%',
+    '🎉 multi-quest-user: ทำสำเร็จ 1 QUESTS',
+    '🧹 QUEST ACTIVITY CLEARED',
+    '⏭️ กำลังเตรียมทำ Quest B',
+    '▶️ กำลังทำ Quest B',
+    '⌛ Quest B 0%',
+    '⌛ Quest B 25%',
+    '⌛ Quest B 50%',
+    '⌛ Quest B 75%',
+    '⌛ Quest B 100%',
+    '🎉 multi-quest-user: ทำสำเร็จ 2 QUESTS',
+    '🎉 บอทได้เข้าไปทำ Quest ทั้งหมดเสร็จสิ้นทั้งหมดแล้ว',
+    '🔒 LOGOUT : multi-quest-user',
+  ];
+  let previousIndex = -1;
+  for (const line of expectedFlow) {
+    const index = allStatuses.indexOf(line, previousIndex + 1);
+    assert.ok(index > previousIndex, `${line} must appear in order`);
+    previousIndex = index;
+  }
+  assert.doesNotMatch(finalStatus, /CLAIM|DONE|ข้าม|เควสที่ยังไม่เสร็จทั้งหมด/);
+  assert.equal(finalStatus.match(/🔒 LOGOUT/g)?.length, 1);'''
+modes = replace_once(modes, old_flow, new_flow, 'multi-quest flow test')
+modes = replace_once(
+    modes,
+    'assert.match(finalStatus, /กำลังจะทำ Runnable Quest/);',
+    'assert.match(finalStatus, /กำลังเตรียมทำ Runnable Quest/);',
+    'runnable quest wording',
+)
+modes = replace_once(
+    modes,
+    '(percent) => `⌛ partial-user: Partial Quest ${percent}%`,',
+    '(percent) => `⌛ Partial Quest ${percent}%`,',
+    'partial progress wording',
+)
+modes = replace_once(
+    modes,
+    'assert.equal(enrollAttempts, 3);',
+    'assert.equal(enrollAttempts, 1);',
+    'failed quest attempt count',
+)
+modes_path.write_text(modes)
