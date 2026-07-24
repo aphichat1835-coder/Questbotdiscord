@@ -9,17 +9,49 @@ if (dbPath !== ':memory:') {
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 }
 
+const LOCAL_BACKUP_ROOT = './data/backups';
+const PERSISTENT_BACKUP_ROOT = '/var/data/backups';
+const LOCAL_BACKUP_SLOT_PATHS = Object.freeze([
+  './data/backups/questbot-slot-1.db',
+  './data/backups/questbot-slot-2.db',
+  './data/backups/questbot-slot-3.db',
+  './data/backups/questbot-slot-4.db',
+  './data/backups/questbot-slot-5.db',
+  './data/backups/questbot-slot-6.db',
+  './data/backups/questbot-slot-7.db',
+]);
+const PERSISTENT_BACKUP_SLOT_PATHS = Object.freeze([
+  '/var/data/backups/questbot-slot-1.db',
+  '/var/data/backups/questbot-slot-2.db',
+  '/var/data/backups/questbot-slot-3.db',
+  '/var/data/backups/questbot-slot-4.db',
+  '/var/data/backups/questbot-slot-5.db',
+  '/var/data/backups/questbot-slot-6.db',
+  '/var/data/backups/questbot-slot-7.db',
+]);
+const LOCAL_LEGACY_MIGRATION_BACKUP_PATH = './data/backups/pre-tracker-removal.db';
+const PERSISTENT_LEGACY_MIGRATION_BACKUP_PATH = '/var/data/backups/pre-tracker-removal.db';
+
+export const DATABASE_BACKUP_SLOT_COUNT = LOCAL_BACKUP_SLOT_PATHS.length;
+
+function usesPersistentDatabaseStorage(databasePath) {
+  return databasePath !== ':memory:' && path.resolve(databasePath).startsWith('/var/data/');
+}
+
 export function resolveDatabaseBackupDirectory(databasePath) {
-  return databasePath !== ':memory:' && path.resolve(databasePath).startsWith('/var/data/')
-    ? '/var/data/backups'
-    : './data/backups';
+  return usesPersistentDatabaseStorage(databasePath)
+    ? PERSISTENT_BACKUP_ROOT
+    : LOCAL_BACKUP_ROOT;
 }
 
 export function resolveDatabaseBackupSlotPath(databasePath, slotIndex) {
   if (!Number.isInteger(slotIndex) || slotIndex < 0 || slotIndex >= DATABASE_BACKUP_SLOT_COUNT) {
     throw new RangeError(`Database backup slot is out of range: ${slotIndex}`);
   }
-  return `${resolveDatabaseBackupDirectory(databasePath)}/questbot-slot-${slotIndex + 1}.db`;
+  const allowedPaths = usesPersistentDatabaseStorage(databasePath)
+    ? PERSISTENT_BACKUP_SLOT_PATHS
+    : LOCAL_BACKUP_SLOT_PATHS;
+  return allowedPaths[slotIndex];
 }
 
 const backupDirectory = resolveDatabaseBackupDirectory(dbPath);
@@ -57,13 +89,14 @@ db.exec(`
   );
 `);
 
-export const DATABASE_BACKUP_SLOT_COUNT = 7;
 let legacyMigrationBackupPath = null;
 
 function ensureBackupDirectory() {
-  if (!fs.existsSync(backupDirectory)) {
-    fs.mkdirSync(backupDirectory, { recursive: true });
+  if (backupDirectory === PERSISTENT_BACKUP_ROOT) {
+    fs.mkdirSync('/var/data/backups', { recursive: true });
+    return;
   }
+  fs.mkdirSync('./data/backups', { recursive: true });
 }
 
 function tableExists(name) {
@@ -116,7 +149,9 @@ export async function clearAllDatabaseBackupSlots() {
 async function createLegacyMigrationBackup() {
   if (dbPath === ':memory:') return null;
   ensureBackupDirectory();
-  const destination = `${backupDirectory}/pre-tracker-removal.db`;
+  const destination = usesPersistentDatabaseStorage(dbPath)
+    ? PERSISTENT_LEGACY_MIGRATION_BACKUP_PATH
+    : LOCAL_LEGACY_MIGRATION_BACKUP_PATH;
   await fs.promises.rm(destination, { force: true });
   await db.backup(destination);
   return destination;

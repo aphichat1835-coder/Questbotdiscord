@@ -805,6 +805,14 @@ function nextOneShotState(noProgressRounds, outcome) {
   return { stop: nextRounds >= 3, noProgressRounds: nextRounds };
 }
 
+function idleQuestOutcome(supportedCount = 0) {
+  return { attempted: false, progressed: false, supportedCount };
+}
+
+function attemptedQuestOutcome(supportedCount) {
+  return { attempted: true, progressed: false, supportedCount };
+}
+
 export async function startRunner({
   jobKey,
   ownerId,
@@ -1095,14 +1103,6 @@ export async function startRunner({
       addLog(`   └ ${issue.reason}`);
     });
     await flush();
-  }
-
-  function idleQuestOutcome(supportedCount = 0) {
-    return { attempted: false, progressed: false, supportedCount };
-  }
-
-  function attemptedQuestOutcome(supportedCount) {
-    return { attempted: true, progressed: false, supportedCount };
   }
 
   async function prepareOneShotRound(allQuests) {

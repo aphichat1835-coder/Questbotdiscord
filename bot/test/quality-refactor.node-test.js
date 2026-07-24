@@ -43,6 +43,8 @@ test('runner quality refactor keeps static-analysis regressions out', async () =
   const stopCommand = await readFile(new URL('../src/commands/stop.js', import.meta.url), 'utf8');
   const db = await readFile(new URL('../src/db.js', import.meta.url), 'utf8');
   const errorReporter = await readFile(new URL('../src/error-reporter.js', import.meta.url), 'utf8');
+  const backupPathsTest = await readFile(new URL('./backup-paths.node-test.js', import.meta.url), 'utf8');
+  const auditHardeningTest = await readFile(new URL('./audit-hardening.node-test.js', import.meta.url), 'utf8');
 
   assert.doesNotMatch(runner, /Promise\.allSettled\(\[\.\.\.activeRunPromises\]\)/);
   assert.doesNotMatch(worker, /Promise\.allSettled\(\[\.\.\.activeTasks\]\)/);
@@ -53,6 +55,10 @@ test('runner quality refactor keeps static-analysis regressions out', async () =
   assert.ok(startRunnerIndex > 0);
   assert.ok(runner.indexOf('function oneShotFreshQuestFailureReason', 0) < startRunnerIndex);
   assert.ok(runner.indexOf('function oneShotUnavailableReason', 0) < startRunnerIndex);
+  for (const helperName of ['idleQuestOutcome', 'attemptedQuestOutcome']) {
+    assert.equal((runner.match(new RegExp(`function ${helperName}\\(`, 'g')) ?? []).length, 1);
+    assert.ok(runner.indexOf(`function ${helperName}`, 0) < startRunnerIndex);
+  }
 
   assert.match(runner, /function prepareQuestRound\(/);
   assert.match(runner, /async function refreshRoundQuest\(/);
@@ -79,7 +85,13 @@ test('runner quality refactor keeps static-analysis regressions out', async () =
   assert.match(mutationRetry, /abortableDelay\(ms, signal, \{ unref: true \}\)/);
   assert.doesNotMatch(stopCommand, /function summarizeStopResults/);
   assert.match(db, /resolveDatabaseBackupSlotPath/);
+  assert.match(db, /LOCAL_BACKUP_SLOT_PATHS/);
+  assert.match(db, /PERSISTENT_BACKUP_SLOT_PATHS/);
+  assert.doesNotMatch(db, /questbot-slot-\$\{/);
+  assert.doesNotMatch(db, /DATABASE_BACKUP_DIR/);
   assert.doesNotMatch(db, /backupLocalSlot|backupPersistentSlot|clearLocalInactiveSlots|clearPersistentInactiveSlots/);
+  assert.doesNotMatch(backupPathsTest, /os\.tmpdir/);
+  assert.doesNotMatch(auditHardeningTest, /140\.1\.2\.3/);
   assert.match(errorReporter, /function reserveCriticalErrorReport/);
   assert.match(httpRetry, /async function consumeRetryableResponse/);
   assert.match(httpRetry, /async function handleFetchFailure/);

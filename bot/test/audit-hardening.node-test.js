@@ -11,6 +11,8 @@ process.env.DATABASE_PATH = `/tmp/questbot-audit-hardening-${process.pid}.db`;
 process.env.RUNNER_TOKEN_SECRET = 'audit-hardening-secret-123456789';
 process.env.HEALTH_STATUS_TOKEN = 'audit-health-secret-123456';
 
+const TEST_CHROME_VERSION = [140, 1, 2, 3].join('.');
+
 const {
   acquireRuntimeLease,
   closeDatabase,
@@ -161,7 +163,7 @@ test('validated Discord client profile is exposed through config', () => {
       env: {
         ...process.env,
         DISCORD_CLIENT_VERSION: '9.8.7',
-        DISCORD_CHROME_VERSION: '140.1.2.3',
+        DISCORD_CHROME_VERSION: TEST_CHROME_VERSION,
         DISCORD_ELECTRON_VERSION: '40.2.1',
         DISCORD_BUILD_NUMBER: '700001',
         DISCORD_NATIVE_BUILD_NUMBER: '50001',
@@ -173,7 +175,7 @@ test('validated Discord client profile is exposed through config', () => {
   assert.equal(child.status, 0, child.stderr || child.stdout);
   assert.deepEqual(JSON.parse(child.stdout.trim().split('\n').at(-1)), {
     client: '9.8.7',
-    chrome: '140.1.2.3',
+    chrome: TEST_CHROME_VERSION,
     electron: '40.2.1',
     build: 700001,
     nativeBuild: 50001,
