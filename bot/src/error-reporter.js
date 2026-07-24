@@ -84,6 +84,7 @@ export function isEmergencyIncident(source, error) {
 }
 
 function canDeliverEmergencyWebhook() {
+  if (process.env.QUESTBOT_TEST_MODE === 'true') return false;
   return process.env.NODE_TEST_WORKER_ID == null
     || process.env.ALLOW_TEST_WEBHOOK === 'true';
 }
