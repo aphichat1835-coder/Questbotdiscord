@@ -18,44 +18,71 @@ npm start
 
 ## Environment
 
-### จำเป็น
+### ค่าหลักที่จำเป็น 6 ค่า
 
 - `DISCORD_BOT_TOKEN` — Token ของ Bot
 - `DISCORD_CLIENT_ID` — Application/Client ID
 - `DISCORD_GUILD_ID` — Server ที่ลงทะเบียนคำสั่ง
 - `OWNER_ID` — Discord User ID ของเจ้าของระบบ
+- `RUNNER_TOKEN_SECRET` — Secret ยาวอย่างน้อย 16 ตัวอักษรสำหรับเข้ารหัส Token ของ Auto Daily
+- `LOG_WEBHOOK_URL` — Discord Incoming Webhook ส่วนตัวสำหรับรับแจ้งเตือนเหตุฉุกเฉินของระบบ
 
-### Runner และสิทธิ์
+หากค่าหลักขาดหรือรูปแบบไม่ถูกต้อง Bot จะหยุดตั้งแต่ Startup โดยไม่เริ่มระบบแบบตั้งค่าครึ่งเดียว
 
-- `RUNNER_TOKEN_SECRET` — Secret ยาวและสุ่มสำหรับเข้ารหัส Token ของ Auto Daily
+### Runner และสิทธิ์แบบ Optional
+
 - `MANAGER_ROLE_ID` — Role ที่ใช้ Start/Stop Runner และดู `/api-status`; Owner/Admin ใช้ได้เสมอ
 - `TIMEZONE` — Timezone ของตารางเวลา ค่าเริ่มต้น `Asia/Bangkok`
-- `LOG_CHANNEL_ID` — ห้องสำรองสำหรับสถานะและ Error
+- `LOG_CHANNEL_ID` — ห้องสำรองสำหรับข้อความสถานะ Runner เดิม ไม่ได้ใช้ส่ง Backend emergency log
 
-### Database และ Backup
+## Backend Emergency Webhook
 
-- `DATABASE_PATH` — ค่าเริ่มต้น `./data/quests.db`
-- `DATABASE_BACKUP_ENABLED` — เปิด/ปิด Backup แบบ Slot
-- `DATABASE_BACKUP_RETENTION` — จำนวน Slot ที่เก็บ ค่า 1–7
+Render/Console logs ยังคงบันทึก Error ทุกระดับเหมือนเดิม ส่วน Webhook ส่งเฉพาะเหตุที่ต้องตรวจสอบระบบจริง เช่น:
 
-ระบบไม่รองรับ `DATABASE_BACKUP_DIR` และไม่รับ Backup path อิสระจาก Environment
+- Process เกิด Uncaught exception หรือ Unhandled rejection
+- Discord login หรือ Gateway session ใช้งานต่อไม่ได้
+- Runtime lease สูญหายจนต้องปิด Process
+- Health server เปิดไม่ได้
+- Database backup ล้มเหลว
+- Quest API schema หรือ Endpoint เปลี่ยนจน Engine อ่านข้อมูลไม่ได้
+- Scheduled Runner ถอดรหัสไม่ได้จากปัญหา Secret/Cipher
 
-ตำแหน่งที่อนุญาตมีสองแบบ:
+เหตุระดับบัญชีเดียวหรือเหตุชั่วคราว เช่น User Token หมดอายุ, Shard สะดุดชั่วคราว, Quest แบบใหม่ที่ระบบเพียงยังไม่รองรับ จะอยู่ใน Render logs และข้อความสถานะ แต่ไม่ยิง Webhook เป็นเหตุฉุกเฉิน
+
+Webhook ใช้ Rich Embed พร้อม Source, Uptime, Runtime, Render deployment และ Context ที่ปลอดภัย โดย:
+
+- ปิด Mentions ทั้งหมด
+- Redact Token, Secret, Cookie, CAPTCHA, Email และ Webhook URL
+- จำกัดขนาดตาม Discord Embed limits
+- Retry เฉพาะ Network, HTTP 429 และ 5xx
+- Dedupe เหตุซ้ำ 10 นาที
+- ความล้มเหลวของ Webhook ไม่ทำให้ Bot ดับและยังถูกบันทึกใน Render logs
+
+`LOG_WEBHOOK_URL` เป็น Secret หลังบ้าน ห้าม Commit ลง Repository, ห้ามพิมพ์ใน Log และควรสร้าง Webhook ในห้องที่มีเฉพาะเจ้าของระบบ
+
+## Database และ Backup
+
+ระบบเลือกค่าเริ่มต้นให้อัตโนมัติ:
+
+- ถ้า `/var/data` มีอยู่และเขียนได้ ใช้ `/var/data/quests.db` และ `/var/data/backups`
+- ถ้าไม่มี Persistent mount ใช้ `./data/quests.db` และ `./data/backups`
+- Backup เปิดอัตโนมัติสำหรับ Database แบบไฟล์
+- เก็บ Backup แบบ Slot สูงสุด 7 ชุด
+
+ค่าเหล่านี้ยัง Override ได้เมื่อมีเหตุจำเป็น แต่ไม่บังคับให้ตั้ง:
+
+- `DATABASE_PATH`
+- `DATABASE_BACKUP_ENABLED`
+- `DATABASE_BACKUP_RETENTION` — ค่า 1–7 และค่าเริ่มต้น 7
+
+ระบบไม่รองรับ `DATABASE_BACKUP_DIR` และไม่รับ Backup path อิสระจาก Environment ตำแหน่งที่อนุญาตมีสองแบบ:
 
 | Database | Backup |
 |---|---|
 | `./data/quests.db` หรือ Path ทั่วไป | `./data/backups` |
 | Path ใต้ `/var/data/` | `/var/data/backups` |
 
-แนะนำบน Hosting ที่มี Persistent Volume:
-
-```env
-DATABASE_PATH=/var/data/quests.db
-DATABASE_BACKUP_ENABLED=true
-DATABASE_BACKUP_RETENTION=7
-```
-
-ต้อง Mount `/var/data` แบบ Persistent ไม่เช่นนั้นทั้ง Database และ Backup จะหายเมื่อ Redeploy
+บน Render ต้อง Mount `/var/data` แบบ Persistent หากไม่มี Disk ทั้ง Database และ Local Backup อาจหายเมื่อ Redeploy แม้ระบบจะเลือกค่าให้อัตโนมัติแล้วก็ตาม
 
 ### Health endpoint
 
