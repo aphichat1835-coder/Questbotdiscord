@@ -7,7 +7,8 @@
 ต้องใช้ Node.js ตาม `.node-version` และ `package.json`
 
 ```bash
-npm ci
+npm ci --ignore-scripts --no-fund --no-audit
+npm rebuild better-sqlite3 --foreground-scripts
 cp .env.example .env
 npm run register
 npm start
@@ -124,7 +125,6 @@ Interaction ที่มีข้อมูลส่วนตัวตอบแ�
 ## การยืนยันผล Quest
 
 ระบบไม่ถือว่าคำขอ POST สำเร็จเพียงเพราะส่ง Request ได้:
-
 - Progress ต้องดึง State ใหม่และเห็นค่าจาก Discord
 - Quest เสร็จเมื่อเห็น `completed_at`
 - Claim สำเร็จเมื่อเห็น `claimed_at`
@@ -186,7 +186,8 @@ Smoke แบบ Read-only ไม่ใช่หลักฐานว่ากา
 ## ทดสอบก่อน Commit/PR
 
 ```bash
-npm ci
+npm ci --ignore-scripts --no-fund --no-audit
+npm rebuild better-sqlite3 --foreground-scripts
 npm run validate:quest-fixture
 npm test
 npm run check
