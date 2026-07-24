@@ -83,6 +83,11 @@ export function isEmergencyIncident(source, error) {
   return false;
 }
 
+function canDeliverEmergencyWebhook() {
+  return process.env.NODE_TEST_WORKER_ID == null
+    || process.env.ALLOW_TEST_WEBHOOK === 'true';
+}
+
 function incidentCategory(source) {
   if (source.startsWith('Restore Scheduled Runner')) return 'Restore Scheduled Runner';
   if (source.startsWith('Discord shard ')) return 'Discord shard';
@@ -223,7 +228,7 @@ export async function reportCriticalError(
   console.error(`❌ [${safeSource}]`, safeMessage);
 
   const shouldNotify = emergency ?? isEmergencyIncident(safeSource, error);
-  if (!notify || !shouldNotify) return;
+  if (!notify || !shouldNotify || !canDeliverEmergencyWebhook()) return;
 
   const reservation = reserveCriticalErrorReport(safeSource, safeMessage);
   if (!reservation) return;
