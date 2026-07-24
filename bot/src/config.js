@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import 'dotenv/config';
 
 function configurationError(message) {
@@ -51,8 +52,8 @@ function validateTimeZone(name, value) {
 }
 
 function validateSecret(name, value, minLength = 16) {
-  if (value && value.length < minLength) {
-    configurationError(`${name} must be at least ${minLength} characters when configured`);
+  if (value.length < minLength) {
+    configurationError(`${name} must be at least ${minLength} characters`);
   }
   return value;
 }
@@ -62,6 +63,50 @@ function validateVersion(name, value) {
     configurationError(`${name} must contain numeric dot-separated version parts`);
   }
   return value;
+}
+
+function validateDiscordWebhookUrl(name, value) {
+  let url;
+  try {
+    url = new URL(value);
+  } catch {
+    configurationError(`${name} must be a valid URL`);
+  }
+
+  const allowedHosts = new Set([
+    'discord.com',
+    'canary.discord.com',
+    'ptb.discord.com',
+    'discordapp.com',
+    'canary.discordapp.com',
+    'ptb.discordapp.com',
+  ]);
+  const pathMatch = /^\/api\/webhooks\/(\d{17,20})\/([A-Za-z0-9._-]{20,})\/?$/.exec(url.pathname);
+  if (
+    url.protocol !== 'https:'
+    || !allowedHosts.has(url.hostname)
+    || !pathMatch
+    || url.username
+    || url.password
+    || url.search
+    || url.hash
+  ) {
+    configurationError(`${name} must be a standard HTTPS Discord incoming webhook URL`);
+  }
+  return url.toString().replace(/\/$/, '');
+}
+
+function canUsePersistentDataRoot() {
+  try {
+    return fs.statSync('/var/data').isDirectory()
+      && (fs.accessSync('/var/data', fs.constants.W_OK), true);
+  } catch {
+    return false;
+  }
+}
+
+function automaticDatabasePath() {
+  return canUsePersistentDataRoot() ? '/var/data/quests.db' : './data/quests.db';
 }
 
 const clientId = validateSnowflake('DISCORD_CLIENT_ID', readRequired('DISCORD_CLIENT_ID'));
@@ -77,10 +122,19 @@ const logChannelId = validateSnowflake(
   readOptional('LOG_CHANNEL_ID'),
   { optional: true },
 );
+const logWebhookUrl = validateDiscordWebhookUrl(
+  'LOG_WEBHOOK_URL',
+  readRequired('LOG_WEBHOOK_URL'),
+);
 const timezone = validateTimeZone('TIMEZONE', readOptional('TIMEZONE', 'Asia/Bangkok'));
 const discordTimezone = validateTimeZone(
   'DISCORD_TIMEZONE',
   readOptional('DISCORD_TIMEZONE', timezone),
+);
+const databasePath = readOptional('DATABASE_PATH', automaticDatabasePath());
+const databaseBackupEnabled = readBoolean(
+  'DATABASE_BACKUP_ENABLED',
+  databasePath !== ':memory:',
 );
 
 const discordClientVersion = validateVersion(
@@ -117,19 +171,19 @@ export const config = Object.freeze({
   discordBuildNumber,
   discordNativeBuildNumber,
   logChannelId,
+  logWebhookUrl,
   managerRoleId,
-  databasePath: readOptional('DATABASE_PATH', './data/quests.db'),
-  databaseBackupEnabled: readBoolean('DATABASE_BACKUP_ENABLED', false),
+  databasePath,
+  databaseBackupEnabled,
   databaseBackupRetention: readInteger('DATABASE_BACKUP_RETENTION', 7, { min: 1, max: 7 }),
   runnerTokenSecret: validateSecret(
     'RUNNER_TOKEN_SECRET',
-    readOptional('RUNNER_TOKEN_SECRET'),
+    readRequired('RUNNER_TOKEN_SECRET'),
     16,
   ),
-  healthStatusToken: validateSecret(
-    'HEALTH_STATUS_TOKEN',
-    readOptional('HEALTH_STATUS_TOKEN'),
-    16,
-  ),
+  healthStatusToken: (() => {
+    const value = readOptional('HEALTH_STATUS_TOKEN');
+    return value ? validateSecret('HEALTH_STATUS_TOKEN', value, 16) : '';
+  })(),
   port: readInteger('PORT', 3000, { min: 1, max: 65535 }),
 });
