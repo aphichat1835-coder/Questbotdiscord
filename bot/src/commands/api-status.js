@@ -5,6 +5,7 @@ import {
   listJobs,
   listQuestEngineStatuses,
 } from '../discord-runner.js';
+import { redactSensitive } from '../error-reporter.js';
 import { isManager } from '../permissions.js';
 import { listStoppingAccounts } from '../runner-control.js';
 import { listScheduledRunners } from '../scheduled-runner-store.js';
@@ -132,7 +133,12 @@ export async function execute(interaction) {
     )
     .setTimestamp();
 
-  if (dbError) embed.addFields({ name: '❌ Database Error', value: `\`${dbError}\`` });
+  if (dbError) {
+    embed.addFields({
+      name: '❌ Database Error',
+      value: `\`${redactSensitive(dbError).slice(0, 900)}\``,
+    });
+  }
   if (aggregate.lastError) {
     embed.addFields({ name: '❌ Quest API Error ล่าสุด', value: `\`${aggregate.lastError.slice(0, 900)}\`` });
   }
