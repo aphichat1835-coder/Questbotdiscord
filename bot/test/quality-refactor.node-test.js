@@ -55,8 +55,16 @@ test('runner quality refactor keeps static-analysis regressions out', async () =
   assert.ok(startRunnerIndex > 0);
   assert.ok(runner.indexOf('function oneShotFreshQuestFailureReason', 0) < startRunnerIndex);
   assert.ok(runner.indexOf('function oneShotUnavailableReason', 0) < startRunnerIndex);
+  const helperDeclarations = runner.match(
+    /function (idleQuestOutcome|attemptedQuestOutcome)\(/g,
+  ) ?? [];
   for (const helperName of ['idleQuestOutcome', 'attemptedQuestOutcome']) {
-    assert.equal((runner.match(new RegExp(`function ${helperName}\\(`, 'g')) ?? []).length, 1);
+    assert.equal(
+      helperDeclarations.filter(
+        (declaration) => declaration === `function ${helperName}(`,
+      ).length,
+      1,
+    );
     assert.ok(runner.indexOf(`function ${helperName}`, 0) < startRunnerIndex);
   }
 
