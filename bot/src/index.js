@@ -1,47 +1,59 @@
-import { Client, GatewayIntentBits, Collection } from 'discord.js';
+import { randomUUID } from 'node:crypto';
+import { Client, Collection, GatewayIntentBits } from 'discord.js';
 import { config } from './config.js';
 import { startWorker, stopWorker } from './worker.js';
 import { startDashboard, stopDashboard } from './dashboard.js';
 import {
-  refreshBuildInfo,
+  refreshBuildInfo as logConfiguredClientProfile,
   restoreScheduledRunners,
   shutdownRunners,
 } from './discord-runner.js';
-import { closeDatabase } from './db.js';
 import {
+  acquireRuntimeLease,
+  closeDatabase,
+  releaseRuntimeLease,
+  renewRuntimeLease,
+} from './db.js';
+import {
+  redactSensitive,
   reportCriticalError,
   setErrorReporterClient,
 } from './error-reporter.js';
+import { installPersistentRunnerStatusHeaders } from './runner-status-header.js';
 
-import * as ping        from './commands/ping.js';
-import * as help        from './commands/help.js';
-import * as apiStatus   from './commands/api-status.js';
-import * as run         from './commands/run.js';
-import * as stop        from './commands/stop.js';
-import * as panel       from './commands/panel.js';
+import * as ping from './commands/ping.js';
+import * as help from './commands/help.js';
+import * as apiStatus from './commands/api-status.js';
+import * as run from './commands/run.js';
+import * as stop from './commands/stop.js';
+import * as panel from './commands/panel.js';
 
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 client.commands = new Collection();
+installPersistentRunnerStatusHeaders(client);
 setErrorReporterClient(client);
-let buildInfoInterval = null;
-let shuttingDown = false;
 
-const commands = [
-  ping, help, apiStatus,
-  run, stop, panel,
-];
-for (const cmd of commands) {
-  client.commands.set(cmd.data.name, cmd);
+const commands = [ping, help, apiStatus, run, stop, panel];
+for (const command of commands) client.commands.set(command.data.name, command);
+
+let shuttingDown = false;
+const runtimeLeaseName = 'bot-runtime';
+const runtimeLeaseHolder = `${process.pid}:${randomUUID()}`;
+if (!acquireRuntimeLease(runtimeLeaseName, runtimeLeaseHolder)) {
+  throw new Error('Another Quest Bot process already holds the shared database runtime lease');
 }
+const runtimeLeaseTimer = setInterval(() => {
+  if (!renewRuntimeLease(runtimeLeaseName, runtimeLeaseHolder)) {
+    void fatalShutdown('Runtime lease', new Error('Lost the shared database runtime lease'));
+  }
+}, 30_000);
+runtimeLeaseTimer.unref?.();
 
 startDashboard(null);
 
-// ดึง build info ล่าสุดก่อน login และ refresh ทุก 6 ชั่วโมง
-await refreshBuildInfo();
-buildInfoInterval = setInterval(() => {
-  void refreshBuildInfo().catch((error) => reportCriticalError('Build info refresh', error));
-}, 6 * 60 * 60 * 1000);
-buildInfoInterval.unref?.();
+// The client profile is fixed for the lifetime of the process. Environment
+// overrides are read at startup, so changing them requires a normal restart.
+await logConfiguredClientProfile();
 
 client.once('clientReady', () => {
   void onClientReady().catch((error) => fatalShutdown('Client startup', error));
@@ -50,11 +62,10 @@ client.once('clientReady', () => {
 async function onClientReady() {
   console.log(`✅ บอทพร้อมแล้ว — logged in as ${client.user.tag}`);
   startDashboard(client);
-  startWorker(client);
+  startWorker();
   await restoreScheduledRunners(client);
 }
 
-// interaction หมดอายุ (10062) หรือถูกตอบไปแล้ว (40060) — ไม่ต้อง retry
 function isIgnorableInteractionError(error) {
   return error?.code === 10062 || error?.code === 40060;
 }
@@ -63,12 +74,11 @@ function logDiscordError(label, error) {
   console.error(label, {
     code: error?.code,
     status: error?.status,
-    message: error?.message,
+    message: redactSensitive(error?.message),
     method: error?.method,
   });
 }
 
-// กัน handler รับ interaction เดียวกันซ้ำใน process เดียว
 const seenInteractions = new Set();
 function markInteractionSeen(id) {
   if (seenInteractions.has(id)) return false;
@@ -77,63 +87,69 @@ function markInteractionSeen(id) {
   return true;
 }
 
-client.on('interactionCreate', async (interaction) => {
-  if (!markInteractionSeen(interaction.id)) return;
+function routeModalSubmit(interaction) {
+  if (interaction.customId.startsWith('run_modal:')) return run.handleModal(interaction);
+  return undefined;
+}
 
+function routeButton(interaction) {
+  if (interaction.customId.startsWith('panel:')) return panel.handleButton(interaction);
+  if (interaction.customId.startsWith('runner-stop:')) return stop.handleButton(interaction);
+  return undefined;
+}
+
+function routeStringSelect(interaction) {
+  if (interaction.customId === 'runner-stop:select') return stop.handleSelect(interaction);
+  return undefined;
+}
+
+function routeChatInput(interaction) {
+  const command = client.commands.get(interaction.commandName);
+  return command?.execute(interaction);
+}
+
+function routeInteraction(interaction) {
+  if (interaction.isModalSubmit()) return routeModalSubmit(interaction);
+  if (interaction.isButton()) return routeButton(interaction);
+  if (interaction.isStringSelectMenu()) return routeStringSelect(interaction);
+  if (interaction.isChatInputCommand()) return routeChatInput(interaction);
+  return undefined;
+}
+
+async function sendInteractionFailure(interaction) {
+  const message = { content: '❌ เกิดข้อผิดพลาด กรุณาลองใหม่', flags: 64 };
+  if (interaction.replied || interaction.deferred) return interaction.followUp(message);
+  return interaction.reply(message);
+}
+
+async function reportInteractionFailure(interaction, error) {
+  if (isIgnorableInteractionError(error)) {
+    console.warn(`⚠️ Ignored interaction error: ${error.code} ${error.message}`);
+    return;
+  }
+  logDiscordError('❌ Interaction error:', error);
   try {
-    if (interaction.isModalSubmit()) {
-      if (interaction.customId.startsWith('run_modal:')) return run.handleModal(interaction);
-      if (['panel_add_modal', 'panel_done_modal', 'panel_edit_modal', 'panel_delete_modal'].includes(interaction.customId)) {
-        return panel.handlePanelModal(interaction);
-      }
-      return;
-    }
-
-    if (interaction.isButton()) {
-      if (interaction.customId.startsWith('panel:')) return panel.handleButton(interaction);
-      if (interaction.customId.startsWith('runner-stop:')) return stop.handleButton(interaction);
-      return;
-    }
-
-    if (interaction.isStringSelectMenu()) {
-      if (interaction.customId === 'runner-stop:select') return stop.handleSelect(interaction);
-      return;
-    }
-
-    if (!interaction.isChatInputCommand()) return;
-    const command = client.commands.get(interaction.commandName);
-    if (!command) return;
-    await command.execute(interaction);
-  } catch (err) {
-    if (isIgnorableInteractionError(err)) {
-      console.warn(`⚠️ Ignored interaction error: ${err.code} ${err.message}`);
-      return;
-    }
-    logDiscordError('❌ Interaction error:', err);
-    const msg = { content: '❌ เกิดข้อผิดพลาด กรุณาลองใหม่', flags: 64 };
-    try {
-      if (interaction.replied || interaction.deferred) {
-        await interaction.followUp(msg);
-      } else {
-        await interaction.reply(msg);
-      }
-    } catch (replyError) {
-      if (!isIgnorableInteractionError(replyError)) {
-        logDiscordError('❌ Failed to report interaction error:', replyError);
-      }
+    await sendInteractionFailure(interaction);
+  } catch (replyError) {
+    if (!isIgnorableInteractionError(replyError)) {
+      logDiscordError('❌ Failed to report interaction error:', replyError);
     }
   }
-});
+}
 
-client.on('error', (error) => {
-  void reportCriticalError('Discord client', error);
-});
-client.on('shardError', (error, shardId) => {
-  void reportCriticalError(`Discord shard ${shardId}`, error);
-});
-client.on('warn', (message) => {
-  console.warn('⚠️ [Discord]', message);
-});
+async function handleInteraction(interaction) {
+  if (!markInteractionSeen(interaction.id)) return;
+  try {
+    await routeInteraction(interaction);
+  } catch (error) {
+    await reportInteractionFailure(interaction, error);
+  }
+}
+
+client.on('interactionCreate', handleInteraction);
+client.on('error', (error) => void reportCriticalError('Discord client', error));
+client.on('shardError', (error, shardId) => void reportCriticalError(`Discord shard ${shardId}`, error));
+client.on('warn', (message) => console.warn('⚠️ [Discord]', message));
 client.on('invalidated', () => {
   void fatalShutdown('Discord session invalidated', new Error('Discord gateway session invalidated'));
 });
@@ -141,9 +157,8 @@ client.on('invalidated', () => {
 async function gracefulShutdown(reason, exitCode = 0) {
   if (shuttingDown) return;
   shuttingDown = true;
+  clearInterval(runtimeLeaseTimer);
   console.log(`🧹 Graceful shutdown — ${reason}`);
-
-  clearInterval(buildInfoInterval);
   await stopWorker();
 
   try {
@@ -151,15 +166,23 @@ async function gracefulShutdown(reason, exitCode = 0) {
     console.log(`🧹 Runner stopped cleanly: ${stopped}`);
   } catch (error) {
     console.error('❌ Runner shutdown error:', error);
+    exitCode ||= 1;
   }
 
   try {
     client.destroy();
     await stopDashboard();
-    closeDatabase();
   } catch (error) {
     console.error('❌ Resource shutdown error:', error);
-    exitCode = exitCode || 1;
+    exitCode ||= 1;
+  }
+
+  try {
+    releaseRuntimeLease(runtimeLeaseName, runtimeLeaseHolder);
+    closeDatabase();
+  } catch (error) {
+    console.error('❌ Database shutdown error:', error);
+    exitCode ||= 1;
   }
 
   process.exit(exitCode);
@@ -173,18 +196,10 @@ async function fatalShutdown(source, error) {
   await gracefulShutdown(source, 1);
 }
 
-process.once('SIGTERM', () => {
-  void gracefulShutdown('SIGTERM');
-});
-process.once('SIGINT', () => {
-  void gracefulShutdown('SIGINT');
-});
-process.on('unhandledRejection', (reason) => {
-  void fatalShutdown('Unhandled rejection', reason);
-});
-process.on('uncaughtException', (error) => {
-  void fatalShutdown('Uncaught exception', error);
-});
+process.once('SIGTERM', () => void gracefulShutdown('SIGTERM'));
+process.once('SIGINT', () => void gracefulShutdown('SIGINT'));
+process.on('unhandledRejection', (reason) => void fatalShutdown('Unhandled rejection', reason));
+process.on('uncaughtException', (error) => void fatalShutdown('Uncaught exception', error));
 
 try {
   await client.login(config.token);

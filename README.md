@@ -1,199 +1,53 @@
-<div align="center">
-
 # NeverDie Quest Bot
 
-**ระบบบริหารจัดการ Discord Quest อัตโนมัติ ผ่าน Discord Bot**
+Discord Bot แบบ Bot-only สำหรับตรวจและดำเนินการกับ Discord Quest ที่รองรับ ไม่มี Desktop/Tauri, CDP launcher, Game Simulator หรือ Quest Tracker แบบกรอก Quest ID
 
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Node.js](https://img.shields.io/badge/node-20-green.svg)](https://nodejs.org/)
-[![discord.js](https://img.shields.io/badge/discord.js-14-5865f2.svg)](https://discord.js.org/)
-[![SQLite](https://img.shields.io/badge/sqlite-better--sqlite3-lightgrey.svg)](https://github.com/WiseLibs/better-sqlite3)
+## คำสั่ง
 
-</div>
+- `/panel` — เปิดแผง One-shot ที่มี `START NOW` และ `STOP ALL`
+- `/run` — เริ่ม Auto Daily ตรวจทันทีและตามเวลา 00:00 / 08:00 / 16:00
+- `/stop` — เลือกหยุด Auto Daily Runner
+- `/api-status` — ดูสถานะฐานข้อมูล Runner และ Quest API; ใช้ได้เฉพาะ Owner/Admin/Manager
+- `/ping` และ `/help`
 
----
+การเริ่ม Runner จำกัดสูงสุด 10 บัญชีต่อผู้ใช้ การนับช่องและเริ่ม Runner ถูกล็อกเป็นชุดเดียวกันเพื่อป้องกันคำสั่งพร้อมกันเปิดเกินจำนวน
 
-## ภาพรวม
+## ความปลอดภัยและข้อมูล
 
-**NeverDie Quest Bot** คือ Discord Bot ที่รวมระบบ Quest Runner และ Quest Tracker ไว้ในกระบวนการเดียว ควบคุมทุกอย่างได้จาก Discord Server โดยไม่ต้องติดตั้งซอฟต์แวร์เพิ่มเติม
+- Auto Daily เก็บ Token แบบเข้ารหัส AES-256-GCM โดยผูกข้อมูลกับ Owner และ Account
+- Token, Ciphertext, Username และ Account ID ไม่ถูกพิมพ์ใน Smoke Test log
+- HTTP `/api/status` ต้องใช้ Bearer token และจะปิดเมื่อไม่ได้ตั้งค่า
+- Slash command `/api-status` จำกัดสิทธิ์ Manager ขึ้นไป
+- Database backup ใช้ตำแหน่งที่กำหนดตายตัวและเก็บสูงสุด 7 Slot
+- เมื่อ `DATABASE_PATH` อยู่ใต้ `/var/data/` Backup จะอยู่ใน `/var/data/backups` เพื่อใช้ Persistent Volume เดียวกัน
 
-```
-Discord Server
-      │
-      ▼  Slash Commands
-  ┌─────────────┐
-  │  Discord Bot │  ← discord.js 14 · Node.js
-  └──────┬──────┘
-         │
-    ┌────┴────┐
-    │         │
-    ▼         ▼
-  Quest    Quest
-  Runner   Tracker
- (Auto)   (SQLite)
-```
+## การตรวจสอบ
 
----
+CI ตรวจ Repository shape, Sanitized Quest fixture, ตำแหน่ง Backup ที่อนุญาต, Unit/Regression tests, Syntax ของ `src` และ `scripts` และ Production dependency audit
 
-## การติดตั้ง
+Manual Quest API smoke เป็นแบบ Read-only: ตรวจบัญชีและอ่านรายการ Quest เท่านั้น ไม่ Enroll, Progress, Heartbeat หรือ Claim การเปลี่ยนข้อมูลจริงต้องตรวจด้วยขั้นตอนควบคุมก่อน Production
 
-### ข้อกำหนดเบื้องต้น
-
-- Node.js 20 ขึ้นไป
-- npm หรือ yarn
-
-### ขั้นตอน
+## เริ่มใช้งาน
 
 ```bash
-# 1. เข้าไปที่โฟลเดอร์บอท
 cd bot
-
-# 2. ติดตั้ง dependencies
-npm install
-
-# 3. ตั้งค่า environment
+npm ci --ignore-scripts --no-fund --no-audit
+npm rebuild better-sqlite3 --foreground-scripts
 cp .env.example .env
-# แก้ไขไฟล์ .env ให้ครบถ้วน
-
-# 4. ลงทะเบียน Slash Commands (ทำครั้งแรกหรือเมื่อแก้คำสั่ง)
 npm run register
-
-# 5. เริ่มใช้งาน
 npm start
 ```
 
----
+ดูคู่มือติดตั้ง การตั้งค่า การสำรองข้อมูล การทดสอบ และ Production checklist ที่ [`bot/README.md`](bot/README.md)
 
-## การตั้งค่า Environment
+> **คำเตือน:** ระบบที่ใช้ข้อมูลรับรองของบัญชีผู้ใช้เพื่อทำงานอัตโนมัติมีความเสี่ยงด้านบัญชีและข้อกำหนดของแพลตฟอร์ม ผู้ดูแลต้องตรวจสอบกฎปัจจุบันและยอมรับความเสี่ยงก่อนใช้งานจริง
 
-แก้ไขไฟล์ `bot/.env` ด้วยค่าต่อไปนี้:
+## Runtime hardening
 
-| ตัวแปร | คำอธิบาย | จำเป็น |
-|--------|----------|--------|
-| `DISCORD_BOT_TOKEN` | Token ของ Bot จาก Discord Developer Portal | ✅ |
-| `DISCORD_CLIENT_ID` | Application ID ของ Bot | ✅ |
-| `DISCORD_GUILD_ID` | ID ของ Discord Server ที่ใช้งาน | ✅ |
-| `OWNER_ID` | Discord User ID ของเจ้าของ Bot | ✅ |
-| `TIMEZONE` | Timezone (ค่าเริ่มต้น: `Asia/Bangkok`) | ➖ |
-| `LOG_CHANNEL_ID` | ID ของห้องสำหรับรับการแจ้งเตือน | ➖ |
-| `MANAGER_ROLE_ID` | ID ของ Role ที่ได้รับสิทธิ์จัดการ | ➖ |
-| `DATABASE_PATH` | ที่อยู่ไฟล์ฐานข้อมูล (ค่าเริ่มต้น: `./data/quests.db`) | ➖ |
-
----
-
-## คำสั่งทั้งหมด
-
-### แผงควบคุมหลัก
-
-| คำสั่ง | คำอธิบาย |
-|--------|----------|
-| `/panel` | เปิดแผงควบคุมพร้อมปุ่มกดครบชุด |
-| `/ping` | ตรวจสอบสถานะ Bot |
-| `/help` | แสดงรายการคำสั่งทั้งหมด |
-| `/api-status` | ตรวจสอบสถานะฐานข้อมูลและ Runner |
-
-### Quest Runner
-
-| คำสั่ง | คำอธิบาย |
-|--------|----------|
-| `/run` | เริ่มต้น Quest Runner |
-| `/stop` | หยุด Quest Runner ที่กำลังทำงาน |
-
-### Quest Tracker
-
-| คำสั่ง | คำอธิบาย |
-|--------|----------|
-| `/quest-add` | เพิ่ม Quest พร้อมกำหนด Deadline และบันทึก |
-| `/quest-list` | แสดงรายการ Quest ทั้งหมด |
-| `/quest-done` | บันทึก Quest ว่าเสร็จสิ้น |
-| `/quest-remove` | ลบ Quest ออกจากรายการ |
-| `/quest-status` | แสดงสรุปสถิติ Quest |
-
----
-
-## แผงควบคุม `/panel`
-
-แผงควบคุมแสดงข้อมูลแบบ real-time และมีปุ่มดำเนินการครบชุด:
-
-```
-┌─────────────────────────────────────────────┐
-│  🎮 NeverDie Quest — Control Panel           │
-│  📦 ทั้งหมด: 5  ✅ เสร็จสิ้น: 3  🔴 ค้าง: 2 │
-├─────────────────────────────────────────────┤
-│  [📋 รายการ]  [➕ เพิ่ม]  [✅ Done]  [📊 สถิติ]  │
-│  [⚡ Start Runner]  [🛑 Stop]  [🔄 Refresh]  │
-└─────────────────────────────────────────────┘
-```
-
-Bot จะแสดงสถานะความคืบหน้าแบบ real-time ผ่าน embed message เดียว โดยอัปเดตต่อเนื่องแทนการส่งข้อความใหม่
-
----
-
-## ระบบแจ้งเตือนอัตโนมัติ
-
-หากตั้งค่า `LOG_CHANNEL_ID` ไว้ ระบบจะส่งการแจ้งเตือนอัตโนมัติ:
-
-- **ทุก 1 ชั่วโมง** — ตรวจสอบ Quest ที่ใกล้ถึง Deadline
-- **ทุกวัน เวลา 08:00 น.** — สรุปสถานะ Quest ประจำวัน
-
----
-
-## โครงสร้างโปรเจกต์
-
-```
-bot/
-├── src/
-│   ├── commands/          # Slash Commands ทั้งหมด
-│   │   ├── panel.js       # แผงควบคุมหลัก
-│   │   ├── run.js         # Quest Runner
-│   │   ├── stop.js        # หยุด Runner
-│   │   ├── quest-add.js
-│   │   ├── quest-list.js
-│   │   ├── quest-done.js
-│   │   ├── quest-remove.js
-│   │   ├── quest-status.js
-│   │   ├── api-status.js
-│   │   ├── ping.js
-│   │   └── help.js
-│   ├── config.js          # ค่าตั้งต้นจาก .env
-│   ├── db.js              # ฐานข้อมูล SQLite + schema
-│   ├── storage.js         # Data access layer
-│   ├── discord-runner.js  # Quest automation engine
-│   ├── worker.js          # Background jobs (deadline check, daily summary)
-│   ├── permissions.js     # ระบบสิทธิ์
-│   ├── index.js           # Entry point
-│   └── register-commands.js
-├── data/                  # ไฟล์ฐานข้อมูล SQLite (auto-generated)
-├── .env.example
-└── package.json
-```
-
----
-
-## สิทธิ์การใช้งาน
-
-ระบบแบ่งสิทธิ์เป็น 3 ระดับ:
-
-| ระดับ | คำอธิบาย |
-|-------|----------|
-| **Owner** | เจ้าของ Bot — สิทธิ์สูงสุด |
-| **Admin** | ผู้ดูแล Server — สิทธิ์จัดการทุกอย่าง |
-| **Manager** | Role ที่กำหนดผ่าน `MANAGER_ROLE_ID` |
-
----
-
-## การพัฒนา
-
-```bash
-# Development mode (auto-restart เมื่อแก้ไขไฟล์)
-npm run dev
-
-# ลงทะเบียนคำสั่งใหม่หลังแก้ไข
-npm run register
-```
-
----
-
-## License
-
-MIT License — ดูรายละเอียดที่ [LICENSE](LICENSE)
+- Runtime SQLite databases, WAL/SHM files and backup files are forbidden in Git and rejected by CI.
+- A shared-database runtime lease prevents two Bot processes from running against the same database.
+- Production must run exactly one Replica unless every Replica shares the same `DATABASE_PATH`.
+- The same Discord account cannot be admitted by different Managers at the same time.
+- Each Modal accepts at most 10 Token entries.
+- Mutation retry stops when Fresh-state verification itself cannot be completed.
+- Stopped Job history remains available per account but is excluded from the active aggregate health state.

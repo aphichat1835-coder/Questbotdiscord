@@ -7,7 +7,7 @@ import {
   StringSelectMenuBuilder,
 } from 'discord.js';
 import { config } from '../config.js';
-import { stopScheduledJob } from '../discord-runner.js';
+import { stopScheduledJobAndWaitDetailed, summarizeStopResults } from '../runner-control.js';
 import { listScheduledRunners } from '../scheduled-runner-store.js';
 
 export const data = new SlashCommandBuilder()
@@ -73,26 +73,68 @@ function stopPanelPayload(ownerId, notice = null) {
   return { embeds: [embed], components };
 }
 
+async function acknowledgeForCleanup(interaction) {
+  if (typeof interaction.deferUpdate === 'function') {
+    await interaction.deferUpdate();
+    return true;
+  }
+  return false;
+}
+
+async function finishUpdate(interaction, payload, deferred) {
+  if (deferred && typeof interaction.editReply === 'function') {
+    return interaction.editReply(payload);
+  }
+  if (typeof interaction.update === 'function') return interaction.update(payload);
+  if (typeof interaction.editReply === 'function') return interaction.editReply(payload);
+  throw new Error('Interaction does not support update or editReply');
+}
+
+async function replyUnknownAction(interaction) {
+  const payload = {
+    flags: 64,
+    content: 'ℹ️ ปุ่มควบคุมนี้หมดอายุหรือไม่รองรับแล้ว กรุณาใช้ `/stop` เพื่อเปิดแผงใหม่',
+  };
+  if (interaction.replied || interaction.deferred) return interaction.followUp(payload);
+  return interaction.reply(payload);
+}
+
+async function stopRows(ownerId, rows) {
+  const results = await Promise.all(
+    rows.map((row) => stopScheduledJobAndWaitDetailed(ownerId, row.id)),
+  );
+  return summarizeStopResults(results);
+}
+
+function stopNotice(result, scope = '') {
+  if (result.accepted === 0) return 'ℹ️ ไม่พบ Runner ที่เลือก';
+  const target = scope ? ` ${scope}` : '';
+  if (result.pending > 0) {
+    return `🛑 รับคำสั่งหยุด${target}แล้ว **${result.accepted}** token · ยัง Cleanup อยู่ **${result.pending}** token`;
+  }
+  return `✅ หยุดและ Cleanup${target}เสร็จแล้ว **${result.completed}** token`;
+}
+
 export async function execute(interaction) {
-  await interaction.reply({
+  return interaction.reply({
     ...stopPanelPayload(interaction.user.id),
     flags: 64,
   });
 }
 
 export async function handleSelect(interaction) {
-  const stopped = [];
-  for (const rawId of interaction.values) {
-    const id = Number(rawId);
-    if (!Number.isInteger(id)) continue;
-    const row = listScheduledRunners(interaction.user.id).find((item) => item.id === id);
-    if (row && stopScheduledJob(interaction.user.id, id)) stopped.push(row.username);
-  }
-
-  const notice = stopped.length
-    ? `✅ หยุดแล้ว: **${stopped.join(', ')}**`
-    : 'ℹ️ ไม่พบ Runner ที่เลือก';
-  await interaction.update(stopPanelPayload(interaction.user.id, notice));
+  const deferred = await acknowledgeForCleanup(interaction);
+  const selectedIds = new Set(
+    interaction.values.map(Number).filter(Number.isInteger),
+  );
+  const rows = listScheduledRunners(interaction.user.id)
+    .filter((row) => selectedIds.has(row.id));
+  const result = await stopRows(interaction.user.id, rows);
+  return finishUpdate(
+    interaction,
+    stopPanelPayload(interaction.user.id, stopNotice(result)),
+    deferred,
+  );
 }
 
 export async function handleButton(interaction) {
@@ -102,10 +144,15 @@ export async function handleButton(interaction) {
   }
 
   if (action === 'all') {
+    const deferred = await acknowledgeForCleanup(interaction);
     const rows = listScheduledRunners(interaction.user.id);
-    for (const row of rows) stopScheduledJob(interaction.user.id, row.id);
-    return interaction.update(
-      stopPanelPayload(interaction.user.id, `✅ หยุด Auto Daily Runner ทั้งหมด **${rows.length}** token แล้ว`),
+    const result = await stopRows(interaction.user.id, rows);
+    return finishUpdate(
+      interaction,
+      stopPanelPayload(interaction.user.id, stopNotice(result, 'Auto Daily Runner')),
+      deferred,
     );
   }
+
+  return replyUnknownAction(interaction);
 }

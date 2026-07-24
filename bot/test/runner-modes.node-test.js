@@ -1,13 +1,14 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import test from 'node:test';
+import { fetchInputUrl } from './fetch-input.js';
 
 process.env.DISCORD_BOT_TOKEN = 'test-bot-token';
-process.env.DISCORD_CLIENT_ID = 'test-client';
-process.env.DISCORD_GUILD_ID = 'test-guild';
-process.env.OWNER_ID = 'test-owner';
-process.env.DATABASE_PATH = `/tmp/questbot-runner-modes-${process.pid}.db`;
-process.env.DATABASE_BACKUP_DIR = `/tmp/questbot-runner-backups-${process.pid}`;
+process.env.DISCORD_CLIENT_ID = '12345678901234567';
+process.env.DISCORD_GUILD_ID = '22345678901234567';
+process.env.OWNER_ID = '32345678901234567';
+process.env.DATABASE_PATH = './test/.tmp/runner-modes.db';
+process.env.DATABASE_BACKUP_ENABLED = 'true';
 process.env.DATABASE_BACKUP_RETENTION = '2';
 process.env.RUNNER_TOKEN_SECRET = 'runner-mode-test-secret-123456';
 
@@ -33,8 +34,7 @@ const {
 } = await import('../src/scheduled-runner-store.js');
 const runCommand = await import('../src/commands/run.js');
 const stopCommand = await import('../src/commands/stop.js');
-const panelCommand = await import('../src/commands/panel.js');
-const { backupDatabase } = await import('../src/db.js');
+const { backupDatabaseSlot, clearAllDatabaseBackupSlots } = await import('../src/db.js');
 const { redactSensitive } = await import('../src/error-reporter.js');
 const { runDatabaseBackup } = await import('../src/worker.js');
 
@@ -70,7 +70,7 @@ async function waitFor(predicate, timeoutMs = 1000) {
 }
 
 function isQuestListUrl(url) {
-  const value = String(url);
+  const value = fetchInputUrl(url);
   return value.endsWith('/quests/@me') || value.endsWith('/users/@me/quests');
 }
 
@@ -113,10 +113,10 @@ async function startScheduledHeartbeatFailure({
         },
       }] });
     }
-    if (String(url).includes('/heartbeat')) {
+    if (fetchInputUrl(url).includes('/heartbeat')) {
       return jsonResponse({ message: status === 401 ? 'Unauthorized' : 'Forbidden' }, status);
     }
-    throw new Error(`Unexpected fetch: ${url}`);
+    throw new Error(`Unexpected fetch: ${fetchInputUrl(url)}`);
   };
 
   await startRunner({
@@ -141,7 +141,7 @@ test.beforeEach(() => {
         headers: { 'Content-Type': 'application/json' },
       });
     }
-    throw new Error(`Unexpected fetch: ${url}`);
+    throw new Error(`Unexpected fetch: ${fetchInputUrl(url)}`);
   };
 });
 
@@ -268,7 +268,7 @@ test('malformed Quest API response is reported as incompatible, not as an empty 
 
 test('quest fetch falls back to the legacy endpoint when /quests/@me is unavailable', async () => {
   global.fetch = async (url) => {
-    const path = String(url);
+    const path = fetchInputUrl(url);
     if (path.endsWith('/quests/@me')) {
       return new Response(JSON.stringify({ message: 'Not Found' }), {
         status: 404,
@@ -287,7 +287,7 @@ test('quest fetch falls back to the legacy endpoint when /quests/@me is unavaila
         headers: { 'Content-Type': 'application/json' },
       });
     }
-    throw new Error(`Unexpected fetch: ${url}`);
+    throw new Error(`Unexpected fetch: ${fetchInputUrl(url)}`);
   };
 
   const quests = await fetchQuests('token-legacy-endpoint');
@@ -298,7 +298,7 @@ test('quest fetch falls back to the legacy endpoint when /quests/@me is unavaila
 test('quest fetch checks the alternate endpoint before accepting an empty list', async () => {
   const calls = [];
   global.fetch = async (url) => {
-    calls.push(String(url));
+    calls.push(fetchInputUrl(url));
     if (calls.length === 1) {
       return new Response(JSON.stringify({ quests: [] }), {
         status: 200,
@@ -340,7 +340,7 @@ test('aborted quest fetch does not become a compatibility error', async () => {
 test('current Quest API requests use the quest-home referer', async () => {
   let referer = null;
   global.fetch = async (url, options = {}) => {
-    if (String(url).endsWith('/quests/@me')) {
+    if (fetchInputUrl(url).endsWith('/quests/@me')) {
       referer = options.headers?.Referer;
       return new Response(JSON.stringify({ quests: [{
         id: 'referer-quest',
@@ -351,7 +351,7 @@ test('current Quest API requests use the quest-home referer', async () => {
         headers: { 'Content-Type': 'application/json' },
       });
     }
-    throw new Error(`Unexpected fetch: ${url}`);
+    throw new Error(`Unexpected fetch: ${fetchInputUrl(url)}`);
   };
 
   const quests = await fetchQuests('token-quest-referer');
@@ -362,7 +362,7 @@ test('current Quest API requests use the quest-home referer', async () => {
 test('quest enrollment cooldown is preserved and excludes unaccepted quests from runnable count', async () => {
   const blockedUntil = new Date(Date.now() + 60_000).toISOString();
   global.fetch = async (url) => {
-    if (String(url).endsWith('/quests/@me')) {
+    if (fetchInputUrl(url).endsWith('/quests/@me')) {
       return new Response(JSON.stringify({
         quests: [{
           id: 'cooldown-quest',
@@ -376,7 +376,7 @@ test('quest enrollment cooldown is preserved and excludes unaccepted quests from
         headers: { 'Content-Type': 'application/json' },
       });
     }
-    throw new Error(`Unexpected fetch: ${url}`);
+    throw new Error(`Unexpected fetch: ${fetchInputUrl(url)}`);
   };
 
   const [quest] = await fetchQuests('token-enrollment-cooldown');
@@ -392,7 +392,7 @@ test('runner records completion and claim only after Discord returns completed_a
   let claimed = false;
   let claimBody = null;
   global.fetch = async (url, options = {}) => {
-    const path = String(url);
+    const path = fetchInputUrl(url);
     if (isQuestListUrl(path)) {
       return new Response(JSON.stringify({ quests: [{
         id: 'quest-server-proof',
@@ -428,7 +428,7 @@ test('runner records completion and claim only after Discord returns completed_a
         headers: { 'Content-Type': 'application/json' },
       });
     }
-    throw new Error(`Unexpected fetch: ${url}`);
+    throw new Error(`Unexpected fetch: ${fetchInputUrl(url)}`);
   };
 
   await startRunner({
@@ -477,7 +477,7 @@ test('one-shot runner rescans after each quest and reports the requested flow in
   });
 
   global.fetch = async (url, options = {}) => {
-    const path = String(url);
+    const path = fetchInputUrl(url);
     if (isQuestListUrl(path)) {
       return new Response(JSON.stringify(payload()), {
         status: 200,
@@ -499,7 +499,7 @@ test('one-shot runner rescans after each quest and reports the requested flow in
         headers: { 'Content-Type': 'application/json' },
       });
     }
-    throw new Error(`Unexpected fetch: ${url}`);
+    throw new Error(`Unexpected fetch: ${fetchInputUrl(url)}`);
   };
 
   await startRunner({
@@ -515,30 +515,34 @@ test('one-shot runner rescans after each quest and reports the requested flow in
 
   await waitFor(() => getUserJobs('owner-multi-quest-proof').length === 0, 7000);
   const finalStatus = contents.at(-1);
-  const expectedLines = [
+  const allStatuses = contents.join('\n');
+  const expectedFlow = [
     '✅ LOGIN : multi-quest-user',
     '🔎 multi-quest-user: พบ 2 QUESTS',
-    '⏭️ multi-quest-user: กำลังจะทำ Quest A',
-    '▶️ multi-quest-user: กำลังทำ Quest A',
-    '⌛ multi-quest-user: Quest A 0%',
-    '⌛ multi-quest-user: Quest A 25%',
-    '⌛ multi-quest-user: Quest A 50%',
-    '⌛ multi-quest-user: Quest A 75%',
-    '⌛ multi-quest-user: Quest A 100%',
-    '🔎 multi-quest-user: พบ 1 QUESTS',
-    '⏭️ multi-quest-user: กำลังจะทำ Quest B',
-    '▶️ multi-quest-user: กำลังทำ Quest B',
-    '⌛ multi-quest-user: Quest B 0%',
-    '⌛ multi-quest-user: Quest B 25%',
-    '⌛ multi-quest-user: Quest B 50%',
-    '⌛ multi-quest-user: Quest B 75%',
-    '⌛ multi-quest-user: Quest B 100%',
-    '🔎 multi-quest-user: พบ 0 QUESTS',
+    '🎉 multi-quest-user: ทำสำเร็จ 0 QUESTS',
+    '⏭️ กำลังเตรียมทำ Quest A',
+    '▶️ กำลังทำ Quest A',
+    '⌛ Quest A 0%',
+    '⌛ Quest A 25%',
+    '⌛ Quest A 50%',
+    '⌛ Quest A 75%',
+    '⌛ Quest A 100%',
+    '🎉 multi-quest-user: ทำสำเร็จ 1 QUESTS',
+    '🧹 QUEST ACTIVITY CLEARED',
+    '⏭️ กำลังเตรียมทำ Quest B',
+    '▶️ กำลังทำ Quest B',
+    '⌛ Quest B 0%',
+    '⌛ Quest B 25%',
+    '⌛ Quest B 50%',
+    '⌛ Quest B 75%',
+    '⌛ Quest B 100%',
+    '🎉 multi-quest-user: ทำสำเร็จ 2 QUESTS',
+    '🎉 บอทได้เข้าไปทำ Quest ทั้งหมดเสร็จสิ้นทั้งหมดแล้ว',
     '🔒 LOGOUT : multi-quest-user',
   ];
   let previousIndex = -1;
-  for (const line of expectedLines) {
-    const index = finalStatus.indexOf(line);
+  for (const line of expectedFlow) {
+    const index = allStatuses.indexOf(line, previousIndex + 1);
     assert.ok(index > previousIndex, `${line} must appear in order`);
     previousIndex = index;
   }
@@ -615,7 +619,7 @@ test('runner counts only runnable quests and hides expired, future, blocked, uns
   });
 
   global.fetch = async (url, options = {}) => {
-    const path = String(url);
+    const path = fetchInputUrl(url);
     if (isQuestListUrl(path)) {
       return new Response(JSON.stringify(payload()), {
         status: 200,
@@ -630,7 +634,7 @@ test('runner counts only runnable quests and hides expired, future, blocked, uns
       runnableClaimed = true;
       return jsonResponse({ ok: true });
     }
-    throw new Error(`Unexpected fetch: ${url}`);
+    throw new Error(`Unexpected fetch: ${fetchInputUrl(url)}`);
   };
 
   await startRunner({
@@ -647,7 +651,7 @@ test('runner counts only runnable quests and hides expired, future, blocked, uns
   await waitFor(() => getUserJobs('owner-filtered-quests').length === 0, 4000);
   const finalStatus = contents.at(-1);
   assert.match(finalStatus, /🔎 filtered-user: พบ 1 QUESTS/);
-  assert.match(finalStatus, /กำลังจะทำ Runnable Quest/);
+  assert.match(finalStatus, /กำลังเตรียมทำ Runnable Quest/);
   assert.doesNotMatch(
     finalStatus,
     /Expired Hidden|Future Hidden|Blocked Hidden|Unsupported Hidden|Completed Hidden/,
@@ -660,7 +664,7 @@ test('runner reports existing Discord progress before the remaining checkpoints'
   let completed = false;
   let claimed = false;
   global.fetch = async (url, options = {}) => {
-    const path = String(url);
+    const path = fetchInputUrl(url);
     if (isQuestListUrl(path)) {
       return new Response(JSON.stringify({ quests: [{
         id: 'partial-progress',
@@ -687,7 +691,7 @@ test('runner reports existing Discord progress before the remaining checkpoints'
       claimed = true;
       return jsonResponse({ ok: true });
     }
-    throw new Error(`Unexpected fetch: ${url}`);
+    throw new Error(`Unexpected fetch: ${fetchInputUrl(url)}`);
   };
 
   await startRunner({
@@ -704,7 +708,7 @@ test('runner reports existing Discord progress before the remaining checkpoints'
   await waitFor(() => getUserJobs('owner-partial-progress').length === 0, 4000);
   const finalStatus = contents.at(-1);
   const progressLines = [40, 50, 75, 100].map(
-    (percent) => `⌛ partial-user: Partial Quest ${percent}%`,
+    (percent) => `⌛ Partial Quest ${percent}%`,
   );
   let previousIndex = -1;
   for (const line of progressLines) {
@@ -718,7 +722,7 @@ test('runner reports existing Discord progress before the remaining checkpoints'
 test('claim failures stay out of the channel while one-shot still logs out', async () => {
   const contents = [];
   global.fetch = async (url) => {
-    const path = String(url);
+    const path = fetchInputUrl(url);
     if (isQuestListUrl(path)) {
       return new Response(JSON.stringify({ quests: [{
         id: 'claim-failure',
@@ -740,7 +744,7 @@ test('claim failures stay out of the channel while one-shot still logs out', asy
     if (path.endsWith('/claim-reward')) {
       return jsonResponse({ message: 'Forbidden' }, 403);
     }
-    throw new Error(`Unexpected fetch: ${url}`);
+    throw new Error(`Unexpected fetch: ${fetchInputUrl(url)}`);
   };
 
   await startRunner({
@@ -761,7 +765,7 @@ test('claim failures stay out of the channel while one-shot still logs out', asy
   assert.equal(finalStatus.match(/🔒 LOGOUT/g)?.length, 1);
 });
 
-test('a failed or CAPTCHA-blocked claim is attempted only once while other quests continue', async () => {
+test('completed quests outside the locked manifest are not claimed while session quests continue', async () => {
   const contents = [];
   const states = new Map([
     ['manual-claim', { completed: true, claimed: false }],
@@ -788,7 +792,7 @@ test('a failed or CAPTCHA-blocked claim is attempted only once while other quest
   });
 
   global.fetch = async (url, options = {}) => {
-    const path = String(url);
+    const path = fetchInputUrl(url);
     if (isQuestListUrl(path)) return jsonResponse(payload());
     const questId = [...states.keys()].find((id) => path.includes(id));
     if (path.endsWith('/video-progress')) {
@@ -806,7 +810,7 @@ test('a failed or CAPTCHA-blocked claim is attempted only once while other quest
       states.get(questId).claimed = true;
       return jsonResponse({ claimed_at: new Date().toISOString() });
     }
-    throw new Error(`Unexpected fetch: ${url}`);
+    throw new Error(`Unexpected fetch: ${fetchInputUrl(url)}`);
   };
 
   await startRunner({
@@ -821,7 +825,7 @@ test('a failed or CAPTCHA-blocked claim is attempted only once while other quest
   });
 
   await waitFor(() => getUserJobs('owner-claim-cooldown').length === 0, 5000);
-  assert.equal(blockedClaimAttempts, 1);
+  assert.equal(blockedClaimAttempts, 0);
   assert.equal(states.get('next-quest-a').claimed, true);
   assert.equal(states.get('next-quest-b').claimed, true);
   assert.doesNotMatch(contents.join('\n'), /captcha|claim failed|CLAIMED|ส่ง Claim/i);
@@ -834,7 +838,7 @@ test('PLAY_ON_DESKTOP switches to application_id when the first heartbeat payloa
   const heartbeatBodies = [];
 
   global.fetch = async (url, options = {}) => {
-    const path = String(url);
+    const path = fetchInputUrl(url);
     if (isQuestListUrl(path)) {
       return new Response(JSON.stringify({ quests: [{
         id: 'quest-play',
@@ -877,7 +881,7 @@ test('PLAY_ON_DESKTOP switches to application_id when the first heartbeat payloa
         headers: { 'Content-Type': 'application/json' },
       });
     }
-    throw new Error(`Unexpected fetch: ${url}`);
+    throw new Error(`Unexpected fetch: ${fetchInputUrl(url)}`);
   };
 
   await startRunner({
@@ -984,7 +988,7 @@ test('one-shot runner logs out once after three attempts make no progress', asyn
   const contents = [];
   let enrollAttempts = 0;
   global.fetch = async (url) => {
-    const path = String(url);
+    const path = fetchInputUrl(url);
     if (isQuestListUrl(path)) {
       return new Response(JSON.stringify({ quests: [{
         id: 'no-progress',
@@ -1002,7 +1006,7 @@ test('one-shot runner logs out once after three attempts make no progress', asyn
       enrollAttempts++;
       return jsonResponse({ message: 'Forbidden' }, 403);
     }
-    throw new Error(`Unexpected fetch: ${url}`);
+    throw new Error(`Unexpected fetch: ${fetchInputUrl(url)}`);
   };
 
   await startRunner({
@@ -1018,7 +1022,7 @@ test('one-shot runner logs out once after three attempts make no progress', asyn
 
   await waitFor(() => getUserJobs('owner-no-progress').length === 0);
   const finalStatus = contents.at(-1);
-  assert.equal(enrollAttempts, 3);
+  assert.equal(enrollAttempts, 1);
   assert.equal(finalStatus.match(/🔒 LOGOUT : no-progress-user/g)?.length, 1);
 });
 
@@ -1067,11 +1071,11 @@ test('saved scheduled runners are restored with their persisted next check', asy
   stopScheduledJob('owner-restored', row.id);
 });
 
-test('/run replies ephemerally and starts a persisted scheduled runner', async () => {
+test('/run replies publicly and starts a persisted scheduled runner', async () => {
   let deferOptions = null;
   let replyContent = null;
   global.fetch = async (url) => {
-    if (String(url).endsWith('/users/@me')) {
+    if (fetchInputUrl(url).endsWith('/users/@me')) {
       return new Response(JSON.stringify({ id: 'account-command', username: 'command-user' }), {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
@@ -1083,7 +1087,7 @@ test('/run replies ephemerally and starts a persisted scheduled runner', async (
         headers: { 'Content-Type': 'application/json' },
       });
     }
-    throw new Error(`Unexpected fetch: ${url}`);
+    throw new Error(`Unexpected fetch: ${fetchInputUrl(url)}`);
   };
 
   await runCommand.handleModal({
@@ -1101,7 +1105,7 @@ test('/run replies ephemerally and starts a persisted scheduled runner', async (
     },
   });
 
-  assert.deepEqual(deferOptions, { flags: 64 });
+  assert.deepEqual(deferOptions, {});
   assert.match(replyContent, /AUTO DAILY QUEST/);
   await waitFor(() => Boolean(getUserJobs('owner-command')[0]?.nextCheckAt));
 
@@ -1247,27 +1251,31 @@ test('critical error redaction removes token-like secrets', () => {
   assert.match(safe, /REDACTED/);
 });
 
-test('database backup creates a readable SQLite snapshot', async () => {
-  const destination = `/tmp/questbot-backup-${process.pid}-${Date.now()}.db`;
-  await backupDatabase(destination);
+test('database backup slot creates a readable SQLite snapshot', async () => {
+  await clearAllDatabaseBackupSlots();
+  const destination = await backupDatabaseSlot(0);
   const stat = await fs.stat(destination);
   assert.ok(stat.size > 0);
-  await fs.unlink(destination);
+  assert.equal(destination, './data/backups/questbot-slot-1.db');
+  await clearAllDatabaseBackupSlots();
 });
 
-test('scheduled database backups retain only the configured number of snapshots', async () => {
-  await fs.rm(process.env.DATABASE_BACKUP_DIR, { recursive: true, force: true });
-  await runDatabaseBackup(new Date('2026-07-01T03:00:00Z'));
-  await runDatabaseBackup(new Date('2026-07-02T03:00:00Z'));
-  await runDatabaseBackup(new Date('2026-07-03T03:00:00Z'));
+test('scheduled database backups rotate through the configured fixed slots', async () => {
+  await clearAllDatabaseBackupSlots();
+  const first = await runDatabaseBackup(new Date('2026-07-01T03:00:00Z'));
+  const second = await runDatabaseBackup(new Date('2026-07-02T03:00:00Z'));
+  const third = await runDatabaseBackup(new Date('2026-07-03T03:00:00Z'));
 
-  const backups = (await fs.readdir(process.env.DATABASE_BACKUP_DIR))
-    .filter((name) => name.endsWith('.db'));
-  assert.equal(backups.length, 2);
-  await fs.rm(process.env.DATABASE_BACKUP_DIR, { recursive: true, force: true });
+  assert.notEqual(first, second);
+  assert.equal(first, third);
+  for (const destination of new Set([first, second])) {
+    const stat = await fs.stat(destination);
+    assert.ok(stat.size > 0);
+  }
+  await clearAllDatabaseBackupSlots();
 });
 
-test('modal handlers recheck permissions when the modal is submitted', async () => {
+test('run modal rechecks permissions when the modal is submitted', async () => {
   let runReply;
   await runCommand.handleModal({
     customId: 'run_modal:scheduled:channel',
@@ -1278,15 +1286,139 @@ test('modal handlers recheck permissions when the modal is submitted', async () 
     },
   });
   assert.match(runReply.content, /สิทธิ์ของคุณเปลี่ยนไป/);
+});
 
-  let editReply;
-  await panelCommand.handlePanelModal({
-    customId: 'panel_edit_modal',
-    user: { id: 'owner-no-role' },
-    member: { permissions: { has: () => false }, roles: { cache: { has: () => false } } },
-    async reply(payload) {
-      editReply = payload;
-    },
+
+test('one-shot locks its quest manifest when new quests appear mid-session', async () => {
+  const contents = [];
+  const requests = [];
+  const states = new Map([
+    ['locked-a', { completed: false, claimed: false }],
+    ['locked-b', { completed: false, claimed: false }],
+    ['late-c', { completed: false, claimed: false }],
+  ]);
+  let includeLateQuest = false;
+
+  const payload = () => ({
+    quests: [...states.entries()]
+      .filter(([id]) => id !== 'late-c' || includeLateQuest)
+      .map(([id, state]) => ({
+        id,
+        config: {
+          messages: { quest_name: id },
+          task_config: { tasks: { WATCH_VIDEO: { target: 1 } } },
+        },
+        user_status: {
+          enrolled_at: '2026-07-03T00:00:00Z',
+          completed_at: state.completed ? '2026-07-03T00:01:00Z' : null,
+          claimed_at: state.claimed ? '2026-07-03T00:02:00Z' : null,
+          progress: { WATCH_VIDEO: { value: state.completed ? 1 : 0 } },
+        },
+      })),
   });
-  assert.match(editReply.content, /สิทธิ์ของคุณเปลี่ยนไป/);
+
+  global.fetch = async (url, options = {}) => {
+    const path = fetchInputUrl(url);
+    if (isQuestListUrl(path)) return jsonResponse(payload());
+    const questId = [...states.keys()].find((id) => path.includes(id));
+    if (path.endsWith('/video-progress')) {
+      requests.push(`progress:${questId}`);
+      states.get(questId).completed = JSON.parse(options.body).timestamp >= 1;
+      if (questId === 'locked-a') includeLateQuest = true;
+      return jsonResponse({ completed_at: new Date().toISOString() });
+    }
+    if (path.endsWith('/claim-reward')) {
+      requests.push(`claim:${questId}`);
+      states.get(questId).claimed = true;
+      return jsonResponse({ claimed_at: new Date().toISOString() });
+    }
+    throw new Error(`Unexpected fetch: ${path}`);
+  };
+
+  await startRunner({
+    jobKey: 'oneshot:locked-manifest',
+    ownerId: 'owner-locked-manifest',
+    userToken: 'token-locked-manifest',
+    channelId: 'channel-locked-manifest',
+    client: mockClient(contents),
+    mode: 'oneshot',
+    accountId: 'account-locked-manifest',
+    username: 'locked-user',
+  });
+
+  await waitFor(() => getUserJobs('owner-locked-manifest').length === 0, 7000);
+  const finalStatus = contents.at(-1);
+  assert.deepEqual(requests.filter((item) => item.startsWith('progress:')), [
+    'progress:locked-a',
+    'progress:locked-b',
+  ]);
+  assert.doesNotMatch(requests.join('\n'), /late-c/);
+  assert.match(finalStatus, /🔎 locked-user: พบ 2 QUESTS/);
+  assert.match(finalStatus, /🎉 locked-user: ทำสำเร็จ 2 QUESTS/);
+  assert.doesNotMatch(contents.join('\n'), /late-c/);
+});
+
+test('one-shot reports external completion in the quest reason without counting it as bot work', async () => {
+  const contents = [];
+  const requests = [];
+  const states = new Map([
+    ['bot-a', { completed: false, claimed: false }],
+    ['external-b', { completed: false, claimed: false }],
+  ]);
+
+  const payload = () => ({
+    quests: [...states.entries()].map(([id, state]) => ({
+      id,
+      config: {
+        messages: { quest_name: id === 'bot-a' ? 'Bot Quest A' : 'External Quest B' },
+        task_config: { tasks: { WATCH_VIDEO: { target: 1 } } },
+      },
+      user_status: {
+        enrolled_at: '2026-07-03T00:00:00Z',
+        completed_at: state.completed ? '2026-07-03T00:01:00Z' : null,
+        claimed_at: state.claimed ? '2026-07-03T00:02:00Z' : null,
+        progress: { WATCH_VIDEO: { value: state.completed ? 1 : 0 } },
+      },
+    })),
+  });
+
+  global.fetch = async (url, options = {}) => {
+    const path = fetchInputUrl(url);
+    if (isQuestListUrl(path)) return jsonResponse(payload());
+    const questId = [...states.keys()].find((id) => path.includes(id));
+    if (path.endsWith('/video-progress')) {
+      requests.push(`progress:${questId}`);
+      states.get(questId).completed = JSON.parse(options.body).timestamp >= 1;
+      if (questId === 'bot-a') states.get('external-b').completed = true;
+      return jsonResponse({ completed_at: new Date().toISOString() });
+    }
+    if (path.endsWith('/claim-reward')) {
+      requests.push(`claim:${questId}`);
+      states.get(questId).claimed = true;
+      return jsonResponse({ claimed_at: new Date().toISOString() });
+    }
+    throw new Error(`Unexpected fetch: ${path}`);
+  };
+
+  await startRunner({
+    jobKey: 'oneshot:external-completion',
+    ownerId: 'owner-external-completion',
+    userToken: 'token-external-completion',
+    channelId: 'channel-external-completion',
+    client: mockClient(contents),
+    mode: 'oneshot',
+    accountId: 'account-external-completion',
+    username: 'external-user',
+  });
+
+  await waitFor(() => getUserJobs('owner-external-completion').length === 0, 5000);
+  const finalStatus = contents.at(-1);
+  assert.deepEqual(requests, ['progress:bot-a', 'claim:bot-a', 'claim:external-b']);
+  assert.equal(states.get('external-b').claimed, true);
+  assert.match(finalStatus, /🔎 external-user: พบ 2 QUESTS/);
+  assert.match(finalStatus, /🎉 external-user: ทำสำเร็จ 1 QUESTS/);
+  assert.match(finalStatus, /1\. External Quest B/);
+  assert.match(finalStatus, /└ Quest เสร็จจากภายนอก จึงไม่นับเป็น Quest ที่บอททำ/);
+  assert.doesNotMatch(finalStatus, /ℹ️ มี Quest ที่เสร็จจากภายนอก/);
+  assert.equal(finalStatus.match(/🔒 LOGOUT/g)?.length, 1);
 });

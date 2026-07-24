@@ -1,270 +1,91 @@
 import {
-  SlashCommandBuilder, EmbedBuilder,
-  ActionRowBuilder, ButtonBuilder, ButtonStyle,
-  ModalBuilder, TextInputBuilder, TextInputStyle,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  EmbedBuilder,
+  SlashCommandBuilder,
 } from 'discord.js';
-import { getAllQuests, getStats, addQuest, editQuest, markDone, removeQuest } from '../storage.js';
-import { stopRunner, getUserJobs } from '../discord-runner.js';
-import { isAdmin, isManager } from '../permissions.js';
+import { getUserJobs } from '../discord-runner.js';
+import { stopRunnerAndWaitDetailed } from '../runner-control.js';
+import { isManager } from '../permissions.js';
 import { showRunModal } from './run.js';
 
 export const data = new SlashCommandBuilder()
   .setName('panel')
-  .setDescription('เปิดแผงควบคุม NeverDie Quest');
+  .setDescription('เปิดแผงควบคุม NeverDie Auto Quest');
 
-const FIELD_MAX  = 1000;
-const PAGE_LIMIT = 20;
-
-function fmtQuest(q) {
-  return `\`#${q.id}\` **${q.name}**${q.deadline ? ` · 📅 ${q.deadline}` : ''}${q.note ? ` · _${q.note}_` : ''}`;
-}
-
-function truncate(rows) {
-  const lines = [];
-  let len = 0;
-  for (const q of rows) {
-    const line = fmtQuest(q);
-    if (len + line.length + 1 > FIELD_MAX) {
-      lines.push(`_...และอีก ${rows.length - lines.length} รายการ_`);
-      break;
-    }
-    lines.push(line);
-    len += line.length + 1;
-  }
-  return lines.join('\n') || '—';
+function managerRequiredPayload() {
+  return { flags: 64, content: '🔒 ต้องการสิทธิ์ **Manager** ขึ้นไป' };
 }
 
 export async function execute(interaction) {
-  await interaction.deferReply({ flags: 64 });
-  await sendPanel(interaction, false);
+  return sendPanel(interaction, false);
 }
 
 export async function sendPanel(interaction, isUpdate = false) {
-  let st = { total: 0, done: 0, pending: 0, overdue: 0 };
-  try { st = await getStats(); } catch {}
-
   const oneShotJobs = getUserJobs(interaction.user.id, { mode: 'oneshot' }).length;
   const scheduledJobs = getUserJobs(interaction.user.id, { mode: 'scheduled' }).length;
 
   const embed = new EmbedBuilder()
     .setTitle('🔥 AUTO QUEST SYSTEM')
     .setColor(0xff3333)
-    .setDescription('```\nPREMIUM PANEL ENABLED\n```')
+    .setDescription([
+      '```',
+      'PREMIUM PANEL ENABLED',
+      '```',
+      '• **START NOW** เริ่ม One-shot Runner',
+      '• **STOP ALL** หยุด One-shot Runner ของผู้กดทั้งหมด',
+      '• Auto Daily ใช้ `/run` และจัดการผ่าน `/stop`',
+    ].join('\n'))
     .setFooter({
       text: `POWERED BY NEVERDIE AUTO QUEST™ · One-shot: ${oneShotJobs} · Auto Daily: ${scheduledJobs}`,
     })
     .setTimestamp();
 
-  const row1 = new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId('panel:run').setLabel('🚀 START NOW').setStyle(ButtonStyle.Success),
-    new ButtonBuilder().setCustomId('panel:stop').setLabel('🔴 STOP ALL').setStyle(ButtonStyle.Danger),
+  const controls = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId('panel:run')
+      .setLabel('🚀 START NOW')
+      .setStyle(ButtonStyle.Success),
+    new ButtonBuilder()
+      .setCustomId('panel:stop')
+      .setLabel('🔴 STOP ALL')
+      .setStyle(ButtonStyle.Danger),
   );
 
-  const payload = { embeds: [embed], components: [row1] };
+  const payload = { embeds: [embed], components: [controls] };
   if (isUpdate) return interaction.update(payload);
   if (interaction.deferred || interaction.replied) return interaction.editReply(payload);
   return interaction.reply(payload);
 }
 
-export async function handleButton(interaction) {
-  const action = interaction.customId.split(':')[1];
-
-  if (action === 'refresh') return sendPanel(interaction, true);
-
-  if (action === 'list') {
-    await interaction.deferReply({ flags: 64 });
-    try {
-      const quests  = await getAllQuests();
-      if (!quests.length) return interaction.editReply('📭 ยังไม่มีเควสเลย');
-
-      const pending = quests.filter((q) => !q.done).slice(0, PAGE_LIMIT);
-      const done    = quests.filter((q) => q.done).slice(0, PAGE_LIMIT);
-
-      const embed = new EmbedBuilder().setTitle('📋 รายการเควส').setColor(0x5865f2);
-      if (pending.length) embed.addFields({ name: `🔴 ค้างอยู่ (${pending.length})`, value: truncate(pending) });
-      if (done.length)    embed.addFields({ name: `✅ เสร็จแล้ว (${done.length})`,    value: truncate(done) });
-
-      const total = quests.length;
-      if (total > PAGE_LIMIT * 2) {
-        embed.setFooter({ text: `แสดงสูงสุด ${PAGE_LIMIT} ต่อกลุ่ม · ทั้งหมด ${total} รายการ` });
-      }
-
-      return interaction.editReply({ embeds: [embed] });
-    } catch (err) { return interaction.editReply(`❌ ${err.message}`); }
-  }
-
-  if (action === 'status') {
-    await interaction.deferReply({ flags: 64 });
-    try {
-      const { total, done, pending, overdue } = await getStats();
-      const pct = total > 0 ? Math.round((done / total) * 100) : 0;
-      const bar = '█'.repeat(Math.round(pct / 10)) + '░'.repeat(10 - Math.round(pct / 10));
-      const embed = new EmbedBuilder()
-        .setTitle('📊 สถิติเควส').setColor(0xfee75c)
-        .addFields(
-          { name: '📦 ทั้งหมด',      value: `${total}`,   inline: true },
-          { name: '✅ เสร็จ',         value: `${done}`,    inline: true },
-          { name: '🔴 ค้าง',          value: `${pending}`, inline: true },
-          { name: '⚠️ เกิน deadline', value: `${overdue}`, inline: true },
-          { name: '📈 ความคืบหน้า',   value: `${bar} ${pct}%` },
-        )
-        .setTimestamp();
-      return interaction.editReply({ embeds: [embed] });
-    } catch (err) { return interaction.editReply(`❌ ${err.message}`); }
-  }
-
-  if (action === 'add') {
-    if (!isManager(interaction)) {
-      return interaction.reply({ flags: 64, content: '🔒 ต้องการสิทธิ์ **Manager** ขึ้นไป' });
-    }
-    return interaction.showModal(
-      new ModalBuilder().setCustomId('panel_add_modal').setTitle('➕ เพิ่ม Quest ใหม่')
-        .addComponents(
-          new ActionRowBuilder().addComponents(
-            new TextInputBuilder().setCustomId('name').setLabel('ชื่อ Quest').setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(100)
-          ),
-          new ActionRowBuilder().addComponents(
-            new TextInputBuilder().setCustomId('deadline').setLabel('Deadline (YYYY-MM-DD)').setStyle(TextInputStyle.Short).setRequired(false).setPlaceholder('เช่น 2026-07-01')
-          ),
-          new ActionRowBuilder().addComponents(
-            new TextInputBuilder().setCustomId('note').setLabel('โน้ต').setStyle(TextInputStyle.Paragraph).setRequired(false).setMaxLength(500)
-          ),
-        )
-    );
-  }
-
-  if (action === 'done') {
-    return interaction.showModal(
-      new ModalBuilder().setCustomId('panel_done_modal').setTitle('✅ Mark Quest Done')
-        .addComponents(
-          new ActionRowBuilder().addComponents(
-            new TextInputBuilder().setCustomId('id').setLabel('Quest ID').setStyle(TextInputStyle.Short).setRequired(true).setPlaceholder('เช่น 1')
-          ),
-        )
-    );
-  }
-
-  if (action === 'edit') {
-    if (!isManager(interaction)) {
-      return interaction.reply({ flags: 64, content: '🔒 ต้องการสิทธิ์ **Manager** ขึ้นไป' });
-    }
-    return interaction.showModal(
-      new ModalBuilder().setCustomId('panel_edit_modal').setTitle('✏️ แก้ไข Quest')
-        .addComponents(
-          new ActionRowBuilder().addComponents(
-            new TextInputBuilder().setCustomId('id').setLabel('Quest ID ที่จะแก้ไข').setStyle(TextInputStyle.Short).setRequired(true).setPlaceholder('เช่น 1')
-          ),
-          new ActionRowBuilder().addComponents(
-            new TextInputBuilder().setCustomId('name').setLabel('ชื่อใหม่ (เว้นว่างถ้าไม่แก้)').setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(100)
-          ),
-          new ActionRowBuilder().addComponents(
-            new TextInputBuilder().setCustomId('deadline').setLabel('Deadline ใหม่ (YYYY-MM-DD)').setStyle(TextInputStyle.Short).setRequired(false).setPlaceholder('เช่น 2026-07-01')
-          ),
-          new ActionRowBuilder().addComponents(
-            new TextInputBuilder().setCustomId('note').setLabel('โน้ตใหม่').setStyle(TextInputStyle.Paragraph).setRequired(false).setMaxLength(500)
-          ),
-        )
-    );
-  }
-
-  if (action === 'delete') {
-    if (!isAdmin(interaction)) {
-      return interaction.reply({ flags: 64, content: '🔒 ต้องการสิทธิ์ **Administrator**' });
-    }
-    return interaction.showModal(
-      new ModalBuilder().setCustomId('panel_delete_modal').setTitle('🗑️ ลบ Quest')
-        .addComponents(
-          new ActionRowBuilder().addComponents(
-            new TextInputBuilder().setCustomId('id').setLabel('Quest ID ที่จะลบ').setStyle(TextInputStyle.Short).setRequired(true).setPlaceholder('เช่น 1')
-          ),
-        )
-    );
-  }
-
-  if (action === 'run') {
-    if (!isManager(interaction)) {
-      return interaction.reply({ flags: 64, content: '🔒 ต้องการสิทธิ์ **Manager** ขึ้นไป' });
-    }
-    return showRunModal(interaction, 'oneshot');
-  }
-
-  if (action === 'stop') {
-    await interaction.deferReply({ flags: 64 });
-    const jobs = getUserJobs(interaction.user.id, { mode: 'oneshot' });
-    const stopped = stopRunner(interaction.user.id, { mode: 'oneshot' });
-    return interaction.editReply(
-      stopped ? `🛑 หยุด One-shot Runner แล้ว **${jobs.length}** token` : 'ℹ️ ไม่มี One-shot Runner ที่กำลังทำงาน'
-    );
-  }
+async function handleRunButton(interaction) {
+  if (!isManager(interaction)) return interaction.reply(managerRequiredPayload());
+  return showRunModal(interaction, 'oneshot');
 }
 
-export async function handlePanelModal(interaction) {
-  if (
-    ['panel_add_modal', 'panel_edit_modal'].includes(interaction.customId)
-    && !isManager(interaction)
-  ) {
-    return interaction.reply({
-      flags: 64,
-      content: '🔒 สิทธิ์ของคุณเปลี่ยนไป — ต้องการสิทธิ์ **Manager** ขึ้นไป',
-    });
-  }
-  if (interaction.customId === 'panel_delete_modal' && !isAdmin(interaction)) {
-    return interaction.reply({
-      flags: 64,
-      content: '🔒 สิทธิ์ของคุณเปลี่ยนไป — ต้องการสิทธิ์ **Administrator**',
-    });
-  }
+async function handleStopButton(interaction) {
+  await interaction.deferReply({ flags: 64 });
+  const result = await stopRunnerAndWaitDetailed(interaction.user.id, { mode: 'oneshot' });
 
-  if (interaction.customId === 'panel_add_modal') {
-    const name     = interaction.fields.getTextInputValue('name').trim();
-    const deadline = interaction.fields.getTextInputValue('deadline').trim() || null;
-    const note     = interaction.fields.getTextInputValue('note').trim()     || null;
-    await interaction.deferReply({ flags: 64 });
-    try {
-      if (!name) return interaction.editReply('❌ ชื่อต้องไม่ว่างเปล่า');
-      if (deadline && !/^\d{4}-\d{2}-\d{2}$/.test(deadline)) return interaction.editReply('❌ deadline ต้องเป็น YYYY-MM-DD');
-      const quest = await addQuest({ name, deadline, note });
-      return interaction.editReply(`✅ เพิ่ม **${quest.name}** (ID #${quest.id}) แล้ว`);
-    } catch (err) { return interaction.editReply(`❌ ${err.message}`); }
+  let content = 'ℹ️ ไม่มี One-shot Runner ที่กำลังทำงาน';
+  if (result.accepted > 0 && result.pending > 0) {
+    content = `🛑 รับคำสั่งหยุดแล้ว **${result.accepted}** token · ยัง Cleanup อยู่ **${result.pending}** token`;
+  } else if (result.completed > 0) {
+    content = `🛑 หยุด One-shot Runner และ Cleanup เสร็จแล้ว **${result.completed}** token`;
   }
+  return interaction.editReply(content);
+}
 
-  if (interaction.customId === 'panel_done_modal') {
-    const id = parseInt(interaction.fields.getTextInputValue('id').trim(), 10);
-    await interaction.deferReply({ flags: 64 });
-    if (isNaN(id)) return interaction.editReply('❌ ID ต้องเป็นตัวเลข');
-    try {
-      const quest = await markDone(id);
-      if (!quest) return interaction.editReply(`❌ ไม่พบเควส ID #${id}`);
-      return interaction.editReply(`🎉 มาร์ค **${quest.name}** ว่าเสร็จแล้ว`);
-    } catch (err) { return interaction.editReply(`❌ ${err.message}`); }
-  }
+export async function handleButton(interaction) {
+  const action = interaction.customId.split(':')[1];
+  if (action === 'run') return handleRunButton(interaction);
+  if (action === 'stop') return handleStopButton(interaction);
 
-  if (interaction.customId === 'panel_edit_modal') {
-    const id      = parseInt(interaction.fields.getTextInputValue('id').trim(), 10);
-    const nameRaw = interaction.fields.getTextInputValue('name').trim();
-    const deadRaw = interaction.fields.getTextInputValue('deadline').trim();
-    const noteRaw = interaction.fields.getTextInputValue('note').trim();
-    await interaction.deferReply({ flags: 64 });
-    if (isNaN(id)) return interaction.editReply('❌ ID ต้องเป็นตัวเลข');
-    if (deadRaw && !/^\d{4}-\d{2}-\d{2}$/.test(deadRaw)) return interaction.editReply('❌ deadline ต้องเป็น YYYY-MM-DD');
-    try {
-      const updates = {};
-      if (nameRaw) updates.name     = nameRaw;
-      if (deadRaw) updates.deadline = deadRaw;
-      if (noteRaw) updates.note     = noteRaw;
-      const quest = await editQuest(id, updates);
-      return interaction.editReply(`✏️ อัพเดท **${quest.name}** (ID #${quest.id}) แล้ว`);
-    } catch (err) { return interaction.editReply(`❌ ${err.message}`); }
-  }
-
-  if (interaction.customId === 'panel_delete_modal') {
-    const id = parseInt(interaction.fields.getTextInputValue('id').trim(), 10);
-    await interaction.deferReply({ flags: 64 });
-    if (isNaN(id)) return interaction.editReply('❌ ID ต้องเป็นตัวเลข');
-    try {
-      const quest = await removeQuest(id);
-      if (!quest) return interaction.editReply(`❌ ไม่พบเควส ID #${id}`);
-      return interaction.editReply(`🗑️ ลบ **${quest.name}** (ID #${quest.id}) แล้ว`);
-    } catch (err) { return interaction.editReply(`❌ ${err.message}`); }
-  }
+  const payload = {
+    flags: 64,
+    content: 'ℹ️ ปุ่มนี้เป็นของ Panel รุ่นเก่าและถูกปิดใช้งานแล้ว กรุณาใช้ `/panel` เพื่อสร้างแผงใหม่',
+  };
+  if (interaction.replied || interaction.deferred) return interaction.followUp(payload);
+  return interaction.reply(payload);
 }

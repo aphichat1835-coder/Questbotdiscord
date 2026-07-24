@@ -1,20 +1,25 @@
 {
   "name": "neverdie-quest-bot",
-  "version": "1.0.0",
+  "version": "2.0.0",
+  "private": true,
   "type": "module",
   "main": "src/index.js",
   "engines": {
-    "node": "20.x"
+    "node": ">=22.12.0"
   },
   "scripts": {
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
     "register": "node src/register-commands.js",
-    "test": "node --test test/*.node-test.js"
+    "test": "node --test",
+    "check": "find src scripts \\( -name '*.js' -o -name '*.mjs' \\) -print0 | xargs -0 -n1 node --check",
+    "validate:quest-fixture": "node scripts/validate-quest-fixture.mjs",
+    "smoke:quest": "node scripts/smoke-quest-api.mjs",
+    "test:coverage": "node --test --experimental-test-coverage --test-coverage-lines=60"
   },
   "dependencies": {
-    "better-sqlite3": "^9.6.0",
-    "discord.js": "^14.14.1",
-    "dotenv": "^16.0.0"
+    "better-sqlite3": "^12.11.1",
+    "discord.js": "^14.27.0",
+    "dotenv": "^17.4.2"
   }
 }

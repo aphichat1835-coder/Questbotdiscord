@@ -1,45 +1,38 @@
 name: CI
 
+permissions:
+  contents: read
+
 on:
   workflow_dispatch:
   pull_request:
     branches: [main]
   push:
-    branches: [main]
+    branches: [main, ss]
 
 jobs:
-  frontend-checks:
-    name: Frontend checks
+  repository-shape:
+    name: Repository shape
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v6
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v6
         with:
-          version: 10.28.0
+          persist-credentials: false
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version-file: .node-version
-          cache: pnpm
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Check translations
-        run: pnpm run i18n:check
-
-      - name: Run unit tests
-        run: pnpm test
-
-      - name: Optional quest schema check
-        run: pnpm run test:quest-schema
-
-      - name: Build frontend
-        run: pnpm build
+      - name: Verify bot-only repository and runtime data safety
+        shell: bash
+        run: |
+          test ! -d src
+          test ! -d src-tauri
+          test ! -d src-runner
+          test ! -d src-cdp-launcher
+          test -f bot/fixtures/quest-api.sample.json
+          test -f bot/scripts/validate-quest-fixture.mjs
+          test -z "$(grep -R 'panel_\(add\|done\|edit\|delete\)_modal' bot/src/index.js || true)"
+          test -z "$(grep -R 'getAllQuests\|addQuest\|editQuest\|markDone\|removeQuest' bot/src || true)"
+          test -z "$(git ls-files | grep -E '(^|/)backups/|\.(db|sqlite)(-(wal|shm|journal))?$' || true)"
+          git diff --check
 
   bot-checks:
     name: Bot checks
@@ -50,33 +43,61 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
           node-version-file: bot/.node-version
+          cache: npm
+          cache-dependency-path: bot/package-lock.json
 
-      - name: Install dependencies
-        run: npm ci
+      - name: Install locked dependencies without lifecycle scripts
+        run: npm ci --ignore-scripts --no-fund --no-audit
 
-      - name: Run bot unit tests
-        run: npm test
+      - name: Rebuild trusted native dependency
+        run: npm rebuild better-sqlite3 --foreground-scripts
 
-      - name: Syntax check — entry points
+      - name: Validate sanitized Quest API fixture
+        run: npm run validate:quest-fixture
+
+      - name: Enforce approved database backup destinations
+        shell: bash
         run: |
-          node --check src/index.js && echo "✅ src/index.js"
-          node --check src/register-commands.js && echo "✅ src/register-commands.js"
+          node --test test/backup-paths.node-test.js
+          if grep -R 'backupDatabase(destination' src test; then
+            echo "Unsupported arbitrary backup destination API detected"
+            exit 1
+          fi
+          if grep -R 'DATABASE_BACKUP_DIR' src scripts .env.example; then
+            echo "Unsupported DATABASE_BACKUP_DIR runtime/config usage detected"
+            exit 1
+          fi
+          test ! -f src/path-safety.js
+          test ! -f test/path-safety.node-test.js
 
-      - name: Syntax check — commands
+      - name: Run recursive tests with coverage gate
+        id: tests
+        shell: bash
         run: |
-          for f in src/commands/*.js; do
-            node --check "$f" && echo "✅ $f"
-          done
+          set +e
+          npm run test:coverage 2>&1 | tee test-output.log
+          status=${PIPESTATUS[0]}
+          echo "exit_code=$status" >> "$GITHUB_OUTPUT"
+          exit "$status"
 
-      - name: Syntax check — modules
-        run: |
-          for f in src/config.js src/dashboard.js src/db.js src/discord-runner.js src/error-reporter.js src/http-retry.js src/runner-schedule.js src/runner-token-crypto.js src/scheduled-runner-store.js src/storage.js src/permissions.js src/worker.js; do
-            node --check "$f" && echo "✅ $f"
-          done
+      - name: Upload test output
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: bot-test-output-${{ github.run_id }}
+          path: bot/test-output.log
+          if-no-files-found: error
+          retention-days: 7
 
-  
+      - name: Syntax check all source and script modules
+        run: npm run check
+
+      - name: Production dependency audit
+        run: npm audit --omit=dev --audit-level=high

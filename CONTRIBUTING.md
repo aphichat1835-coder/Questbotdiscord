@@ -1,101 +1,108 @@
-# แนวทางการมีส่วนร่วมพัฒนา
+# แนวทางการพัฒนา NeverDie Quest Bot
 
-ขอบคุณที่สนใจเข้าร่วมพัฒนา **NeverDie Quest Bot** ทุก Contribution ไม่ว่าจะเป็นการรายงานข้อผิดพลาด การเสนอฟีเจอร์ หรือการส่ง Pull Request ล้วนมีคุณค่าและได้รับการต้อนรับเสมอ
+Repository นี้เป็น Bot-only การเปลี่ยนแปลงต้องรักษาขอบเขตปัจจุบันและไม่เพิ่ม Desktop/Tauri, CDP launcher, Game Simulator หรือ Quest Tracker แบบกรอก Quest ID กลับเข้ามา
 
----
-
-## ข้อกำหนดเบื้องต้น
-
-- **Node.js** 20 ขึ้นไป
-- **npm** 10 ขึ้นไป
-- บัญชี Discord และ Bot Token สำหรับทดสอบ
-
----
-
-## การเริ่มต้นพัฒนา
+## เริ่มต้น
 
 ```bash
-# 1. Fork และ Clone repository
-git clone https://github.com/aphichat1835-coder/neverdie-quest-helper.git
-cd neverdie-quest-helper/bot
-
-# 2. ติดตั้ง dependencies
-npm install
-
-# 3. ตั้งค่า environment
+git clone https://github.com/aphichat1835-coder/Questbotdiscord.git
+cd Questbotdiscord/bot
+npm ci --ignore-scripts --no-fund --no-audit
+npm rebuild better-sqlite3 --foreground-scripts
 cp .env.example .env
-# กรอกค่าทดสอบใน .env
-
-# 4. ลงทะเบียน Slash Commands
-npm run register
-
-# 5. รันในโหมด Development
-npm run dev
+npm run validate:quest-fixture
+npm test
+npm run check
 ```
 
----
+## โครงสร้างหลัก
 
-## โครงสร้างโปรเจกต์
+- `bot/src/commands/` — Slash commands และ Interaction handlers
+- `bot/src/discord-runner.js` — Quest engine และ Job registry
+- `bot/src/run-admission-lock.js` — Serialize การนับ Slot/เริ่ม Runner ต่อ Owner
+- `bot/src/runner-control.js` — Stop lifecycle และการรอ Cleanup
+- `bot/src/scheduled-runner-store.js` — Scheduled Runner persistence และ Token encryption boundary
+- `bot/src/db.js` — SQLite schema, Migration และ Backup Slot
+- `bot/src/worker.js` — Backup scheduler
+- `bot/src/dashboard.js` — HTTP health/status endpoint
+- `bot/src/runner-status-header.js` — Persistent status header และ Message length guard
+- `bot/scripts/` — Fixture validation และ Read-only smoke
+- `bot/test/` — Unit/Regression tests
+- `bot/PRODUCTION-CHECKLIST.md` — Production acceptance และ Rollback
 
+## กระบวนการเปลี่ยนแปลง
+
+1. ระบุ Intent, Scope, ความเสี่ยง และเกณฑ์ Done
+2. อ่าน Data flow และไฟล์ที่ได้รับผลกระทบก่อนแก้
+3. แยก Security/Permission check ไว้ที่ Action boundary
+4. เพิ่มหรือปรับ Test ให้จับ Regression ของ Root cause
+5. อัปเดต README, `.env.example`, Help text และ Checklist เมื่อพฤติกรรมเปลี่ยน
+6. รัน Quality gates ทั้งหมดก่อน Push
+7. ตรวจ GitHub Actions และ Review comments หลัง Push
+
+## กฎสำคัญ
+
+- ใช้ ES Modules และ Node.js ตาม `.node-version`
+- Interaction ส่วนตัวใช้ `flags: 64`
+- ตรวจ Permission ที่ Action boundary; `/api-status` ต้องเป็น Owner/Admin/Manager
+- ห้ามเก็บหรือพิมพ์ Token, Ciphertext, Username หรือ Account ID ลง Log ที่ไม่จำเป็น
+- Auto Daily Token ต้องเข้ารหัสก่อนบันทึกและผูก AAD กับ Owner/Account
+- จำกัด Runner สูงสุด 10 ตัวต่อ Owner โดยใช้ `withOwnerAdmissionLock()` รอบ Slot count และ Start flow
+- Stop ต้องคง Account block จน Cleanup จบจริง
+- Quest เสร็จเมื่อ Discord ยืนยัน `completed_at`
+- Claim สำเร็จเมื่อ Discord ยืนยัน `claimed_at`
+- Mutation retry ต้องตรวจ Fresh state ก่อนส่งซ้ำ
+- Runner status message ต้องไม่เกิน 1,950 ตัวอักษรและต้องปิด Code block ถูกต้อง
+- Backup destination อนุญาตเฉพาะ `./data/backups` และ `/var/data/backups`
+- ห้ามเพิ่ม `DATABASE_BACKUP_DIR` หรือรับ Backup destination จาก Input/Environment
+- Client profile อ่านตอน Startup; การเปลี่ยน Environment ต้อง Restart
+- ทุกการเปลี่ยนแปลงต้องมี Test หรือหลักฐานตรวจสอบที่เหมาะสม
+
+## การเขียน Test
+
+- ใช้ `node:test` และ `node:assert/strict`
+- Test ต้องมี Assertion ที่ตรวจผลลัพธ์จริง ไม่ใช้เพียงการรันแล้วไม่ Throw
+- Mock Network ที่ Boundary และตรวจ State หลัง Mutation
+- เมื่อแก้ Race condition ให้ Test ลำดับ/Concurrency
+- เมื่อแก้ Permission ให้ Test Unauthorized path ก่อนอ่านข้อมูลระบบ
+- เมื่อแก้ข้อความ Discord ให้ Test Message limit และรูปแบบ Output
+- Fixture ต้องไม่มีข้อมูลบัญชีจริง
+
+## ก่อนส่ง Pull Request
+
+รันจากโฟลเดอร์ `bot`:
+
+```bash
+npm ci --ignore-scripts --no-fund --no-audit
+npm rebuild better-sqlite3 --foreground-scripts
+npm run validate:quest-fixture
+npm test
+npm run check
+npm audit --omit=dev --audit-level=high
 ```
-bot/src/
-├── commands/       # Slash Commands แต่ละคำสั่ง (1 ไฟล์ต่อ 1 คำสั่ง)
-├── config.js       # โหลดค่า Environment Variables
-├── db.js           # Schema ฐานข้อมูลและ Query functions
-├── storage.js      # Data access layer (wrapper ของ db.js)
-├── discord-runner.js  # Quest automation engine
-├── worker.js       # Background tasks (deadline check, daily summary)
-├── permissions.js  # ระบบตรวจสอบสิทธิ์
-├── index.js        # Entry point — เริ่มต้น Bot
-└── register-commands.js  # ลงทะเบียน Slash Commands กับ Discord
+
+`npm run check` ตรวจทั้ง `src` และ `scripts`; ห้ามแทนด้วยคำสั่งที่ตรวจเฉพาะ `src`
+
+จากนั้นตรวจว่า GitHub Actions ผ่าน:
+
+- Repository shape
+- Approved database backup destinations
+- Unit/Regression tests
+- Syntax check
+- Production dependency audit
+
+## เอกสารและ Production
+
+เมื่อเปลี่ยน Command, Environment, Permission, Backup, Schedule, Health endpoint หรือ Test boundary ต้องอัปเดตเอกสารที่เกี่ยวข้องใน Commit เดียวกัน
+
+Read-only Smoke ไม่ยืนยัน Enroll/Progress/Heartbeat/Claim จริง ก่อน Deploy ให้ทำตาม [`bot/PRODUCTION-CHECKLIST.md`](bot/PRODUCTION-CHECKLIST.md) และบันทึก Commit SHA/Backup สำหรับ Rollback
+
+## Runtime data contract
+
+ห้าม Commit Runtime SQLite, WAL/SHM/rollback journal หรือ Backup ทุกชนิด ก่อน Push ให้ตรวจ:
+
+```bash
+git ls-files | grep -E '(^|/)(data|backups)/|\.(db|sqlite)(-(wal|shm|journal))?$'
 ```
 
----
-
-## แนวทางการเขียนโค้ด
-
-- ใช้ **ES Modules** (`import/export`) ทั้งหมด — ห้ามใช้ `require()`
-- ตั้งชื่อไฟล์ด้วย kebab-case (เช่น `quest-add.js`)
-- ทุก Slash Command ต้อง export `data` และ `execute` เป็นอย่างน้อย
-- จัดการ Error ทุกจุดและแจ้งผู้ใช้ผ่าน `ephemeral: true` reply เสมอ
-- ข้อมูลที่อยู่ใน memory ชั่วคราวต้องไม่ถูก persist ลงฐานข้อมูล
-
----
-
-## การเพิ่ม Slash Command ใหม่
-
-1. สร้างไฟล์ใหม่ใน `bot/src/commands/`
-2. Export `data` (SlashCommandBuilder) และ `execute` (async function)
-3. Import และเพิ่มลงใน `client.commands` ใน `index.js`
-4. รัน `npm run register` เพื่ออัปเดตคำสั่งกับ Discord
-
----
-
-## การส่ง Pull Request
-
-1. สร้าง branch ใหม่จาก `main`
-   ```bash
-   git checkout -b feature/ชื่อฟีเจอร์
-   ```
-2. เขียนโค้ดและทดสอบให้แน่ใจว่าทำงานได้ถูกต้อง
-3. Commit ด้วยข้อความที่ชัดเจน
-   ```bash
-   git commit -m "feat: อธิบายสิ่งที่เพิ่ม/แก้ไข"
-   ```
-4. Push และเปิด Pull Request พร้อมอธิบายการเปลี่ยนแปลง
-
----
-
-## การรายงานปัญหา
-
-หากพบข้อผิดพลาดหรือต้องการเสนอฟีเจอร์ใหม่ กรุณาเปิด [GitHub Issue](../../issues) พร้อมข้อมูล:
-
-- ขั้นตอนการทำให้เกิดปัญหา (สำหรับ Bug)
-- ผลลัพธ์ที่คาดหวัง vs ผลลัพธ์จริง
-- เวอร์ชัน Node.js และ OS ที่ใช้
-
----
-
-## License
-
-การมีส่วนร่วมทั้งหมดอยู่ภายใต้ [MIT License](LICENSE)
+คำสั่งต้องไม่แสดงผล และ Test ใหม่ต้องอยู่ใต้ `bot/test/` เพื่อให้ `node --test` ค้นหาแบบ Recursive

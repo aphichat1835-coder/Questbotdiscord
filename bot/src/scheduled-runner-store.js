@@ -44,6 +44,12 @@ export function findScheduledRunner(ownerId, accountId) {
   ).get(ownerId, accountId) ?? null;
 }
 
+export function findAnyScheduledRunner(accountId) {
+  return db.prepare(
+    'SELECT * FROM scheduled_runners WHERE account_id = ? ORDER BY id ASC LIMIT 1',
+  ).get(accountId) ?? null;
+}
+
 export function listScheduledRunners(ownerId = null) {
   if (ownerId == null) {
     return db.prepare('SELECT * FROM scheduled_runners ORDER BY id ASC').all();
