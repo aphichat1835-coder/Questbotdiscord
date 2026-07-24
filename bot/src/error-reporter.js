@@ -19,7 +19,9 @@ const ALWAYS_EMERGENCY_SOURCES = new Set([
 
 // Kept as a compatibility hook for existing startup code. Webhook delivery does
 // not depend on the Discord client being connected or having channel permissions.
-export function setErrorReporterClient() {}
+export function setErrorReporterClient(client) {
+  void client;
+}
 
 function sanitizeValue(value, seen = new WeakSet(), depth = 0) {
   if (value == null || typeof value !== 'object') return value;
@@ -163,36 +165,48 @@ function retryableWebhookStatus(status) {
   return status === 429 || status >= 500;
 }
 
-function retryDelay(attempt) {
-  return new Promise((resolve) => setTimeout(resolve, attempt * 750));
+function retryDelay(attempt, response = null) {
+  const retryAfter = Number(response?.headers?.get?.('retry-after'));
+  const delayMs = Number.isFinite(retryAfter) && retryAfter > 0
+    ? Math.min(5000, Math.ceil(retryAfter * 1000))
+    : attempt * 750;
+  return new Promise((resolve) => setTimeout(resolve, delayMs));
+}
+
+function logWebhookDeliveryFailure(error) {
+  console.error(
+    '❌ [ErrorReporter] Emergency webhook delivery failed:',
+    safeErrorMessage(error),
+  );
 }
 
 async function postEmergencyWebhook(payload) {
   for (let attempt = 1; attempt <= WEBHOOK_MAX_ATTEMPTS; attempt++) {
+    let response;
     try {
-      const response = await fetch(config.logWebhookUrl, {
+      response = await fetch(config.logWebhookUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
         signal: AbortSignal.timeout(WEBHOOK_TIMEOUT_MS),
       });
-      if (response.ok) return true;
-      if (attempt < WEBHOOK_MAX_ATTEMPTS && retryableWebhookStatus(response.status)) {
-        await retryDelay(attempt);
-        continue;
-      }
-      throw new Error(`Discord webhook returned HTTP ${response.status}`);
     } catch (reportError) {
       if (attempt < WEBHOOK_MAX_ATTEMPTS) {
         await retryDelay(attempt);
         continue;
       }
-      console.error(
-        '❌ [ErrorReporter] Emergency webhook delivery failed:',
-        safeErrorMessage(reportError),
-      );
+      logWebhookDeliveryFailure(reportError);
       return false;
     }
+
+    if (response.ok) return true;
+    if (attempt < WEBHOOK_MAX_ATTEMPTS && retryableWebhookStatus(response.status)) {
+      await retryDelay(attempt, response);
+      continue;
+    }
+
+    logWebhookDeliveryFailure(new Error(`Discord webhook returned HTTP ${response.status}`));
+    return false;
   }
   return false;
 }
