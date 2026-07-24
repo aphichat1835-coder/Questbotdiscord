@@ -8,7 +8,7 @@ on:
   pull_request:
     branches: [main]
   push:
-    branches: [main, ss, webhook-emergency-logging]
+    branches: [main, ss]
 
 jobs:
   repository-shape:
