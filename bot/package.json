@@ -11,11 +11,11 @@
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
     "register": "node src/register-commands.js",
-    "test": "node --test",
+    "test": "node --import ./test/setup-env.js --test",
     "check": "find src scripts \\( -name '*.js' -o -name '*.mjs' \\) -print0 | xargs -0 -n1 node --check",
     "validate:quest-fixture": "node scripts/validate-quest-fixture.mjs",
     "smoke:quest": "node scripts/smoke-quest-api.mjs",
-    "test:coverage": "node --test --experimental-test-coverage --test-coverage-lines=60"
+    "test:coverage": "node --import ./test/setup-env.js --test --experimental-test-coverage --test-coverage-lines=60"
   },
   "dependencies": {
     "better-sqlite3": "^12.11.1",
