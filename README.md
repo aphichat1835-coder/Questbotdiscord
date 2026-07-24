@@ -31,7 +31,8 @@ Manual Quest API smoke เป็นแบบ Read-only: ตรวจบัญช
 
 ```bash
 cd bot
-npm ci
+npm ci --ignore-scripts --no-fund --no-audit
+npm rebuild better-sqlite3 --foreground-scripts
 cp .env.example .env
 npm run register
 npm start
