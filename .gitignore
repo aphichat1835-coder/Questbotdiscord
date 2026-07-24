@@ -25,6 +25,7 @@ data/
 coverage/
 .nyc_output/
 test-output.log
+bot/test/.backup-path-workspace/
 
 # Logs
 *.log

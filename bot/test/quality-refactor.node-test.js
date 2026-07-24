@@ -98,7 +98,10 @@ test('runner quality refactor keeps static-analysis regressions out', async () =
   assert.doesNotMatch(db, /questbot-slot-\$\{/);
   assert.doesNotMatch(db, /DATABASE_BACKUP_DIR/);
   assert.doesNotMatch(db, /backupLocalSlot|backupPersistentSlot|clearLocalInactiveSlots|clearPersistentInactiveSlots/);
-  assert.doesNotMatch(backupPathsTest, /os\.tmpdir/);
+  assert.doesNotMatch(backupPathsTest, /os\.tmpdir|mkdtemp|node:path|\/tmp\/questbot\.db/);
+  assert.doesNotMatch(backupPathsTest, /\.backup-path-workspaces|fs\.readFile\(new URL/);
+  assert.match(backupPathsTest, /fs\.mkdir\('\.\/test\/\.backup-path-workspace'/);
+  assert.match(backupPathsTest, /cwd: '\.\/test\/\.backup-path-workspace'/);
   assert.doesNotMatch(auditHardeningTest, /140\.1\.2\.3/);
   assert.match(errorReporter, /function reserveCriticalErrorReport/);
   assert.match(httpRetry, /async function consumeRetryableResponse/);

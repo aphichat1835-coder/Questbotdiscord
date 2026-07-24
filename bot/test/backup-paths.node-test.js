@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
-import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 
@@ -12,8 +11,6 @@ const {
   resolveDatabaseBackupSlotPath,
 } = await import('../src/db.js');
 
-const databaseModuleUrl = new URL('../src/db.js', import.meta.url).href;
-const TEST_WORKSPACE_ROOT = new URL('./.backup-path-workspaces/', import.meta.url);
 const EXPECTED_LOCAL_BACKUP_PATHS = Object.freeze([
   './data/backups/questbot-slot-1.db',
   './data/backups/questbot-slot-2.db',
@@ -34,24 +31,26 @@ const EXPECTED_PERSISTENT_BACKUP_PATHS = Object.freeze([
 ]);
 
 test.before(async () => {
-  await fs.mkdir(TEST_WORKSPACE_ROOT, { recursive: true, mode: 0o700 });
-  await fs.chmod(TEST_WORKSPACE_ROOT, 0o700);
+  await fs.rm('./test/.backup-path-workspace', { recursive: true, force: true });
+  await fs.mkdir('./test/.backup-path-workspace', { recursive: true, mode: 0o700 });
+  await fs.chmod('./test/.backup-path-workspace', 0o700);
+  const workspace = await fs.stat('./test/.backup-path-workspace');
+  assert.equal(workspace.mode & 0o777, 0o700);
 });
 
 test.after(async () => {
   closeDatabase();
-  await fs.rm(TEST_WORKSPACE_ROOT, { recursive: true, force: true });
+  await fs.rm('./test/.backup-path-workspace', { recursive: true, force: true });
 });
 
-test('backup destination resolver permits only the fixed local and persistent roots', async () => {
-  assert.equal(resolveDatabaseBackupDirectory('/tmp/questbot.db'), './data/backups');
+test('backup destination resolver permits only the fixed local and persistent roots', () => {
   assert.equal(resolveDatabaseBackupDirectory('./data/questbot.db'), './data/backups');
   assert.equal(resolveDatabaseBackupDirectory('/var/data/questbot.db'), '/var/data/backups');
   assert.equal(resolveDatabaseBackupDirectory('/var/database/questbot.db'), './data/backups');
 
   for (let slot = 0; slot < DATABASE_BACKUP_SLOT_COUNT; slot++) {
     assert.equal(
-      resolveDatabaseBackupSlotPath('/tmp/questbot.db', slot),
+      resolveDatabaseBackupSlotPath('./data/questbot.db', slot),
       EXPECTED_LOCAL_BACKUP_PATHS[slot],
     );
     assert.equal(
@@ -59,38 +58,31 @@ test('backup destination resolver permits only the fixed local and persistent ro
       EXPECTED_PERSISTENT_BACKUP_PATHS[slot],
     );
   }
-  const databaseSource = await fs.readFile(new URL('../src/db.js', import.meta.url), 'utf8');
-  assert.doesNotMatch(databaseSource, /questbot-slot-\$\{/);
 
   for (const invalid of [-1, DATABASE_BACKUP_SLOT_COUNT, 1.5, '1']) {
     assert.throws(
-      () => resolveDatabaseBackupSlotPath('/tmp/questbot.db', invalid),
+      () => resolveDatabaseBackupSlotPath('./data/questbot.db', invalid),
       /slot is out of range/,
     );
   }
 });
 
 test('backupDatabaseSlot writes and clears a backup beneath the resolved local root', async () => {
-  const tempRoot = await fs.mkdtemp(new URL('case-', TEST_WORKSPACE_ROOT));
-  await fs.chmod(tempRoot, 0o700);
-  const databasePath = path.join(tempRoot, 'runtime.db');
   const script = `
-    const db = await import(${JSON.stringify(databaseModuleUrl)});
+    const db = await import('../../src/db.js');
     const destination = await db.backupDatabaseSlot(0);
     const fs = await import('node:fs');
-    const path = await import('node:path');
-    const absolute = path.resolve(destination);
-    const existed = fs.existsSync(absolute);
+    const existed = fs.existsSync('./data/backups/questbot-slot-1.db');
     await db.clearAllDatabaseBackupSlots();
-    const removed = !fs.existsSync(absolute);
+    const removed = !fs.existsSync('./data/backups/questbot-slot-1.db');
     db.closeDatabase();
-    console.log(JSON.stringify({ destination, absolute, existed, removed }));
+    console.log(JSON.stringify({ destination, existed, removed }));
   `;
 
   try {
     const child = spawnSync(process.execPath, ['--input-type=module', '--eval', script], {
-      cwd: tempRoot,
-      env: { ...process.env, DATABASE_PATH: databasePath },
+      cwd: './test/.backup-path-workspace',
+      env: { ...process.env, DATABASE_PATH: './runtime.db' },
       encoding: 'utf8',
       timeout: 10_000,
     });
@@ -101,10 +93,9 @@ test('backupDatabaseSlot writes and clears a backup beneath the resolved local r
     );
     const output = JSON.parse(child.stdout.trim().split('\n').at(-1));
     assert.equal(output.destination, './data/backups/questbot-slot-1.db');
-    assert.equal(output.absolute.startsWith(tempRoot), true);
     assert.equal(output.existed, true);
     assert.equal(output.removed, true);
   } finally {
-    await fs.rm(tempRoot, { recursive: true, force: true });
+    await fs.rm('./test/.backup-path-workspace', { recursive: true, force: true });
   }
 });
