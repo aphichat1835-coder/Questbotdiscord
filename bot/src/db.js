@@ -93,10 +93,10 @@ let legacyMigrationBackupPath = null;
 
 function ensureBackupDirectory() {
   if (backupDirectory === PERSISTENT_BACKUP_ROOT) {
-    fs.mkdirSync('/var/data/backups', { recursive: true });
+    fs.mkdirSync(PERSISTENT_BACKUP_ROOT, { recursive: true });
     return;
   }
-  fs.mkdirSync('./data/backups', { recursive: true });
+  fs.mkdirSync(LOCAL_BACKUP_ROOT, { recursive: true });
 }
 
 function tableExists(name) {
