@@ -98,8 +98,9 @@ function validateDiscordWebhookUrl(name, value) {
 
 function canUsePersistentDataRoot() {
   try {
-    return fs.statSync('/var/data').isDirectory()
-      && (fs.accessSync('/var/data', fs.constants.W_OK), true);
+    if (!fs.statSync('/var/data').isDirectory()) return false;
+    fs.accessSync('/var/data', fs.constants.W_OK);
+    return true;
   } catch {
     return false;
   }
@@ -132,6 +133,7 @@ const discordTimezone = validateTimeZone(
   readOptional('DISCORD_TIMEZONE', timezone),
 );
 const databasePath = readOptional('DATABASE_PATH', automaticDatabasePath());
+if (!process.env.DATABASE_PATH?.trim()) process.env.DATABASE_PATH = databasePath;
 const databaseBackupEnabled = readBoolean(
   'DATABASE_BACKUP_ENABLED',
   databasePath !== ':memory:',
