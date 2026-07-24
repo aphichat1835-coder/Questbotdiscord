@@ -12,8 +12,17 @@ const REQUIRED_ENV = Object.freeze({
 });
 
 function runConfig({ overrides = {}, remove = [] } = {}) {
-  const env = { ...process.env, ...REQUIRED_ENV, ...overrides };
-  for (const name of ['DATABASE_PATH', 'DATABASE_BACKUP_ENABLED', 'LOG_CHANNEL_ID', 'MANAGER_ROLE_ID', 'HEALTH_STATUS_TOKEN', ...remove]) delete env[name];
+  const env = { ...process.env, ...REQUIRED_ENV };
+  for (const name of [
+    'DATABASE_PATH',
+    'DATABASE_BACKUP_ENABLED',
+    'LOG_CHANNEL_ID',
+    'MANAGER_ROLE_ID',
+    'HEALTH_STATUS_TOKEN',
+    ...remove,
+  ]) delete env[name];
+  Object.assign(env, overrides);
+
   const script = `import('./src/config.js').then(({config}) => console.log(JSON.stringify({databasePath:config.databasePath,databaseBackupEnabled:config.databaseBackupEnabled,logChannelId:config.logChannelId,hasWebhook:Boolean(config.logWebhookUrl),hasRunnerSecret:Boolean(config.runnerTokenSecret)}))).catch((error)=>{console.error(error.message);process.exitCode=1;});`;
   return spawnSync(process.execPath, ['--input-type=module', '--eval', script], {
     cwd: '.', env, encoding: 'utf8', timeout: 10_000,
@@ -50,7 +59,13 @@ test('RUNNER_TOKEN_SECRET is required and long enough', () => {
 });
 
 test('optional overrides remain available', () => {
-  const child = runConfig({ overrides: { DATABASE_PATH: ':memory:', DATABASE_BACKUP_ENABLED: 'false', LOG_CHANNEL_ID: '52345678901234567' } });
+  const child = runConfig({
+    overrides: {
+      DATABASE_PATH: ':memory:',
+      DATABASE_BACKUP_ENABLED: 'false',
+      LOG_CHANNEL_ID: '52345678901234567',
+    },
+  });
   assert.equal(child.status, 0, child.stderr || child.stdout);
   const output = JSON.parse(child.stdout.trim().split('\n').at(-1));
   assert.equal(output.databasePath, ':memory:');
