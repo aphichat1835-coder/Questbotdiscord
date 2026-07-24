@@ -7,7 +7,8 @@ Repository นี้เป็น Bot-only การเปลี่ยนแป�
 ```bash
 git clone https://github.com/aphichat1835-coder/Questbotdiscord.git
 cd Questbotdiscord/bot
-npm ci
+npm ci --ignore-scripts --no-fund --no-audit
+npm rebuild better-sqlite3 --foreground-scripts
 cp .env.example .env
 npm run validate:quest-fixture
 npm test
@@ -72,7 +73,8 @@ npm run check
 รันจากโฟลเดอร์ `bot`:
 
 ```bash
-npm ci
+npm ci --ignore-scripts --no-fund --no-audit
+npm rebuild better-sqlite3 --foreground-scripts
 npm run validate:quest-fixture
 npm test
 npm run check
