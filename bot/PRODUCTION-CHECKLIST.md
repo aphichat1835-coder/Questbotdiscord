@@ -54,7 +54,8 @@ Local development ใช้ `./data/quests.db` และ `./data/backups`
 รันจากโฟลเดอร์ `bot`:
 
 ```bash
-npm ci
+npm ci --ignore-scripts --no-fund --no-audit
+npm rebuild better-sqlite3 --foreground-scripts
 npm run validate:quest-fixture
 npm test
 npm run check
