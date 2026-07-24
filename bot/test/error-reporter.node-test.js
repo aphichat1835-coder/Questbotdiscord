@@ -7,6 +7,7 @@ process.env.DISCORD_GUILD_ID = '22345678901234567';
 process.env.OWNER_ID = '32345678901234567';
 process.env.RUNNER_TOKEN_SECRET = 'test-runner-token-secret-32-characters';
 process.env.LOG_WEBHOOK_URL = 'https://discord.com/api/webhooks/42345678901234567/test_webhook_token_abcdefghijklmnopqrstuvwxyz';
+process.env.ALLOW_TEST_WEBHOOK = 'true';
 
 const {
   buildEmergencyWebhookPayload,
@@ -23,6 +24,7 @@ test.afterEach(() => {
 });
 test.after(() => {
   console.error = originalConsoleError;
+  delete process.env.ALLOW_TEST_WEBHOOK;
 });
 
 test('ordinary operational errors stay in Render logs and do not call the webhook', async () => {
