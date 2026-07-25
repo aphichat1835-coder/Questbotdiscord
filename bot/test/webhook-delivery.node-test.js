@@ -4,18 +4,25 @@ import {
   executeDiscordWebhook,
   validateDiscordWebhookUrl,
 } from '../src/webhook-delivery.js';
+import { createFakeDiscordWebhookUrl } from '../test-support/fake-webhook.js';
 
-const WEBHOOK_URL = 'https://discord.com/api/webhooks/42345678901234567/test_webhook_token_abcdefghijklmnopqrstuvwxyz';
+const WEBHOOK_URL = createFakeDiscordWebhookUrl('transport');
+
+function alteredWebhookUrl(mutator) {
+  const url = new URL(WEBHOOK_URL);
+  mutator(url);
+  return url.toString();
+}
 
 test('webhook URL validation rejects unsafe variants', () => {
   assert.equal(validateDiscordWebhookUrl('LOG_WEBHOOK_URL', WEBHOOK_URL), WEBHOOK_URL);
   for (const value of [
-    'http://discord.com/api/webhooks/42345678901234567/test_webhook_token_abcdefghijklmnopqrstuvwxyz',
-    'https://example.com/api/webhooks/42345678901234567/test_webhook_token_abcdefghijklmnopqrstuvwxyz',
-    'https://discord.com:444/api/webhooks/42345678901234567/test_webhook_token_abcdefghijklmnopqrstuvwxyz',
-    'https://user:pass@discord.com/api/webhooks/42345678901234567/test_webhook_token_abcdefghijklmnopqrstuvwxyz',
-    `${WEBHOOK_URL}?wait=true`,
-    `${WEBHOOK_URL}#fragment`,
+    alteredWebhookUrl((url) => { url.protocol = 'http:'; }),
+    alteredWebhookUrl((url) => { url.hostname = 'example.com'; }),
+    alteredWebhookUrl((url) => { url.port = '444'; }),
+    alteredWebhookUrl((url) => { url.username = 'user'; url.password = 'pass'; }),
+    alteredWebhookUrl((url) => { url.searchParams.set('wait', 'true'); }),
+    alteredWebhookUrl((url) => { url.hash = 'fragment'; }),
   ]) {
     assert.throws(
       () => validateDiscordWebhookUrl('LOG_WEBHOOK_URL', value),
