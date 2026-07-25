@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import 'dotenv/config';
+import { validateDiscordWebhookUrl } from './webhook-delivery.js';
 
 function configurationError(message) {
   throw new Error(`Invalid environment configuration: ${message}`);
@@ -63,37 +64,6 @@ function validateVersion(name, value) {
     configurationError(`${name} must contain numeric dot-separated version parts`);
   }
   return value;
-}
-
-function validateDiscordWebhookUrl(name, value) {
-  let url;
-  try {
-    url = new URL(value);
-  } catch {
-    configurationError(`${name} must be a valid URL`);
-  }
-
-  const allowedHosts = new Set([
-    'discord.com',
-    'canary.discord.com',
-    'ptb.discord.com',
-    'discordapp.com',
-    'canary.discordapp.com',
-    'ptb.discordapp.com',
-  ]);
-  const pathMatch = /^\/api\/webhooks\/(\d{17,20})\/([A-Za-z0-9._-]{20,})\/?$/.exec(url.pathname);
-  if (
-    url.protocol !== 'https:'
-    || !allowedHosts.has(url.hostname)
-    || !pathMatch
-    || url.username
-    || url.password
-    || url.search
-    || url.hash
-  ) {
-    configurationError(`${name} must be a standard HTTPS Discord incoming webhook URL`);
-  }
-  return url.toString().replace(/\/$/, '');
 }
 
 function canUsePersistentDataRoot() {
