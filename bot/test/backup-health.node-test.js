@@ -29,22 +29,28 @@ test.after(async () => {
 test.afterEach(() => resetBackupHealthForTests());
 
 function reportingSpies({
-  incidentResults = [{ state: 'delivered', incidentId: 'NQB-TEST' }],
+  incidentResults = [
+    { state: 'delivered', incidentId: 'NQB-TEST' },
+    { state: 'suppressed', incidentId: 'NQB-TEST' },
+  ],
   recoveryResults = [{ state: 'delivered', incidentId: 'NQB-TEST' }],
 } = {}) {
   const errors = [];
   const incidents = [];
+  const incidentStates = [];
   const recoveries = [];
   let incidentIndex = 0;
   let recoveryIndex = 0;
   return {
     errors,
     incidents,
+    incidentStates,
     recoveries,
     reportErrorFn: (...args) => errors.push(args),
     reportIncidentFn: async (incident) => {
       incidents.push(incident);
       const result = incidentResults[Math.min(incidentIndex, incidentResults.length - 1)];
+      incidentStates.push(result.state);
       incidentIndex++;
       return result;
     },
@@ -74,7 +80,7 @@ test('one or two backup failures stay in Render logs without an emergency', asyn
   assert.equal(status.incidentOpen, false);
 });
 
-test('the third consecutive failure opens one backup protection incident', async () => {
+test('the third and later failures delegate dedupe and retry decisions to the reporter', async () => {
   const spies = reportingSpies();
   const backupFn = async () => { throw new Error('persistent backup failure'); };
 
@@ -82,12 +88,57 @@ test('the third consecutive failure opens one backup protection incident', async
     await runBackupAttempt({ backupFn, ...spies });
   }
 
-  assert.equal(spies.incidents.length, 1);
+  assert.equal(spies.incidents.length, 5);
+  assert.deepEqual(spies.incidentStates, [
+    'delivered',
+    'suppressed',
+    'suppressed',
+    'suppressed',
+    'suppressed',
+  ]);
   assert.equal(spies.incidents[0].code, 'BACKUP_PROTECTION_LOST');
   assert.equal(spies.incidents[0].context.consecutiveFailures, BACKUP_FAILURE_THRESHOLD);
   const status = getBackupHealthStatus();
   assert.equal(status.consecutiveFailures, BACKUP_FAILURE_THRESHOLD + 4);
   assert.equal(status.incidentOpen, true);
+});
+
+test('ambiguous incident delivery is delegated again so reporter retry can run', async () => {
+  resetBackupHealthForTests({
+    state: 'degraded',
+    consecutiveFailures: BACKUP_FAILURE_THRESHOLD - 1,
+  });
+  const spies = reportingSpies({
+    incidentResults: [
+      { state: 'delivery_unknown', incidentId: 'NQB-RETRY' },
+      { state: 'retry_deferred', incidentId: 'NQB-RETRY' },
+      { state: 'delivered', incidentId: 'NQB-RETRY' },
+    ],
+  });
+  const backupFn = async () => { throw new Error('persistent backup failure'); };
+
+  const first = await runBackupAttempt({
+    now: new Date('2026-07-25T12:00:00.000Z'),
+    backupFn,
+    ...spies,
+  });
+  const guarded = await runBackupAttempt({
+    now: new Date('2026-07-25T12:00:30.000Z'),
+    backupFn,
+    ...spies,
+  });
+  const retried = await runBackupAttempt({
+    now: new Date('2026-07-25T12:02:00.000Z'),
+    backupFn,
+    ...spies,
+  });
+
+  assert.equal(first.incident.state, 'delivery_unknown');
+  assert.equal(guarded.incident.state, 'retry_deferred');
+  assert.equal(retried.incident.state, 'delivered');
+  assert.deepEqual(spies.incidentStates, ['delivery_unknown', 'retry_deferred', 'delivered']);
+  assert.equal(spies.incidents.length, 3);
+  assert.equal(getBackupHealthStatus().incidentOpen, true);
 });
 
 test('an overdue backup escalates even on the first new failure', async () => {
