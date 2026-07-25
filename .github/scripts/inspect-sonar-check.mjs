@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+
 const { GH_TOKEN, REPOSITORY, HEAD_SHA } = process.env;
 if (!GH_TOKEN || !REPOSITORY || !HEAD_SHA) {
   throw new Error('GH_TOKEN, REPOSITORY and HEAD_SHA are required');
@@ -25,26 +27,21 @@ for (let attempt = 1; attempt <= 24; attempt++) {
   if (attempt < 24) await delay(15_000);
 }
 
-if (!sonarRuns.length) {
-  console.log('No Sonar check run was visible to the read-only token.');
-  process.exitCode = 2;
-} else {
-  for (const run of sonarRuns) {
-    console.log(JSON.stringify({
-      id: run.id,
-      name: run.name,
-      status: run.status,
-      conclusion: run.conclusion,
-      detailsUrl: run.details_url,
-      title: run.output?.title,
-      summary: run.output?.summary,
-      text: run.output?.text,
-    }, null, 2));
-
-    const annotations = await readJson(
-      `https://api.github.com/repos/${REPOSITORY}/check-runs/${run.id}/annotations?per_page=100`,
-    );
-    console.log(JSON.stringify(annotations.map(({
+const evidence = [];
+for (const run of sonarRuns) {
+  const annotations = await readJson(
+    `https://api.github.com/repos/${REPOSITORY}/check-runs/${run.id}/annotations?per_page=100`,
+  );
+  evidence.push({
+    id: run.id,
+    name: run.name,
+    status: run.status,
+    conclusion: run.conclusion,
+    detailsUrl: run.details_url,
+    title: run.output?.title,
+    summary: run.output?.summary,
+    text: run.output?.text,
+    annotations: annotations.map(({
       path,
       start_line: startLine,
       end_line: endLine,
@@ -60,6 +57,10 @@ if (!sonarRuns.length) {
       title,
       message,
       rawDetails,
-    })), null, 2));
-  }
+    })),
+  });
 }
+
+fs.writeFileSync('sonar-evidence.json', `${JSON.stringify(evidence, null, 2)}\n`);
+console.log(JSON.stringify(evidence, null, 2));
+if (!sonarRuns.length) process.exitCode = 2;
