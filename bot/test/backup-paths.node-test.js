@@ -2,13 +2,14 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import test from 'node:test';
+import { createFakeDiscordWebhookUrl } from '../test-support/fake-webhook.js';
 
 process.env.DISCORD_BOT_TOKEN ??= 'backup-test-bot-token';
 process.env.DISCORD_CLIENT_ID ??= '12345678901234567';
 process.env.DISCORD_GUILD_ID ??= '22345678901234567';
 process.env.OWNER_ID ??= '32345678901234567';
 process.env.RUNNER_TOKEN_SECRET ??= 'backup-test-runner-secret-32-characters';
-process.env.LOG_WEBHOOK_URL ??= 'https://discord.com/api/webhooks/42345678901234567/backup_test_webhook_token_abcdefghijklmnopqrstuvwxyz';
+process.env.LOG_WEBHOOK_URL ??= createFakeDiscordWebhookUrl('backup');
 process.env.DATABASE_PATH = ':memory:';
 process.env.QUESTBOT_TEST_MODE = 'true';
 
