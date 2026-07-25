@@ -11,6 +11,7 @@ import {
   getIncidentReporterStatus,
   reportError,
 } from './error-reporter.js';
+import { getBackupHealthStatus } from './worker.js';
 
 const PORT = config.port;
 let botClient = null;
@@ -86,6 +87,16 @@ function statusSnapshot(status) {
   };
 }
 
+function storageStatus() {
+  return {
+    mode: config.storageProfile.mode,
+    databasePathType: config.storageProfile.databasePathType,
+    durability: config.storageProfile.durability,
+    durabilityVerified: config.storageProfile.durabilityVerified,
+    warning: config.storageProfile.warning,
+  };
+}
+
 export function detailedStatusPayload() {
   const jobs = listJobs();
   const quest = getQuestEngineStatus();
@@ -95,6 +106,8 @@ export function detailedStatusPayload() {
     uptimeSeconds: Math.floor((Date.now() - startedAt) / 1000),
     pingMs: botClient?.ws?.ping ?? -1,
     logging: getIncidentReporterStatus(),
+    storage: storageStatus(),
+    backup: getBackupHealthStatus(),
     runners: {
       active: jobs.length,
       oneShot: jobs.filter((job) => job.mode === 'oneshot').length,
