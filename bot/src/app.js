@@ -158,7 +158,7 @@ export function createApp({ exit = process.exit } = {}) {
     }
 
     try {
-      client.destroy();
+      await client.destroy();
       await stopDashboard();
     } catch (error) {
       reportError('Resource shutdown', error);
@@ -183,15 +183,14 @@ export function createApp({ exit = process.exit } = {}) {
   }
 
   async function fatalShutdown(code, error, context = {}) {
-    await reportWithinFatalBudget(
-      reportIncident({
-        code,
-        error,
-        context,
-        scope: 'runtime',
-        source: code,
-      }),
-    ).catch(() => {});
+    const report = reportIncident({
+      code,
+      error,
+      context,
+      scope: 'runtime',
+      source: code,
+    }).catch(() => ({ state: 'report_failed' }));
+    await reportWithinFatalBudget(report);
     return gracefulShutdown(code, 1);
   }
 
