@@ -15,8 +15,11 @@ try {
 } catch (error) {
   removeBootstrapHandlers();
   await fatalBootstrapShutdown({
-    code: INCIDENT.CLIENT_STARTUP_FAILED,
+    code: error?.incidentCode || INCIDENT.CLIENT_STARTUP_FAILED,
     error,
-    context: { stage: 'module-import', component: 'application' },
+    context: error?.bootstrapContext || {
+      stage: 'module-import',
+      component: 'application',
+    },
   });
 }
