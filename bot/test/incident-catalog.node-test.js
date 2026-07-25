@@ -25,8 +25,8 @@ test('incident context only keeps explicitly allowed values', () => {
     lastSuccessAt: '2026-07-25T00:00:00.000Z',
     backupAgeHours: 27,
     storageMode: 'persistent-candidate',
-    token: 'must-not-survive',
-    nested: { password: 'must-not-survive' },
+    unapprovedField: 'must-not-survive',
+    nested: { internalValue: 'must-not-survive' },
   });
 
   assert.deepEqual(context, {
