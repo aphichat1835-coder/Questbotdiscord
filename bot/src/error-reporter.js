@@ -12,13 +12,13 @@ import { executeDiscordWebhook } from './webhook-delivery.js';
 
 const incidentState = new Map();
 const legacyCounters = new Map();
-const DEDUPE_MS = 10 * 60_000;
 const LEGACY_WINDOW_MS = 10 * 60_000;
+const FAILED_DELIVERY_RETRY_MS = 60_000;
+const CLOSED_INCIDENT_RETENTION_MS = 24 * 60 * 60_000;
+const OPEN_INCIDENT_RETENTION_MS = 7 * 24 * 60 * 60_000;
 const SENSITIVE_KEY = /authorization|token|secret|cookie|captcha|email|webhook|cipher|password/i;
 const DISCORD_WEBHOOK_URL = /https:\/\/(?:canary\.|ptb\.)?discord(?:app)?\.com\/api\/webhooks\/\d{17,20}\/[a-z0-9._-]+/gi;
-const COMMON_SECRET_ASSIGNMENT = /((?:authorization|token|secret|cookie|email|cipher|password)['"]?\s*[:=]\s*['"]?)([^"',}\s]+)/gi;
-const CAPTCHA_ASSIGNMENT = /(captcha(?:_[a-z0-9_]+)?['"]?\s*[:=]\s*['"]?)([^"',}\s]+)/gi;
-const WEBHOOK_ASSIGNMENT = /(webhook(?:_url)?['"]?\s*[:=]\s*['"]?)([^"',}\s]+)/gi;
+const SENSITIVE_ASSIGNMENT = /((?:["']?[\w.-]*(?:authorization|token|secret|cookie|captcha|email|webhook|cipher|password)[\w.-]*["']?)\s*[:=]\s*["']?)([^"',}\s]+)/gi;
 
 const reporterStatus = {
   lastDeliveryAt: null,
@@ -54,19 +54,10 @@ function printable(value) {
   }
 }
 
-function redactAssignments(value) {
-  return value
-    .replace(COMMON_SECRET_ASSIGNMENT, '$1[REDACTED]')
-    .replace(CAPTCHA_ASSIGNMENT, '$1[REDACTED]')
-    .replace(WEBHOOK_ASSIGNMENT, '$1[REDACTED]');
-}
-
 export function redactSensitive(value) {
-  const withoutWebhookUrls = printable(value).replace(
-    DISCORD_WEBHOOK_URL,
-    '[REDACTED_WEBHOOK]',
-  );
-  return redactAssignments(withoutWebhookUrls)
+  return printable(value)
+    .replace(DISCORD_WEBHOOK_URL, '[REDACTED_WEBHOOK]')
+    .replace(SENSITIVE_ASSIGNMENT, '$1[REDACTED]')
     .replace(/\b[\w-]{20,}\.[\w-]{5,}\.[\w-]{15,}\b/g, '[REDACTED_TOKEN]')
     .slice(0, 8000);
 }
@@ -109,9 +100,9 @@ function createIncidentId() {
 }
 
 function canDeliverEmergencyWebhook() {
-  if (process.env.QUESTBOT_TEST_MODE === 'true') return false;
-  return process.env.NODE_TEST_WORKER_ID == null
-    || process.env.ALLOW_TEST_WEBHOOK === 'true';
+  const allowTestWebhook = process.env.ALLOW_TEST_WEBHOOK === 'true';
+  if (process.env.QUESTBOT_TEST_MODE === 'true') return allowTestWebhook;
+  return process.env.NODE_TEST_WORKER_ID == null || allowTestWebhook;
 }
 
 function contextField(code, context) {
@@ -181,6 +172,51 @@ export function reportError(source, error, { context = {} } = {}) {
   return { state: 'logged' };
 }
 
+function pruneReporterState(now) {
+  for (const [key, incident] of incidentState) {
+    const reference = incident.recoveredAt
+      ?? incident.lastSeenAt
+      ?? incident.firstSeenAt
+      ?? now;
+    const active = ['delivering', 'open', 'recovering', 'recovery_pending'].includes(incident.state);
+    const retention = active ? OPEN_INCIDENT_RETENTION_MS : CLOSED_INCIDENT_RETENTION_MS;
+    if (now - reference >= retention) incidentState.delete(key);
+  }
+
+  for (const [key, counter] of legacyCounters) {
+    if (now - (counter.lastSeenAt ?? counter.firstSeenAt ?? now) >= LEGACY_WINDOW_MS) {
+      legacyCounters.delete(key);
+    }
+  }
+}
+
+function suppressIncident(incident, code, now, state = 'suppressed') {
+  incident.occurrences++;
+  incident.lastSeenAt = now;
+  reporterStatus.suppressedIncidents++;
+  return {
+    state,
+    code,
+    incidentId: incident.incidentId,
+    occurrences: incident.occurrences,
+  };
+}
+
+function newIncident(code, scope, now) {
+  return {
+    incidentId: createIncidentId(),
+    code,
+    scope,
+    occurrences: 0,
+    firstSeenAt: now,
+    lastSeenAt: now,
+    lastAttemptAt: null,
+    lastDeliveredAt: null,
+    nextRetryAt: null,
+    state: 'new',
+  };
+}
+
 export async function reportIncident({
   code,
   error,
@@ -198,32 +234,31 @@ export async function reportIncident({
     return { state: 'logged_only', code };
   }
 
+  pruneReporterState(now);
   const key = incidentIdentity(code, scope);
   let incident = incidentState.get(key);
-  if (incident?.state === 'open' && now - incident.lastSentAt < DEDUPE_MS) {
-    incident.occurrences++;
-    reporterStatus.suppressedIncidents++;
-    return {
-      state: 'suppressed',
-      code,
-      incidentId: incident.incidentId,
-      occurrences: incident.occurrences,
-    };
+
+  if (incident?.state === 'delivering' || incident?.state === 'recovering') {
+    return suppressIncident(incident, code, now);
+  }
+  if (incident?.state === 'open') {
+    return suppressIncident(incident, code, now);
+  }
+  if (
+    ['delivery_failed', 'delivery_unknown'].includes(incident?.state)
+    && now < (incident.nextRetryAt ?? 0)
+  ) {
+    return suppressIncident(incident, code, now, 'retry_deferred');
+  }
+  if (!incident || ['recovered', 'recovery_pending'].includes(incident.state)) {
+    incident = newIncident(code, scope, now);
   }
 
-  if (!incident || incident.state === 'recovered') {
-    incident = {
-      incidentId: createIncidentId(),
-      code,
-      scope,
-      occurrences: 0,
-      firstSeenAt: now,
-      lastSentAt: 0,
-      state: 'open',
-    };
-  }
   incident.occurrences++;
   incident.lastSeenAt = now;
+  incident.lastAttemptAt = now;
+  incident.state = 'delivering';
+  incidentState.set(key, incident);
 
   const payload = buildIncidentWebhookPayload({
     code,
@@ -232,15 +267,34 @@ export async function reportIncident({
     incidentId: incident.incidentId,
     occurrences: incident.occurrences,
   });
-  const delivery = await executeDiscordWebhook({
-    url: config.logWebhookUrl,
-    payload,
-  });
 
-  incident.lastSentAt = now;
+  let delivery;
+  try {
+    delivery = await executeDiscordWebhook({
+      url: config.logWebhookUrl,
+      payload,
+    });
+  } catch (deliveryError) {
+    delivery = {
+      state: 'delivery_unknown',
+      attempts: 0,
+      reason: deliveryError?.name || 'unexpected delivery failure',
+    };
+  }
+
   incident.delivery = delivery;
-  incident.state = 'open';
+  if (delivery.state === 'delivered') {
+    incident.state = 'open';
+    incident.lastDeliveredAt = now;
+    incident.nextRetryAt = null;
+  } else {
+    incident.state = delivery.state === 'permanent_failure'
+      ? 'delivery_failed'
+      : 'delivery_unknown';
+    incident.nextRetryAt = now + FAILED_DELIVERY_RETRY_MS;
+  }
   incidentState.set(key, incident);
+
   reporterStatus.lastDeliveryState = delivery.state;
   if (delivery.state === 'delivered') {
     reporterStatus.lastDeliveryAt = new Date(now).toISOString();
@@ -263,14 +317,27 @@ export async function reportRecovery({
   now = Date.now(),
 } = {}) {
   getIncidentDefinition(code);
+  pruneReporterState(now);
   const key = incidentIdentity(code, scope);
   const incident = incidentState.get(key);
+
   if (!incident || incident.state === 'recovered') return { state: 'not_open', code };
+  if (incident.state === 'recovering') {
+    return suppressIncident(incident, code, now, 'recovery_in_progress');
+  }
+  if (incident.state === 'recovery_pending' && now < (incident.nextRecoveryRetryAt ?? 0)) {
+    return { state: 'retry_deferred', code, incidentId: incident.incidentId };
+  }
   if (!canDeliverEmergencyWebhook()) {
     incident.state = 'recovered';
     incident.recoveredAt = now;
+    incidentState.set(key, incident);
     return { state: 'logged_only', code, incidentId: incident.incidentId };
   }
+
+  incident.state = 'recovering';
+  incident.recoveryAttemptAt = now;
+  incidentState.set(key, incident);
 
   const payload = buildIncidentWebhookPayload({
     code,
@@ -279,11 +346,29 @@ export async function reportRecovery({
     status: 'RECOVERED',
     occurrences: incident.occurrences,
   });
-  const delivery = await executeDiscordWebhook({ url: config.logWebhookUrl, payload });
+
+  let delivery;
+  try {
+    delivery = await executeDiscordWebhook({ url: config.logWebhookUrl, payload });
+  } catch (deliveryError) {
+    delivery = {
+      state: 'delivery_unknown',
+      attempts: 0,
+      reason: deliveryError?.name || 'unexpected recovery delivery failure',
+    };
+  }
+
   incident.recoveryDelivery = delivery;
-  incident.recoveredAt = now;
-  incident.state = delivery.state === 'delivered' ? 'recovered' : 'recovery_pending';
+  if (delivery.state === 'delivered') {
+    incident.recoveredAt = now;
+    incident.state = 'recovered';
+    incident.nextRecoveryRetryAt = null;
+  } else {
+    incident.state = 'recovery_pending';
+    incident.nextRecoveryRetryAt = now + FAILED_DELIVERY_RETRY_MS;
+  }
   incidentState.set(key, incident);
+
   reporterStatus.lastDeliveryState = delivery.state;
   if (delivery.state === 'delivered') {
     reporterStatus.lastDeliveryAt = new Date(now).toISOString();
@@ -298,6 +383,7 @@ function legacyCounterKey(policy) {
 }
 
 function collectLegacyEvidence(policy, now) {
+  pruneReporterState(now);
   const key = legacyCounterKey(policy);
   let counter = legacyCounters.get(key);
   if (!counter || now - counter.firstSeenAt >= LEGACY_WINDOW_MS) {
@@ -308,7 +394,7 @@ function collectLegacyEvidence(policy, now) {
   if (counter.contexts.length > 50) counter.contexts.shift();
   counter.lastSeenAt = now;
   legacyCounters.set(key, counter);
-  return counter;
+  return { key, counter };
 }
 
 export function isEmergencyIncident(source, error) {
@@ -363,7 +449,7 @@ export async function reportCriticalError(
   }
 
   reportError(source, error, { context: policy.context });
-  const counter = collectLegacyEvidence(policy, now);
+  const { key, counter } = collectLegacyEvidence(policy, now);
   if (counter.count < policy.threshold) {
     return {
       state: 'logged_threshold',
@@ -373,6 +459,7 @@ export async function reportCriticalError(
     };
   }
 
+  legacyCounters.delete(key);
   return reportIncident({
     code: policy.code,
     error,
@@ -386,12 +473,15 @@ export async function reportCriticalError(
 }
 
 export function getIncidentReporterStatus() {
+  pruneReporterState(Date.now());
+  const incidents = [...incidentState.values()];
   return {
     webhookConfigured: Boolean(config.logWebhookUrl),
     lastDeliveryAt: reporterStatus.lastDeliveryAt,
     lastDeliveryState: reporterStatus.lastDeliveryState,
     suppressedIncidents: reporterStatus.suppressedIncidents,
-    openIncidents: [...incidentState.values()].filter((item) => item.state !== 'recovered').length,
+    openIncidents: incidents.filter((item) => item.state !== 'recovered').length,
+    pendingRecoveries: incidents.filter((item) => item.state === 'recovery_pending').length,
     pendingThresholds: [...legacyCounters.values()].filter((item) => item.count > 0).length,
   };
 }
