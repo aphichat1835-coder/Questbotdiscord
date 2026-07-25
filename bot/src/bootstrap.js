@@ -4,15 +4,10 @@ import { reportBootstrapIncident } from './bootstrap-reporter.js';
 export const FATAL_REPORT_BUDGET_MS = 3500;
 let fatalBootstrapPromise = null;
 
-export async function reportWithinFatalBudget(
-  reportPromise,
-  budgetMs = FATAL_REPORT_BUDGET_MS,
-  { unrefTimer = process.env.NODE_TEST_WORKER_ID == null } = {},
-) {
+export async function reportWithinFatalBudget(reportPromise, budgetMs = FATAL_REPORT_BUDGET_MS) {
   let timer = null;
   const timeout = new Promise((resolve) => {
     timer = setTimeout(() => resolve({ state: 'budget_expired' }), budgetMs);
-    if (unrefTimer) timer.unref?.();
   });
   try {
     return await Promise.race([Promise.resolve(reportPromise), timeout]);
