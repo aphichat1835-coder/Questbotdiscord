@@ -5,22 +5,18 @@ import {
   getIncidentDefinition,
   INCIDENT,
 } from './incident-catalog.js';
+import {
+  accumulateLegacyContext,
+  classifyLegacyIncident,
+} from './legacy-incident-policy.js';
 import { executeDiscordWebhook } from './webhook-delivery.js';
 
 const incidentState = new Map();
+const legacyCounters = new Map();
 const DEDUPE_MS = 10 * 60_000;
+const LEGACY_WINDOW_MS = 10 * 60_000;
 const SENSITIVE_KEY = /authorization|token|secret|cookie|captcha|email|webhook|cipher|password/i;
 const DISCORD_WEBHOOK_URL = /https:\/\/(?:canary\.|ptb\.)?discord(?:app)?\.com\/api\/webhooks\/\d{17,20}\/[A-Za-z0-9._-]+/gi;
-const LEGACY_SOURCE_CODES = new Map([
-  ['Client startup', INCIDENT.CLIENT_STARTUP_FAILED],
-  ['Database backup', INCIDENT.BACKUP_PROTECTION_LOST],
-  ['Discord login', INCIDENT.DISCORD_LOGIN_FAILED],
-  ['Discord session invalidated', INCIDENT.DISCORD_SESSION_INVALIDATED],
-  ['Health server', INCIDENT.HEALTH_SERVER_BIND_FAILED],
-  ['Runtime lease', INCIDENT.RUNTIME_LEASE_LOST],
-  ['Uncaught exception', INCIDENT.UNCAUGHT_EXCEPTION],
-  ['Unhandled rejection', INCIDENT.UNHANDLED_REJECTION],
-]);
 
 const reporterStatus = {
   lastDeliveryAt: null,
@@ -190,9 +186,10 @@ export async function reportIncident({
   source = code,
   now = Date.now(),
   notify = true,
+  log = true,
 } = {}) {
   getIncidentDefinition(code);
-  reportError(source, error, { context: allowlistedIncidentContext(code, context) });
+  if (log) reportError(source, error, { context: allowlistedIncidentContext(code, context) });
 
   if (!notify || !canDeliverEmergencyWebhook()) {
     return { state: 'logged_only', code };
@@ -293,30 +290,32 @@ export async function reportRecovery({
   return { state: delivery.state, code, incidentId: incident.incidentId };
 }
 
-function legacyIncidentCode(source, error, emergency) {
-  if (emergency === true) return INCIDENT.SYSTEM_FAILURE;
-  if (LEGACY_SOURCE_CODES.has(source)) return LEGACY_SOURCE_CODES.get(source);
-  if (String(source).startsWith('Restore Scheduled Runner')) {
-    return INCIDENT.RUNNER_RESTORE_SYSTEM_FAILED;
+function legacyCounterKey(policy) {
+  return `${policy.code}:${policy.scope}`;
+}
+
+function collectLegacyEvidence(policy, now) {
+  const key = legacyCounterKey(policy);
+  let counter = legacyCounters.get(key);
+  if (!counter || now - counter.firstSeenAt >= LEGACY_WINDOW_MS) {
+    counter = { firstSeenAt: now, contexts: [], count: 0 };
   }
-  if (source === 'Quest API compatibility') {
-    const message = safeErrorMessage(error);
-    if (/unknown events/i.test(message)) return null;
-    if (error?.name === 'QuestCompatibilityError'
-      || /schema changed|could not be parsed|missing a valid id/i.test(message)) {
-      return INCIDENT.QUEST_API_SCHEMA_INCOMPATIBLE;
-    }
-  }
-  return null;
+  counter.count++;
+  counter.contexts.push(policy.context);
+  if (counter.contexts.length > 50) counter.contexts.shift();
+  counter.lastSeenAt = now;
+  legacyCounters.set(key, counter);
+  return counter;
 }
 
 export function isEmergencyIncident(source, error) {
-  return Boolean(legacyIncidentCode(source, error, undefined));
+  return Boolean(classifyLegacyIncident(source, error, undefined));
 }
 
 export function buildEmergencyWebhookPayload(source, error, context = {}) {
+  const policy = classifyLegacyIncident(source, error, true);
   return buildIncidentWebhookPayload({
-    code: legacyIncidentCode(source, error, true),
+    code: policy.code,
     error,
     context,
   });
@@ -325,11 +324,62 @@ export function buildEmergencyWebhookPayload(source, error, context = {}) {
 export async function reportCriticalError(
   source,
   error,
-  { notify = true, emergency = undefined, context = {}, incidentCode = null, scope = 'system' } = {},
+  {
+    notify = true,
+    emergency = undefined,
+    context = {},
+    incidentCode = null,
+    scope = 'system',
+    now = Date.now(),
+  } = {},
 ) {
-  const code = incidentCode || legacyIncidentCode(source, error, emergency);
-  if (!code) return reportError(source, error, { context });
-  return reportIncident({ code, error, context, scope, source, notify });
+  if (incidentCode) {
+    return reportIncident({
+      code: incidentCode,
+      error,
+      context,
+      scope,
+      source,
+      notify,
+      now,
+    });
+  }
+
+  const policy = classifyLegacyIncident(source, error, emergency);
+  if (!policy) return reportError(source, error, { context });
+  if (policy.threshold <= 1) {
+    return reportIncident({
+      code: policy.code,
+      error,
+      context: { ...policy.context, ...context },
+      scope: policy.scope,
+      source,
+      notify,
+      now,
+    });
+  }
+
+  reportError(source, error, { context: policy.context });
+  const counter = collectLegacyEvidence(policy, now);
+  if (counter.count < policy.threshold) {
+    return {
+      state: 'logged_threshold',
+      code: policy.code,
+      count: counter.count,
+      threshold: policy.threshold,
+    };
+  }
+
+  return reportIncident({
+    code: policy.code,
+    error,
+    context: accumulateLegacyContext(policy.code, counter.contexts),
+    scope: policy.scope,
+    source,
+    notify,
+    now,
+    log: false,
+  });
 }
 
 export function getIncidentReporterStatus() {
@@ -339,11 +389,13 @@ export function getIncidentReporterStatus() {
     lastDeliveryState: reporterStatus.lastDeliveryState,
     suppressedIncidents: reporterStatus.suppressedIncidents,
     openIncidents: [...incidentState.values()].filter((item) => item.state !== 'recovered').length,
+    pendingThresholds: [...legacyCounters.values()].filter((item) => item.count > 0).length,
   };
 }
 
 export function resetIncidentReporterStateForTests() {
   incidentState.clear();
+  legacyCounters.clear();
   reporterStatus.lastDeliveryAt = null;
   reporterStatus.lastDeliveryState = 'never';
   reporterStatus.suppressedIncidents = 0;
