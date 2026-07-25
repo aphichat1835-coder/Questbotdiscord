@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { createFakeDiscordWebhookUrl } from '../test-support/fake-webhook.js';
+import { createFakeDiscordWebhookUrl } from './support/fake-webhook.mjs';
 
 process.env.DISCORD_BOT_TOKEN ??= 'fixture-bot-token';
 process.env.DISCORD_CLIENT_ID ??= '12345678901234567';
