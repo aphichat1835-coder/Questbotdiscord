@@ -4,6 +4,7 @@ import test from 'node:test';
 
 test('incident design keeps the six required environment values documented', () => {
   const design = fs.readFileSync('./INCIDENT-DESIGN.md', 'utf8');
+  const lines = new Set(design.split(/\r?\n/));
   for (const name of [
     'DISCORD_BOT_TOKEN',
     'DISCORD_CLIENT_ID',
@@ -12,7 +13,7 @@ test('incident design keeps the six required environment values documented', () 
     'RUNNER_TOKEN_SECRET',
     'LOG_WEBHOOK_URL',
   ]) {
-    assert.match(design, new RegExp(`^${name}=`, 'm'));
+    assert.ok(lines.has(`${name}=`), `${name} must be documented as a required environment value`);
   }
 });
 
