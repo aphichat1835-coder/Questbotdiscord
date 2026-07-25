@@ -92,9 +92,14 @@ jobs:
           test -f src/legacy-incident-policy.js
           test -f src/storage-profile.js
           test -f src/webhook-delivery.js
+          test -f test-support/fake-webhook.js
           test -f INCIDENT-DESIGN.md
           test -z "$(grep -R -E 'process\.env\.DATABASE_PATH\s*=' src || true)"
           test -z "$(grep -R -E 'allowed_mentions:\s*\{\s*parse:\s*\[[^]]' src || true)"
+          if grep -R -E 'https://(canary\.|ptb\.)?discord(app)?\.com/api/webhooks/[0-9]{17,20}/' test test-support scripts; then
+            echo "Credential-shaped Discord webhook literal detected in test or script code"
+            exit 1
+          fi
           grep -q "redirect: 'error'" src/webhook-delivery.js
           grep -q 'BACKUP_FAILURE_THRESHOLD = 3' src/worker.js
           grep -q 'BACKUP_MAX_AGE_MS = 26' src/worker.js
