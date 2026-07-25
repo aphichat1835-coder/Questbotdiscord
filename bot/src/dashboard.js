@@ -51,11 +51,21 @@ export function startDashboard(client) {
 }
 
 export async function stopDashboard() {
-  if (!server) return;
   const activeServer = server;
+  const pendingStart = startPromise;
   server = null;
   startPromise = null;
+  if (!activeServer) return;
+
+  if (!activeServer.listening && pendingStart) {
+    try {
+      await pendingStart;
+    } catch {
+      return;
+    }
+  }
   if (!activeServer.listening) return;
+
   await new Promise((resolve, reject) => activeServer.close((error) => {
     if (error) reject(error);
     else resolve();
