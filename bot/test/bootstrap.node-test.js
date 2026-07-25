@@ -10,8 +10,9 @@ import {
   resetBootstrapStateForTests,
 } from '../src/bootstrap.js';
 import { INCIDENT } from '../src/incident-catalog.js';
+import { createFakeDiscordWebhookUrl } from '../test-support/fake-webhook.js';
 
-const WEBHOOK_URL = 'https://discord.com/api/webhooks/42345678901234567/test_webhook_token_abcdefghijklmnopqrstuvwxyz';
+const WEBHOOK_URL = createFakeDiscordWebhookUrl('bootstrap');
 const originalConsoleError = console.error;
 console.error = () => {};
 
@@ -37,7 +38,7 @@ test('bootstrap reporter sends without importing runtime config or database', as
   assert.deepEqual(payload.allowed_mentions, { parse: [] });
   assert.match(payload.embeds[0].title, /บอทเริ่มระบบไม่สำเร็จ/);
   assert.match(JSON.stringify(payload), /module-import/);
-  assert.doesNotMatch(JSON.stringify(payload), /must-not-leak|test_webhook_token|"token"/);
+  assert.doesNotMatch(JSON.stringify(payload), /must-not-leak|webhook_token|"token"/);
 });
 
 test('bootstrap reporter fails closed when the webhook is missing or invalid', async () => {
