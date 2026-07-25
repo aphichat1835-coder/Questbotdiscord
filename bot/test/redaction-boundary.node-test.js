@@ -12,6 +12,17 @@ test('runtime redaction bounds large input before returning output', () => {
   assert.doesNotMatch(redacted, /hidden/);
 });
 
+test('quoted secrets with escaped quotes are redacted as one value', () => {
+  const redacted = redactSensitive(
+    String.raw`apiToken="prefix\"hidden-tail" databasePassword='left\'hidden-right' safeValue="visible"`,
+  );
+
+  assert.match(redacted, /apiToken="\[REDACTED\]"/);
+  assert.match(redacted, /databasePassword='\[REDACTED\]'/);
+  assert.match(redacted, /safeValue="visible"/);
+  assert.doesNotMatch(redacted, /prefix|hidden-tail|left|hidden-right/);
+});
+
 test('bootstrap payload bounds and redacts large error messages', () => {
   const payload = buildBootstrapIncidentPayload({
     code: INCIDENT.CLIENT_STARTUP_FAILED,
