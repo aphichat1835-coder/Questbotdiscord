@@ -9,19 +9,27 @@ process.env.RUNNER_TOKEN_SECRET = 'test-runner-token-secret-32-characters';
 process.env.LOG_WEBHOOK_URL = 'https://discord.com/api/webhooks/42345678901234567/test_webhook_token_abcdefghijklmnopqrstuvwxyz';
 process.env.ALLOW_TEST_WEBHOOK = 'true';
 
+const { INCIDENT } = await import('../src/incident-catalog.js');
 const {
-  buildEmergencyWebhookPayload,
+  buildIncidentWebhookPayload,
+  getIncidentReporterStatus,
   isEmergencyIncident,
   redactSensitive,
   reportCriticalError,
+  reportIncident,
+  reportRecovery,
+  resetIncidentReporterStateForTests,
 } = await import('../src/error-reporter.js');
 
 const originalConsoleError = console.error;
 const originalFetch = globalThis.fetch;
 console.error = () => {};
+
 test.afterEach(() => {
   globalThis.fetch = originalFetch;
+  resetIncidentReporterStateForTests();
 });
+
 test.after(() => {
   console.error = originalConsoleError;
   delete process.env.ALLOW_TEST_WEBHOOK;
@@ -31,64 +39,116 @@ test('ordinary operational errors stay in Render logs and do not call the webhoo
   let attempts = 0;
   globalThis.fetch = async () => {
     attempts++;
-    return { ok: true, status: 204 };
+    return new Response(null, { status: 204 });
   };
 
-  await reportCriticalError(
+  const result = await reportCriticalError(
     'Runner authentication',
     new Error('one account token expired'),
   );
 
   assert.equal(attempts, 0);
+  assert.deepEqual(result, { state: 'logged' });
   assert.equal(isEmergencyIncident('Runner authentication', new Error('expired')), false);
 });
 
-test('true system emergencies send a styled and mention-safe webhook embed', async () => {
+test('structured incidents send an allowlisted, mention-safe backend embed', async () => {
   const requests = [];
   globalThis.fetch = async (url, options) => {
     requests.push({ url, options });
-    return { ok: true, status: 204 };
+    return new Response(null, { status: 204 });
   };
 
-  await reportCriticalError(
-    'Database backup',
-    new Error(`backup failed near ${process.env.LOG_WEBHOOK_URL}`),
-    { context: { slot: 3, token: 'must-not-leak' } },
-  );
+  const result = await reportIncident({
+    code: INCIDENT.BACKUP_PROTECTION_LOST,
+    error: new Error(`backup failed near ${process.env.LOG_WEBHOOK_URL}`),
+    context: {
+      consecutiveFailures: 3,
+      backupAgeHours: 27,
+      storageMode: 'persistent-candidate',
+      token: 'must-not-leak',
+      arbitraryInternalObject: { password: 'hidden' },
+    },
+  });
 
+  assert.equal(result.state, 'delivered');
   assert.equal(requests.length, 1);
   assert.equal(requests[0].url, process.env.LOG_WEBHOOK_URL);
   const payload = JSON.parse(requests[0].options.body);
   assert.deepEqual(payload.allowed_mentions, { parse: [] });
-  assert.equal(payload.embeds.length, 1);
-  assert.equal(payload.embeds[0].title, '🚨 SYSTEM EMERGENCY');
+  assert.match(payload.embeds[0].title, /การป้องกันฐานข้อมูล/);
   assert.equal(payload.embeds[0].color, 0xED4245);
   assert.match(payload.embeds[0].description, /REDACTED_WEBHOOK/);
-  assert.doesNotMatch(JSON.stringify(payload), /must-not-leak/);
-  assert.doesNotMatch(JSON.stringify(payload), /test_webhook_token/);
+  assert.match(JSON.stringify(payload), /consecutiveFailures/);
+  assert.doesNotMatch(JSON.stringify(payload), /must-not-leak|arbitraryInternalObject|test_webhook_token/);
 });
 
-test('failed emergency delivery releases its dedupe reservation', async () => {
+test('duplicate incidents are suppressed by code and scope', async () => {
   let attempts = 0;
   globalThis.fetch = async () => {
     attempts++;
-    if (attempts <= 2) return { ok: false, status: 503 };
-    return { ok: true, status: 204 };
+    return new Response(null, { status: 204 });
   };
 
-  const error = new Error('unique emergency delivery failure');
-  await reportCriticalError('Health server', error);
-  await reportCriticalError('Health server', error);
-  await reportCriticalError('Health server', error);
+  const first = await reportIncident({
+    code: INCIDENT.HEALTH_SERVER_BIND_FAILED,
+    error: new Error('EADDRINUSE'),
+    scope: 'health:10000',
+  });
+  const duplicate = await reportIncident({
+    code: INCIDENT.HEALTH_SERVER_BIND_FAILED,
+    error: new Error('wording changed but same invariant'),
+    scope: 'health:10000',
+  });
+  const distinctScope = await reportIncident({
+    code: INCIDENT.HEALTH_SERVER_BIND_FAILED,
+    error: new Error('EADDRINUSE'),
+    scope: 'health:10001',
+  });
 
-  assert.equal(attempts, 3);
+  assert.equal(first.state, 'delivered');
+  assert.equal(duplicate.state, 'suppressed');
+  assert.equal(distinctScope.state, 'delivered');
+  assert.equal(attempts, 2);
+  assert.equal(getIncidentReporterStatus().suppressedIncidents, 1);
 });
 
-test('emergency classifier only escalates compatibility failures that break the engine', () => {
+test('an open incident sends one recovery using the same incident id', async () => {
+  const payloads = [];
+  globalThis.fetch = async (_url, options) => {
+    payloads.push(JSON.parse(options.body));
+    return new Response(null, { status: 204 });
+  };
+
+  const opened = await reportIncident({
+    code: INCIDENT.BACKUP_PROTECTION_LOST,
+    error: new Error('three backup failures'),
+    scope: 'database-backup',
+    context: { consecutiveFailures: 3, backupAgeHours: 27 },
+  });
+  const recovered = await reportRecovery({
+    code: INCIDENT.BACKUP_PROTECTION_LOST,
+    scope: 'database-backup',
+    context: { consecutiveFailures: 0, backupAgeHours: 0 },
+  });
+  const duplicateRecovery = await reportRecovery({
+    code: INCIDENT.BACKUP_PROTECTION_LOST,
+    scope: 'database-backup',
+  });
+
+  assert.equal(recovered.state, 'delivered');
+  assert.equal(duplicateRecovery.state, 'not_open');
+  assert.equal(payloads.length, 2);
+  assert.match(payloads[1].embeds[0].title, /^✅/);
+  assert.equal(payloads[1].embeds[0].color, 0x57F287);
+  assert.match(JSON.stringify(payloads[1]), new RegExp(opened.incidentId));
+});
+
+test('legacy compatibility only escalates supported system sources', () => {
   assert.equal(
     isEmergencyIncident(
       'Quest API compatibility',
-      new Error('Quest API schema changed at /quests/@me'),
+      Object.assign(new Error('Quest API schema changed'), { name: 'QuestCompatibilityError' }),
     ),
     true,
   );
@@ -103,12 +163,12 @@ test('emergency classifier only escalates compatibility failures that break the 
   assert.equal(isEmergencyIncident('Discord shard 0', new Error('temporary')), false);
 });
 
-test('webhook payload remains within Discord embed limits', () => {
-  const payload = buildEmergencyWebhookPayload(
-    'S'.repeat(5000),
-    new Error('M'.repeat(10_000)),
-    { details: 'C'.repeat(5000) },
-  );
+test('incident payload remains within Discord embed limits', () => {
+  const payload = buildIncidentWebhookPayload({
+    code: INCIDENT.SYSTEM_FAILURE,
+    error: new Error('M'.repeat(10_000)),
+    context: { component: 'C'.repeat(5000) },
+  });
   const embed = payload.embeds[0];
   const totalCharacters = [
     embed.title,
