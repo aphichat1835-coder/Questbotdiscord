@@ -25,3 +25,12 @@ jobs:
           REPOSITORY: ${{ github.repository }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: node .github/scripts/inspect-sonar-check.mjs
+
+      - name: Upload Sonar evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: sonar-evidence-${{ github.run_id }}
+          path: sonar-evidence.json
+          if-no-files-found: warn
+          retention-days: 1
