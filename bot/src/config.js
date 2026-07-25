@@ -1,5 +1,5 @@
-import fs from 'node:fs';
 import 'dotenv/config';
+import { resolveStorageProfile } from './storage-profile.js';
 import { validateDiscordWebhookUrl } from './webhook-delivery.js';
 
 function configurationError(message) {
@@ -66,20 +66,6 @@ function validateVersion(name, value) {
   return value;
 }
 
-function canUsePersistentDataRoot() {
-  try {
-    if (!fs.statSync('/var/data').isDirectory()) return false;
-    fs.accessSync('/var/data', fs.constants.W_OK);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function automaticDatabasePath() {
-  return canUsePersistentDataRoot() ? '/var/data/quests.db' : './data/quests.db';
-}
-
 const clientId = validateSnowflake('DISCORD_CLIENT_ID', readRequired('DISCORD_CLIENT_ID'));
 const guildId = validateSnowflake('DISCORD_GUILD_ID', readRequired('DISCORD_GUILD_ID'));
 const ownerId = validateSnowflake('OWNER_ID', readRequired('OWNER_ID'));
@@ -102,12 +88,18 @@ const discordTimezone = validateTimeZone(
   'DISCORD_TIMEZONE',
   readOptional('DISCORD_TIMEZONE', timezone),
 );
-const databasePath = readOptional('DATABASE_PATH', automaticDatabasePath());
-if (!process.env.DATABASE_PATH?.trim()) process.env.DATABASE_PATH = databasePath;
-const databaseBackupEnabled = readBoolean(
+const resolvedStorageProfile = resolveStorageProfile({ env: process.env });
+const requestedBackupEnabled = readBoolean(
   'DATABASE_BACKUP_ENABLED',
-  databasePath !== ':memory:',
+  resolvedStorageProfile.backupEnabled,
 );
+const databaseBackupEnabled = resolvedStorageProfile.mode === 'memory'
+  ? false
+  : requestedBackupEnabled;
+const storageProfile = Object.freeze({
+  ...resolvedStorageProfile,
+  backupEnabled: databaseBackupEnabled,
+});
 
 const discordClientVersion = validateVersion(
   'DISCORD_CLIENT_VERSION',
@@ -145,7 +137,8 @@ export const config = Object.freeze({
   logChannelId,
   logWebhookUrl,
   managerRoleId,
-  databasePath,
+  storageProfile,
+  databasePath: storageProfile.databasePath,
   databaseBackupEnabled,
   databaseBackupRetention: readInteger('DATABASE_BACKUP_RETENTION', 7, { min: 1, max: 7 }),
   runnerTokenSecret: validateSecret(
