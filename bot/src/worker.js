@@ -96,8 +96,14 @@ function recoveryCompleted(result) {
   return ['delivered', 'not_open', 'logged_only'].includes(result?.state);
 }
 
-function incidentWasOpened(result) {
-  return ['delivered', 'suppressed', 'delivery_unknown'].includes(result?.state);
+function incidentIsTracked(result) {
+  return [
+    'delivered',
+    'suppressed',
+    'retry_deferred',
+    'delivery_unknown',
+    'permanent_failure',
+  ].includes(result?.state);
 }
 
 export async function runBackupAttempt({
@@ -155,7 +161,7 @@ export async function runBackupAttempt({
     });
 
     let incident = null;
-    if (shouldEscalateBackupFailure(now) && !backupHealth.incidentOpen) {
+    if (shouldEscalateBackupFailure(now)) {
       incident = await reportIncidentFn({
         code: INCIDENT.BACKUP_PROTECTION_LOST,
         error,
@@ -163,7 +169,7 @@ export async function runBackupAttempt({
         source: 'Database backup protection',
         context: backupIncidentContext(now),
       });
-      if (incidentWasOpened(incident)) backupHealth.incidentOpen = true;
+      if (incidentIsTracked(incident)) backupHealth.incidentOpen = true;
     }
     return { ok: false, skipped: false, error, incident };
   }
