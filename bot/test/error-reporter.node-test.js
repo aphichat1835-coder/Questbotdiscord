@@ -3,6 +3,8 @@ import test from 'node:test';
 import { createFakeDiscordWebhookUrl } from '../test-support/fake-webhook.js';
 
 const WEBHOOK_URL = createFakeDiscordWebhookUrl('reporter');
+const CRITICAL_EMBED_COLOR = 15548997;
+const RECOVERY_EMBED_COLOR = 5763719;
 process.env.DISCORD_BOT_TOKEN = 'test-bot-token';
 process.env.DISCORD_CLIENT_ID = '12345678901234567';
 process.env.DISCORD_GUILD_ID = '22345678901234567';
@@ -79,7 +81,7 @@ test('structured incidents send an allowlisted, mention-safe backend embed', asy
   const payload = JSON.parse(requests[0].options.body);
   assert.deepEqual(payload.allowed_mentions, { parse: [] });
   assert.match(payload.embeds[0].title, /การป้องกันฐานข้อมูล/);
-  assert.equal(payload.embeds[0].color, 0xED4245);
+  assert.equal(payload.embeds[0].color, CRITICAL_EMBED_COLOR);
   assert.match(payload.embeds[0].description, /REDACTED_WEBHOOK/);
   assert.match(JSON.stringify(payload), /consecutiveFailures/);
   assert.doesNotMatch(JSON.stringify(payload), /must-not-leak|arbitraryInternalObject|webhook_token/);
@@ -142,8 +144,8 @@ test('an open incident sends one recovery using the same incident id', async () 
   assert.equal(duplicateRecovery.state, 'not_open');
   assert.equal(payloads.length, 2);
   assert.match(payloads[1].embeds[0].title, /^✅/);
-  assert.equal(payloads[1].embeds[0].color, 0x57F287);
-  assert.match(JSON.stringify(payloads[1]), new RegExp(opened.incidentId));
+  assert.equal(payloads[1].embeds[0].color, RECOVERY_EMBED_COLOR);
+  assert.ok(JSON.stringify(payloads[1]).includes(opened.incidentId));
 });
 
 test('Quest transport failures require three observations before one alert', async () => {
