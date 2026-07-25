@@ -7,7 +7,7 @@ import {
   listIncidentCodes,
 } from '../src/incident-catalog.js';
 
-test('every public incident code has an operational contract', () => {
+test('every public incident code has an immutable operational contract', () => {
   const codes = listIncidentCodes();
   assert.deepEqual(new Set(codes), new Set(Object.values(INCIDENT)));
   for (const code of codes) {
@@ -16,6 +16,8 @@ test('every public incident code has an operational contract', () => {
     assert.ok(definition.impact.length >= 10);
     assert.ok(definition.action.length >= 10);
     assert.ok(Array.isArray(definition.context));
+    assert.equal(Object.isFrozen(definition), true);
+    assert.equal(Object.isFrozen(definition.context), true);
   }
 });
 
@@ -38,7 +40,19 @@ test('incident context only keeps explicitly allowed values', () => {
   assert.doesNotMatch(JSON.stringify(context), /must-not-survive/);
 });
 
-test('unknown incident codes fail closed', () => {
-  assert.throws(() => getIncidentDefinition('UNKNOWN_CODE'), /Unknown incident code/);
-  assert.throws(() => allowlistedIncidentContext('UNKNOWN_CODE', {}), /Unknown incident code/);
+test('incident allowlists cannot be expanded at runtime', () => {
+  const definition = getIncidentDefinition(INCIDENT.BACKUP_PROTECTION_LOST);
+  assert.throws(() => definition.context.push('token'), TypeError);
+  const context = allowlistedIncidentContext(INCIDENT.BACKUP_PROTECTION_LOST, {
+    consecutiveFailures: 3,
+    token: 'must-not-survive',
+  });
+  assert.deepEqual(context, { consecutiveFailures: 3 });
+});
+
+test('unknown and inherited incident keys fail closed', () => {
+  for (const code of ['UNKNOWN_CODE', 'constructor', 'toString', '__proto__']) {
+    assert.throws(() => getIncidentDefinition(code), /Unknown incident code/);
+    assert.throws(() => allowlistedIncidentContext(code, {}), /Unknown incident code/);
+  }
 });
