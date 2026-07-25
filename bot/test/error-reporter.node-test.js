@@ -144,6 +144,69 @@ test('an open incident sends one recovery using the same incident id', async () 
   assert.match(JSON.stringify(payloads[1]), new RegExp(opened.incidentId));
 });
 
+test('Quest transport failures require three observations before one alert', async () => {
+  const payloads = [];
+  globalThis.fetch = async (_url, options) => {
+    payloads.push(JSON.parse(options.body));
+    return new Response(null, { status: 204 });
+  };
+  const error = new Error('Quest API endpoints unavailable: upstream timeout');
+
+  const first = await reportCriticalError('Quest API compatibility', error);
+  const second = await reportCriticalError('Quest API compatibility', error);
+  const third = await reportCriticalError('Quest API compatibility', error);
+
+  assert.equal(first.state, 'logged_threshold');
+  assert.equal(first.count, 1);
+  assert.equal(second.state, 'logged_threshold');
+  assert.equal(second.count, 2);
+  assert.equal(third.state, 'delivered');
+  assert.equal(payloads.length, 1);
+  const serialized = JSON.stringify(payloads[0]);
+  assert.match(serialized, /QUEST_API_TRANSPORT_OUTAGE/);
+  assert.match(serialized, /consecutiveFailures/);
+  assert.match(serialized, /3/);
+});
+
+test('scheduled restore failures aggregate before sending one backend incident', async () => {
+  const payloads = [];
+  globalThis.fetch = async (_url, options) => {
+    payloads.push(JSON.parse(options.body));
+    return new Response(null, { status: 204 });
+  };
+
+  for (let row = 1; row <= 3; row++) {
+    await reportCriticalError(
+      `Restore Scheduled Runner #${row}`,
+      new Error('Unsupported state or unable to authenticate data'),
+    );
+  }
+
+  assert.equal(payloads.length, 1);
+  const serialized = JSON.stringify(payloads[0]);
+  assert.match(serialized, /RUNNER_RESTORE_SYSTEM_FAILED/);
+  assert.match(serialized, /decryptFailures/);
+  assert.match(serialized, /failed/);
+  assert.match(serialized, /3/);
+  assert.doesNotMatch(serialized, /Runner #1|Runner #2/);
+});
+
+test('legacy threshold evidence expires instead of accumulating forever', async () => {
+  let attempts = 0;
+  globalThis.fetch = async () => {
+    attempts++;
+    return new Response(null, { status: 204 });
+  };
+  const error = new Error('Quest API endpoints unavailable: temporary outage');
+
+  const first = await reportCriticalError('Quest API compatibility', error, { now: 0 });
+  const expired = await reportCriticalError('Quest API compatibility', error, { now: 10 * 60_000 + 1 });
+
+  assert.equal(first.count, 1);
+  assert.equal(expired.count, 1);
+  assert.equal(attempts, 0);
+});
+
 test('legacy compatibility only escalates supported system sources', () => {
   assert.equal(
     isEmergencyIncident(
