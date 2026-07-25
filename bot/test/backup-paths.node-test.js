@@ -3,7 +3,15 @@ import fs from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 
+process.env.DISCORD_BOT_TOKEN ??= 'backup-test-bot-token';
+process.env.DISCORD_CLIENT_ID ??= '12345678901234567';
+process.env.DISCORD_GUILD_ID ??= '22345678901234567';
+process.env.OWNER_ID ??= '32345678901234567';
+process.env.RUNNER_TOKEN_SECRET ??= 'backup-test-runner-secret-32-characters';
+process.env.LOG_WEBHOOK_URL ??= 'https://discord.com/api/webhooks/42345678901234567/backup_test_webhook_token_abcdefghijklmnopqrstuvwxyz';
 process.env.DATABASE_PATH = ':memory:';
+process.env.QUESTBOT_TEST_MODE = 'true';
+
 const {
   closeDatabase,
   DATABASE_BACKUP_SLOT_COUNT,
@@ -82,7 +90,11 @@ test('backupDatabaseSlot writes and clears a backup beneath the resolved local r
   try {
     const child = spawnSync(process.execPath, ['--input-type=module', '--eval', script], {
       cwd: './test/.backup-path-workspace',
-      env: { ...process.env, DATABASE_PATH: './runtime.db' },
+      env: {
+        ...process.env,
+        DATABASE_PATH: './runtime.db',
+        DATABASE_BACKUP_ENABLED: 'true',
+      },
       encoding: 'utf8',
       timeout: 10_000,
     });
