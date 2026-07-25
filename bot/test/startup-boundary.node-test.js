@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
 const botRoot = fileURLToPath(new URL('..', import.meta.url));
+const indexModuleUrl = new URL('../src/index.js', import.meta.url).href;
 const dashboardModuleUrl = new URL('../src/dashboard.js', import.meta.url).href;
 const appModuleUrl = new URL('../src/app.js', import.meta.url).href;
 
@@ -16,6 +17,32 @@ test('entrypoint installs bootstrap handlers before importing runtime modules', 
   assert.match(index, /await import\('\.\/app\.js'\)/);
   assert.doesNotMatch(index, /from '\.\/config\.js'/);
   assert.doesNotMatch(index, /from '\.\/db\.js'/);
+});
+
+test('explicit bootstrap failure exits even when another handle keeps the event loop referenced', () => {
+  const env = {
+    ...process.env,
+    QUESTBOT_TEST_MODE: 'true',
+  };
+  delete env.DISCORD_BOT_TOKEN;
+
+  const child = spawnSync(
+    process.execPath,
+    ['--input-type=module', '--eval', `
+      setInterval(() => {}, 1000);
+      await import(${JSON.stringify(indexModuleUrl)});
+    `],
+    {
+      cwd: botRoot,
+      env,
+      encoding: 'utf8',
+      timeout: 5000,
+    },
+  );
+
+  assert.equal(child.error, undefined, child.error?.message);
+  assert.equal(child.status, 1, child.stderr || child.stdout);
+  assert.match(child.stderr, /Bootstrap CLIENT_STARTUP_FAILED/);
 });
 
 test('health server bind failure rejects startup instead of leaving a partial service', async () => {
