@@ -71,7 +71,28 @@ test('429 and selected gateway failures retry at most once', async () => {
 
   assert.equal(result.state, 'delivered');
   assert.equal(result.attempts, 2);
+  assert.equal(attempts, 2);
   assert.deepEqual(waits, [250]);
+});
+
+test('retryable failures stop after the second response', async () => {
+  const waits = [];
+  let attempts = 0;
+  const result = await executeDiscordWebhook({
+    url: WEBHOOK_URL,
+    payload: { content: 'test' },
+    waitFn: async (ms) => waits.push(ms),
+    fetchFn: async () => {
+      attempts++;
+      return new Response(null, { status: 503 });
+    },
+  });
+
+  assert.equal(result.state, 'delivery_unknown');
+  assert.equal(result.status, 503);
+  assert.equal(result.attempts, 2);
+  assert.equal(attempts, 2);
+  assert.deepEqual(waits, [750]);
 });
 
 test('client failures do not retry', async () => {
