@@ -15,7 +15,7 @@ const legacyCounters = new Map();
 const LEGACY_WINDOW_MS = 10 * 60_000;
 const FAILED_DELIVERY_RETRY_MS = 60_000;
 const CLOSED_INCIDENT_RETENTION_MS = 24 * 60 * 60_000;
-const OPEN_INCIDENT_RETENTION_MS = 7 * 24 * 60 * 60_000;
+const FAILED_INCIDENT_RETENTION_MS = 7 * 24 * 60 * 60_000;
 const SENSITIVE_KEY = /authorization|token|secret|cookie|captcha|email|webhook|cipher|password/i;
 const DISCORD_WEBHOOK_URL = /https:\/\/(?:canary\.|ptb\.)?discord(?:app)?\.com\/api\/webhooks\/\d{17,20}\/[a-z0-9._-]+/gi;
 const SENSITIVE_ASSIGNMENT = /((?:["']?[\w.-]*(?:authorization|token|secret|cookie|captcha|email|webhook|cipher|password)[\w.-]*["']?)\s*[:=]\s*["']?)([^"',}\s]+)/gi;
@@ -174,12 +174,16 @@ export function reportError(source, error, { context = {} } = {}) {
 
 function pruneReporterState(now) {
   for (const [key, incident] of incidentState) {
+    if (['delivering', 'open', 'recovering', 'recovery_pending'].includes(incident.state)) {
+      continue;
+    }
     const reference = incident.recoveredAt
       ?? incident.lastSeenAt
       ?? incident.firstSeenAt
       ?? now;
-    const active = ['delivering', 'open', 'recovering', 'recovery_pending'].includes(incident.state);
-    const retention = active ? OPEN_INCIDENT_RETENTION_MS : CLOSED_INCIDENT_RETENTION_MS;
+    const retention = incident.state === 'recovered'
+      ? CLOSED_INCIDENT_RETENTION_MS
+      : FAILED_INCIDENT_RETENTION_MS;
     if (now - reference >= retention) incidentState.delete(key);
   }
 
