@@ -43,6 +43,8 @@ test('runner quality refactor keeps static-analysis regressions out', async () =
   const stopCommand = await readFile(new URL('../src/commands/stop.js', import.meta.url), 'utf8');
   const db = await readFile(new URL('../src/db.js', import.meta.url), 'utf8');
   const errorReporter = await readFile(new URL('../src/error-reporter.js', import.meta.url), 'utf8');
+  const incidentCatalog = await readFile(new URL('../src/incident-catalog.js', import.meta.url), 'utf8');
+  const webhookDelivery = await readFile(new URL('../src/webhook-delivery.js', import.meta.url), 'utf8');
   const backupPathsTest = await readFile(new URL('./backup-paths.node-test.js', import.meta.url), 'utf8');
   const auditHardeningTest = await readFile(new URL('./audit-hardening.node-test.js', import.meta.url), 'utf8');
 
@@ -103,7 +105,17 @@ test('runner quality refactor keeps static-analysis regressions out', async () =
   assert.match(backupPathsTest, /fs\.mkdir\('\.\/test\/\.backup-path-workspace'/);
   assert.match(backupPathsTest, /cwd: '\.\/test\/\.backup-path-workspace'/);
   assert.doesNotMatch(auditHardeningTest, /140\.1\.2\.3/);
-  assert.match(errorReporter, /function reserveCriticalErrorReport/);
+
+  assert.match(errorReporter, /function incidentIdentity\(code, scope\)/);
+  assert.match(errorReporter, /export async function reportIncident/);
+  assert.match(errorReporter, /export async function reportRecovery/);
+  assert.match(errorReporter, /allowlistedIncidentContext/);
+  assert.match(incidentCatalog, /export const INCIDENT/);
+  assert.match(incidentCatalog, /export function allowlistedIncidentContext/);
+  assert.match(webhookDelivery, /redirect: 'error'/);
+  assert.match(webhookDelivery, /RETRYABLE_STATUSES/);
+  assert.doesNotMatch(webhookDelivery, /status >= 500/);
+
   assert.match(httpRetry, /async function consumeRetryableResponse/);
   assert.match(httpRetry, /async function handleFetchFailure/);
 });
