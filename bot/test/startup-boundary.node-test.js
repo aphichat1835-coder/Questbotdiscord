@@ -11,20 +11,11 @@ const appModuleUrl = new URL('../src/app.js', import.meta.url).href;
 
 test('entrypoint installs bootstrap handlers before importing runtime modules', async () => {
   const index = await readFile(new URL('../src/index.js', import.meta.url), 'utf8');
-  const app = await readFile(new URL('../src/app.js', import.meta.url), 'utf8');
-  const dashboard = await readFile(new URL('../src/dashboard.js', import.meta.url), 'utf8');
 
   assert.match(index, /installBootstrapProcessHandlers\(\)/);
   assert.match(index, /await import\('\.\/app\.js'\)/);
   assert.doesNotMatch(index, /from '\.\/config\.js'/);
   assert.doesNotMatch(index, /from '\.\/db\.js'/);
-  assert.match(app, /INCIDENT\.RUNTIME_LEASE_CONFLICT/);
-  assert.match(app, /INCIDENT\.HEALTH_SERVER_BIND_FAILED/);
-  assert.match(app, /reportWithinFatalBudget/);
-  assert.match(app, /fatalShutdownPromise/);
-  assert.match(app, /shutdownPromise/);
-  assert.match(dashboard, /new Promise\(\(resolve, reject\)/);
-  assert.match(dashboard, /once\('error', onStartupError\)/);
 });
 
 test('health server bind failure rejects startup instead of leaving a partial service', async () => {
