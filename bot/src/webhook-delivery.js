@@ -46,6 +46,15 @@ function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+async function drainResponse(response) {
+  if (typeof response.arrayBuffer !== 'function') return;
+  try {
+    await response.arrayBuffer();
+  } catch {
+    // The response body is irrelevant once the retry decision is made.
+  }
+}
+
 export async function executeDiscordWebhook({
   url,
   payload,
@@ -82,7 +91,7 @@ export async function executeDiscordWebhook({
     }
 
     if (attempt < attemptsLimit && RETRYABLE_STATUSES.has(response.status)) {
-      await response.arrayBuffer?.().catch?.(() => {});
+      await drainResponse(response);
       await waitFn(retryAfterMs(response) ?? 750 * attempt);
       continue;
     }
