@@ -11,7 +11,8 @@
 - Stop รอ Cleanup และไม่อนุญาตให้บัญชีเดิมเริ่มซ้ำระหว่างกำลังหยุด
 - `/api-status` ใช้ได้เฉพาะ Owner/Admin/Manager
 - HTTP `/api/status` ปิดเมื่อไม่มี `HEALTH_STATUS_TOKEN` และใช้ Exact Bearer token เมื่อเปิด
-- Render/Console logs เก็บ Error ทุกระดับ แต่ Discord Webhook ส่งเฉพาะเหตุฉุกเฉินของระบบ
+- Render/Console logs เก็บ Error ทุกระดับ
+- Discord Webhook ส่งเฉพาะ Structured Incident ตาม Policy และ Threshold
 
 ## 2. Environment
 
@@ -36,6 +37,7 @@ DATABASE_PATH=
 DATABASE_BACKUP_ENABLED=
 DATABASE_BACKUP_RETENTION=7
 HEALTH_STATUS_TOKEN=
+PORT=
 ```
 
 ข้อกำหนด:
@@ -48,34 +50,79 @@ HEALTH_STATUS_TOKEN=
 - ค่า Discord client profile ต้องอัปเดตพร้อมกันทั้งชุดและ Restart หลังเปลี่ยน
 - ห้ามใช้ `DATABASE_BACKUP_DIR`; ระบบไม่รองรับ Backup path จาก Environment
 
-## 3. Persistent storage
+## 3. Safe bootstrap
+
+ตรวจว่า Startup failure ไม่ทำให้ Process ค้างหรือเปิดระบบเพียงบางส่วน:
+
+1. Bootstrap handlers ถูกติดตั้งก่อน Dynamic import ของ Runtime
+2. Config/Module import failure ถูกบันทึกโดยไม่พึ่ง SQLite หรือ Discord Client
+3. Database open failure ใช้ Incident `DATABASE_OPEN_FAILED`
+4. Database schema/migration failure ใช้ Incident `DATABASE_MIGRATION_FAILED`
+5. Runtime lease conflict/lost ทำให้ Process ปิดอย่างปลอดภัย
+6. Health server bind failure ต้อง Reject Startup ไม่ปล่อย Bot ทำงานต่อโดยไม่มี Health endpoint
+7. Discord login failure ส่ง Incident แล้ว Shutdown
+8. Fatal report ใช้ Budget จำกัด 3.5 วินาที
+
+## 4. Storage truth
+
+ระบบต้องรายงาน Storage mode ตามความจริง:
+
+- `memory` — ไม่มี Durability และ Backup ปิดเสมอ
+- `local-development` — Local file สำหรับ Development
+- `hosted-ephemeral` — Hosting ไม่มี Persistent mount และต้องแสดง Warning
+- `persistent-candidate` — `/var/data` มีและเขียนได้ แต่ `durabilityVerified` ยังเป็น `false`
 
 เมื่อใช้ Hosting ที่มี Persistent Volume:
 
 - Mount `/var/data` แบบ Persistent และให้ Process เขียนได้
 - เมื่อไม่ตั้ง `DATABASE_PATH` ระบบต้องเลือก `/var/data/quests.db` อัตโนมัติ
-- Backup ต้องเปิดอัตโนมัติและเกิดที่ `/var/data/backups`
+- Backup ต้องเกิดที่ `/var/data/backups`
 - ตรวจว่ามีสูงสุดตาม `DATABASE_BACKUP_RETENTION` และไม่เกิน 7 Slot
-- Restart Deployment แล้วตรวจว่า Database และ Backup ยังอยู่
+- Restart/Redeploy แล้วตรวจว่า Database และ Backup ยังอยู่
+- ห้ามถือว่า Persistent verified จากการตรวจ Directory อย่างเดียว
 
-เมื่อไม่มี `/var/data` ระบบต้อง fallback เป็น `./data/quests.db` และ `./data/backups` พร้อมยอมรับว่าไฟล์อาจหายเมื่อ Redeploy
+เมื่อไม่มี `/var/data` ระบบต้อง fallback เป็น `./data/quests.db` และ `./data/backups` พร้อมรายงาน `hosted-ephemeral` บน Hosting
 
-## 4. Emergency Webhook validation
+## 5. Backup protection
+
+ตรวจ State machine ต่อไปนี้:
+
+1. Backup สำเร็จ → `healthy`
+2. Failure ครั้งแรกและครั้งที่สอง → Render log เท่านั้น
+3. Failure ติดต่อกันครั้งที่ 3 → `BACKUP_PROTECTION_LOST`
+4. Backup เก่าเกิน 26 ชั่วโมงและความพยายามใหม่ล้ม → ส่ง Incident แม้เป็น Failure ครั้งแรกในรอบนั้น
+5. ระหว่างผิดปกติ Retry ทุก 15 นาที
+6. เมื่อสำเร็จอีกครั้ง ส่ง Recovery ด้วย Incident ID เดิม
+7. `/api/status` แสดง Last success, age, consecutive failures, next attempt และ Threshold
+8. Status ห้ามแสดง Full database path หรือ Backup directory
+
+## 6. Emergency Webhook validation
 
 ใช้ Webhook ทดสอบที่แยกจาก Production แล้วตรวจว่า:
 
-1. เหตุฉุกเฉินที่บังคับทดสอบส่ง Rich Embed สำเร็จ
-2. Embed มี Source, Severity, Uptime, Runtime และ Deployment
+1. Incident ที่บังคับทดสอบส่ง Rich Embed สำเร็จ
+2. Embed มี Status, Incident code, Incident ID, Impact, Action, Runtime และ Deployment
 3. `allowed_mentions.parse` เป็น Array ว่างและข้อความไม่ Ping ผู้ใช้/Role/@everyone
-4. Token, Secret, Cookie, CAPTCHA, Email และ Webhook URL ไม่ปรากฏใน Payload
-5. Error ระดับบัญชีเดียว เช่น User Token หมดอายุ ไม่ส่ง Webhook
-6. Quest Event ใหม่ที่เพียงยังไม่รองรับไม่ส่ง Emergency แต่ยังอยู่ใน Render logs
-7. Process fatal, Database backup failure และ Quest API schema break ส่ง Emergency
-8. HTTP 400 ไม่ Retry; Network, HTTP 429 และ 5xx Retry แบบจำกัด
-9. เหตุซ้ำถูก Dedupe 10 นาที
+4. Token, Secret, Cookie, CAPTCHA, Email, Ciphertext, Password และ Webhook URL ไม่ปรากฏใน Payload
+5. Context ใช้ Allowlist ต่อ Incident code
+6. HTTP 400/401/403/404 ไม่ Retry
+7. HTTP 429/502/503/504 Retry ได้สูงสุดหนึ่งครั้ง
+8. Network timeout หลังเริ่ม POST เป็น `delivery_unknown` และไม่ส่งซ้ำแบบเดาสุ่ม
+9. เหตุซ้ำถูก Dedupe ด้วย `code + scope` ภายใน 10 นาที
 10. Webhook ล้มไม่ทำให้ Bot ดับและมี Error ใน Render logs
+11. Recovery ใช้ Incident ID เดิม
 
-## 5. Quality gates
+## 7. Quest และ Restore policy
+
+- User Token หมดอายุหรือบัญชีเดียวมีปัญหาไม่ส่ง Webhook
+- Unknown Quest event ไม่ส่ง Emergency
+- Quest schema/parser break ส่ง `QUEST_API_SCHEMA_INCOMPATIBLE` ทันที
+- Quest transport outage ต้องพบ 3 ครั้งภายใน 10 นาทีจึงส่ง `QUEST_API_TRANSPORT_OUTAGE`
+- Scheduled Runner restore failure ต้องครบ 3 รายการภายใน 10 นาทีจึงส่ง Incident เดียว
+- Restore payload แสดงเฉพาะยอดรวม ห้ามมี User Token, Username หรือ Account ID
+- Transitional bridge อยู่ใน `legacy-incident-policy.js` และมี Regression tests จนกว่า Caller ใหญ่จะถูกแยกโมดูล
+
+## 8. Quality gates
 
 รันจากโฟลเดอร์ `bot`:
 
@@ -92,34 +139,42 @@ GitHub Actions ต้องผ่านทั้ง:
 
 - Repository shape
 - Approved database backup destinations
-- Unit/Regression tests
+- Unit/Regression tests และ Coverage gate
 - Environment contract tests
-- Emergency webhook classification/redaction/limit tests
+- Safe bootstrap และ Health bind tests
+- Storage profile tests
+- Backup threshold/recovery tests
+- Incident classification/redaction/dedupe/recovery tests
+- Webhook transport tests
 - Syntax check ของ `src` และ `scripts`
 - Production dependency audit
 
-## 6. Controlled functional validation
+Status จาก Snyk, CodeRabbit และ CI ต้องเป็นของ HEAD SHA ล่าสุด ห้ามใช้ผลจาก Commit เก่า
+
+## 9. Controlled functional validation
 
 ทดสอบใน Server และบัญชีทดสอบที่แยกจากบัญชีหลัก:
 
 1. ผู้ใช้ทั่วไปเรียก `/api-status` แล้วต้องถูกปฏิเสธแบบ Ephemeral
-2. Manager เรียก `/api-status` แล้วเห็นสถานะระบบ
+2. Manager เรียก `/api-status` แล้วเห็น Logging, Storage และ Backup state โดยไม่มี Secret
 3. ส่ง Modal เริ่ม Runner พร้อมกันหลายชุด แล้วจำนวนรวมต้องไม่เกิน 10
 4. กด Stop ระหว่าง Runner ทำงาน แล้วบัญชีต้องอยู่สถานะ Cleanup จน Job จบจริง
 5. เปิด Auto Daily, Restart Bot และตรวจว่า Scheduled Runner ถูก Restore
 6. ตรวจข้อความ Runner ที่ยาวมากว่ายังไม่เกิน Discord message limit
-7. ตรวจไฟล์ Backup Slot และ Retention โดยไม่ต้องตั้งค่าเปิดเอง
+7. ตรวจไฟล์ Backup Slot และ Retention
 8. เรียก `/healthz` และตรวจว่าไม่เปิดเผยรายละเอียด
 9. เรียก HTTP `/api/status` โดยไม่มี/มี Bearer token ผิด แล้วต้องได้ Unauthorized หรือ Not Found ตามการตั้งค่า
 10. ทดสอบ Emergency Webhook ด้วย Error จำลองที่ไม่มี Secret จริง
+11. ทดสอบ Webhook ถูกลบ/หมดอายุแล้ว Bot ยังทำงานและ Render log มีหลักฐาน
+12. Restart/Redeploy แล้ว Database, Backup และ Scheduled Runner ยังอยู่
 
-## 7. Quest API verification boundary
+## 10. Quest API verification boundary
 
 `npm run smoke:quest` และ Workflow `Quest API smoke` เป็น Read-only เท่านั้น โดยตรวจบัญชีและอ่านรายการ Quest ไม่ Enroll, Progress, Heartbeat หรือ Claim
 
 CI และ Smoke Test จึงไม่ใช่หลักฐานว่าการเปลี่ยนข้อมูลจริงผ่านครบทุก Flow การตรวจ Mutation จริงต้องผ่านการอนุมัติด้านความเสี่ยงและข้อกำหนดแพลตฟอร์มก่อน ห้ามใช้บัญชีหลักเป็นบัญชีทดลอง
 
-## 8. Rollback
+## 11. Rollback
 
 ก่อน Deploy:
 
@@ -127,6 +182,7 @@ CI และ Smoke Test จึงไม่ใช่หลักฐานว่�
 - ตรวจว่า Backup ล่าสุดเปิดอ่านได้
 - เก็บ Environment เดิมอย่างปลอดภัย
 - เก็บ Webhook URL เดิมโดยไม่พิมพ์ลง Ticket/Log
+- ยืนยันว่ากิ่ง Release ยังไม่ถูกลบ
 
 เมื่อพบปัญหา:
 
@@ -134,13 +190,23 @@ CI และ Smoke Test จึงไม่ใช่หลักฐานว่�
 2. Rollback ไป Commit ก่อนหน้า
 3. Restore Database เฉพาะเมื่อยืนยันว่า Schema/Data เสียหาย
 4. เปลี่ยน Secret และ Webhook URL ทันทีหากสงสัยว่ารั่ว
-5. ตรวจ Render log และ Webhook embed ที่ผ่าน Redaction แล้วบันทึก Root cause ก่อน Deploy ใหม่
+5. ตรวจ Render log และ Incident ID แล้วบันทึก Root cause
+6. เพิ่ม Regression test ก่อน Deploy ใหม่
 
-## 9. เกณฑ์อนุมัติ
+## 12. เกณฑ์อนุมัติ
 
-อนุมัติ Production ได้เมื่อ CI ผ่านทั้งหมด, Persistent storage ผ่านการ Restart, Emergency Webhook ผ่านการทดสอบแบบไม่ใช้ Secret จริง, Permission ถูกต้อง, Runner limit/Stop lifecycle ผ่านการทดสอบ และผู้ดูแลยอมรับความเสี่ยงด้านบัญชีและข้อกำหนดแพลตฟอร์มอย่างชัดเจน
+อนุมัติ Production ได้เมื่อ:
 
-## 10. Repository data safety
+- CI ของ HEAD ล่าสุดผ่านทั้งหมด
+- Snyk และ CodeRabbit ผ่านหรือ Warning ถูกวิเคราะห์และยอมรับอย่างมีเหตุผล
+- ไม่มี Review thread ค้าง
+- Persistent storage ผ่าน Controlled restart
+- Emergency Webhook ผ่าน Test แบบไม่ใช้ Secret จริง
+- Permission, Runner limit และ Stop lifecycle ผ่าน
+- Backup threshold/recovery ผ่าน
+- ผู้ดูแลยอมรับความเสี่ยงด้านบัญชีและข้อกำหนดแพลตฟอร์มอย่างชัดเจน
+
+## 13. Repository data safety
 
 - `git ls-files` ต้องไม่พบ `.db`, `.sqlite`, WAL/SHM หรือไฟล์ใน Runtime `data/backups`
 - ตรวจ Git history และ Secret scanning ก่อน Merge หากฐานข้อมูลเคยถูก Commit
