@@ -30,6 +30,26 @@ import * as run from './commands/run.js';
 import * as stop from './commands/stop.js';
 import * as panel from './commands/panel.js';
 
+function isIgnorableInteractionError(error) {
+  return error?.code === 10062 || error?.code === 40060;
+}
+
+function logDiscordError(label, error) {
+  reportError(label, error, {
+    context: {
+      code: error?.code,
+      status: error?.status,
+      method: error?.method,
+    },
+  });
+}
+
+async function sendInteractionFailure(interaction) {
+  const message = { content: '❌ เกิดข้อผิดพลาด กรุณาลองใหม่', flags: 64 };
+  if (interaction.replied || interaction.deferred) return interaction.followUp(message);
+  return interaction.reply(message);
+}
+
 export function createApp({ exit = process.exit } = {}) {
   const client = new Client({ intents: [GatewayIntentBits.Guilds] });
   client.commands = new Collection();
@@ -45,20 +65,6 @@ export function createApp({ exit = process.exit } = {}) {
   let runtimeLeaseTimer = null;
   let runtimeLeaseAcquired = false;
   let removeProcessHandlers = null;
-
-  function isIgnorableInteractionError(error) {
-    return error?.code === 10062 || error?.code === 40060;
-  }
-
-  function logDiscordError(label, error) {
-    reportError(label, error, {
-      context: {
-        code: error?.code,
-        status: error?.status,
-        method: error?.method,
-      },
-    });
-  }
 
   function markInteractionSeen(id) {
     if (seenInteractions.has(id)) return false;
@@ -94,12 +100,6 @@ export function createApp({ exit = process.exit } = {}) {
     if (interaction.isStringSelectMenu()) return routeStringSelect(interaction);
     if (interaction.isChatInputCommand()) return routeChatInput(interaction);
     return undefined;
-  }
-
-  async function sendInteractionFailure(interaction) {
-    const message = { content: '❌ เกิดข้อผิดพลาด กรุณาลองใหม่', flags: 64 };
-    if (interaction.replied || interaction.deferred) return interaction.followUp(message);
-    return interaction.reply(message);
   }
 
   async function reportInteractionFailure(interaction, error) {
