@@ -3,8 +3,8 @@ import test from 'node:test';
 import { createFakeDiscordWebhookUrl } from '../test-support/fake-webhook.js';
 
 const WEBHOOK_URL = createFakeDiscordWebhookUrl('reporter');
-const CRITICAL_EMBED_COLOR = 15548997;
-const RECOVERY_EMBED_COLOR = 5763719;
+const CRITICAL_EMBED_COLOR = Number.parseInt('ED4245', 16);
+const RECOVERY_EMBED_COLOR = Number.parseInt('57F287', 16);
 process.env.DISCORD_BOT_TOKEN = 'test-bot-token';
 process.env.DISCORD_CLIENT_ID = '12345678901234567';
 process.env.DISCORD_GUILD_ID = '22345678901234567';
