@@ -8,13 +8,37 @@ import {
   validateDiscordWebhookUrl,
 } from './webhook-delivery.js';
 
+const REDACTION_SCAN_LIMIT = 10_000;
+const SENSITIVE_KEY = /authorization|token|secret|cookie|captcha|email|webhook|cipher|password/i;
 const DISCORD_WEBHOOK_URL = /https:\/\/(?:canary\.|ptb\.)?discord(?:app)?\.com\/api\/webhooks\/\d{17,20}\/[a-z0-9._-]+/gi;
-const SENSITIVE_ASSIGNMENT = /((?:["']?[\w.-]*(?:authorization|token|secret|cookie|captcha|email|webhook|cipher|password)[\w.-]*["']?)\s*[:=]\s*["']?)([^"',}\s]+)/gi;
+const ASSIGNMENT = /((?:["']?[\w.-]+["']?)\s*[:=]\s*["']?)([^"',}\s]+)/g;
+
+function assignmentKey(prefix) {
+  const colonIndex = prefix.indexOf(':');
+  const equalsIndex = prefix.indexOf('=');
+  const delimiterIndex = colonIndex === -1
+    ? equalsIndex
+    : equalsIndex === -1
+      ? colonIndex
+      : Math.min(colonIndex, equalsIndex);
+  return prefix
+    .slice(0, delimiterIndex)
+    .trim()
+    .replaceAll('"', '')
+    .replaceAll("'", '');
+}
+
+function redactAssignments(value) {
+  return value.replace(ASSIGNMENT, (match, prefix) => (
+    SENSITIVE_KEY.test(assignmentKey(prefix))
+      ? `${prefix}[REDACTED]`
+      : match
+  ));
+}
 
 function redactBootstrapValue(value) {
-  return String(value ?? 'Unknown error')
-    .replace(DISCORD_WEBHOOK_URL, '[REDACTED_WEBHOOK]')
-    .replace(SENSITIVE_ASSIGNMENT, '$1[REDACTED]')
+  const bounded = String(value ?? 'Unknown error').slice(0, REDACTION_SCAN_LIMIT);
+  return redactAssignments(bounded.replace(DISCORD_WEBHOOK_URL, '[REDACTED_WEBHOOK]'))
     .replace(/\b[\w-]{20,}\.[\w-]{5,}\.[\w-]{15,}\b/g, '[REDACTED_TOKEN]')
     .slice(0, 2500);
 }
