@@ -24,7 +24,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
-          TARGET_SHA: 042fdf2a7c34221b60f7fc657bac4e11778894f3
+          TARGET_SHA: cf4335cef22f6e5fa4c5d1d8ce098b9e9cec46bb
         run: node .github/scripts/inspect-target-checks.mjs
 
       - name: Upload check evidence
