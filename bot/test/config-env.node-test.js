@@ -19,22 +19,30 @@ function runConfig({ overrides = {}, remove = [] } = {}) {
     'LOG_CHANNEL_ID',
     'MANAGER_ROLE_ID',
     'HEALTH_STATUS_TOKEN',
+    'RENDER',
+    'RENDER_SERVICE_ID',
+    'RENDER_SERVICE_NAME',
+    'RENDER_INSTANCE_ID',
     ...remove,
   ]) delete env[name];
   Object.assign(env, overrides);
 
-  const script = `import('./src/config.js').then(({config}) => console.log(JSON.stringify({databasePath:config.databasePath,databaseBackupEnabled:config.databaseBackupEnabled,logChannelId:config.logChannelId,hasWebhook:Boolean(config.logWebhookUrl),hasRunnerSecret:Boolean(config.runnerTokenSecret)}))).catch((error)=>{console.error(error.message);process.exitCode=1;});`;
+  const script = `import('./src/config.js').then(({config}) => console.log(JSON.stringify({databasePath:config.databasePath,databaseBackupEnabled:config.databaseBackupEnabled,storageMode:config.storageProfile.mode,durability:config.storageProfile.durability,durabilityVerified:config.storageProfile.durabilityVerified,processEnvDatabasePath:process.env.DATABASE_PATH ?? null,logChannelId:config.logChannelId,hasWebhook:Boolean(config.logWebhookUrl),hasRunnerSecret:Boolean(config.runnerTokenSecret)}))).catch((error)=>{console.error(error.message);process.exitCode=1;});`;
   return spawnSync(process.execPath, ['--input-type=module', '--eval', script], {
     cwd: '.', env, encoding: 'utf8', timeout: 10_000,
   });
 }
 
-test('the six primary environment values are sufficient', () => {
+test('the six primary environment values are sufficient without mutating env', () => {
   const child = runConfig();
   assert.equal(child.status, 0, child.stderr || child.stdout);
   const output = JSON.parse(child.stdout.trim().split('\n').at(-1));
   assert.match(output.databasePath, /^(?:\.\/data\/quests\.db|\/var\/data\/quests\.db)$/);
   assert.equal(output.databaseBackupEnabled, true);
+  assert.ok(['local-development', 'persistent-candidate'].includes(output.storageMode));
+  assert.ok(['local', 'candidate'].includes(output.durability));
+  assert.equal(output.durabilityVerified, false);
+  assert.equal(output.processEnvDatabasePath, null);
   assert.equal(output.logChannelId, '');
   assert.equal(output.hasWebhook, true);
   assert.equal(output.hasRunnerSecret, true);
@@ -58,11 +66,11 @@ test('RUNNER_TOKEN_SECRET is required and long enough', () => {
   assert.match(short.stderr, /at least 16 characters/);
 });
 
-test('optional overrides remain available', () => {
+test('optional overrides remain available and memory mode disables backup', () => {
   const child = runConfig({
     overrides: {
       DATABASE_PATH: ':memory:',
-      DATABASE_BACKUP_ENABLED: 'false',
+      DATABASE_BACKUP_ENABLED: 'true',
       LOG_CHANNEL_ID: '52345678901234567',
     },
   });
@@ -70,5 +78,21 @@ test('optional overrides remain available', () => {
   const output = JSON.parse(child.stdout.trim().split('\n').at(-1));
   assert.equal(output.databasePath, ':memory:');
   assert.equal(output.databaseBackupEnabled, false);
+  assert.equal(output.storageMode, 'memory');
+  assert.equal(output.durability, 'none');
+  assert.equal(output.processEnvDatabasePath, ':memory:');
   assert.equal(output.logChannelId, '52345678901234567');
+});
+
+test('hosted local storage is classified as ephemeral', () => {
+  const child = runConfig({ overrides: { RENDER: 'true' } });
+  assert.equal(child.status, 0, child.stderr || child.stdout);
+  const output = JSON.parse(child.stdout.trim().split('\n').at(-1));
+  if (output.databasePath === './data/quests.db') {
+    assert.equal(output.storageMode, 'hosted-ephemeral');
+    assert.equal(output.durability, 'not-persistent');
+  } else {
+    assert.equal(output.storageMode, 'persistent-candidate');
+    assert.equal(output.durability, 'candidate');
+  }
 });
