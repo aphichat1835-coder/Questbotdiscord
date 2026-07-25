@@ -29,6 +29,18 @@ const originalConsoleError = console.error;
 const originalFetch = globalThis.fetch;
 console.error = () => {};
 
+function contextFromPayload(payload) {
+  const field = payload.embeds[0].fields.find((item) => item.name === 'Context');
+  assert.ok(field, 'expected a Context field');
+  return JSON.parse(field.value.replace(/^```\n/, '').replace(/\n```$/, ''));
+}
+
+function deferred() {
+  let resolve;
+  const promise = new Promise((resolver) => { resolve = resolver; });
+  return { promise, resolve };
+}
+
 test.afterEach(() => {
   globalThis.fetch = originalFetch;
   resetIncidentReporterStateForTests();
@@ -83,11 +95,41 @@ test('structured incidents send an allowlisted, mention-safe backend embed', asy
   assert.match(payload.embeds[0].title, /การป้องกันฐานข้อมูล/);
   assert.equal(payload.embeds[0].color, CRITICAL_EMBED_COLOR);
   assert.match(payload.embeds[0].description, /REDACTED_WEBHOOK/);
-  assert.match(JSON.stringify(payload), /consecutiveFailures/);
+  assert.equal(contextFromPayload(payload).consecutiveFailures, 3);
   assert.doesNotMatch(JSON.stringify(payload), /must-not-leak|arbitraryInternalObject|webhook_token/);
 });
 
-test('duplicate incidents are suppressed by code and scope', async () => {
+test('concurrent incidents reserve one delivery slot before awaiting the webhook', async () => {
+  const response = deferred();
+  let attempts = 0;
+  globalThis.fetch = async () => {
+    attempts++;
+    return response.promise;
+  };
+
+  const firstPromise = reportIncident({
+    code: INCIDENT.HEALTH_SERVER_BIND_FAILED,
+    error: new Error('EADDRINUSE'),
+    scope: 'health:10000',
+    now: 1_000,
+  });
+  await Promise.resolve();
+  const duplicate = await reportIncident({
+    code: INCIDENT.HEALTH_SERVER_BIND_FAILED,
+    error: new Error('same invariant while first request is pending'),
+    scope: 'health:10000',
+    now: 1_001,
+  });
+
+  assert.equal(duplicate.state, 'suppressed');
+  assert.equal(attempts, 1);
+  response.resolve(new Response(null, { status: 204 }));
+  const first = await firstPromise;
+  assert.equal(first.state, 'delivered');
+  assert.equal(first.incidentId, duplicate.incidentId);
+});
+
+test('delivered incidents stay open and suppress repeats until recovery', async () => {
   let attempts = 0;
   globalThis.fetch = async () => {
     attempts++;
@@ -98,16 +140,19 @@ test('duplicate incidents are suppressed by code and scope', async () => {
     code: INCIDENT.HEALTH_SERVER_BIND_FAILED,
     error: new Error('EADDRINUSE'),
     scope: 'health:10000',
+    now: 0,
   });
   const duplicate = await reportIncident({
     code: INCIDENT.HEALTH_SERVER_BIND_FAILED,
-    error: new Error('wording changed but same invariant'),
+    error: new Error('same incident much later'),
     scope: 'health:10000',
+    now: 24 * 60 * 60_000,
   });
   const distinctScope = await reportIncident({
     code: INCIDENT.HEALTH_SERVER_BIND_FAILED,
     error: new Error('EADDRINUSE'),
     scope: 'health:10001',
+    now: 24 * 60 * 60_000,
   });
 
   assert.equal(first.state, 'delivered');
@@ -115,6 +160,40 @@ test('duplicate incidents are suppressed by code and scope', async () => {
   assert.equal(distinctScope.state, 'delivered');
   assert.equal(attempts, 2);
   assert.equal(getIncidentReporterStatus().suppressedIncidents, 1);
+});
+
+test('failed delivery has a short retry guard and can deliver on a later occurrence', async () => {
+  let attempts = 0;
+  globalThis.fetch = async () => {
+    attempts++;
+    if (attempts <= 2) return new Response(null, { status: 503 });
+    return new Response(null, { status: 204 });
+  };
+
+  const failed = await reportIncident({
+    code: INCIDENT.DISCORD_LOGIN_FAILED,
+    error: new Error('login failed'),
+    scope: 'runtime',
+    now: 1_000,
+  });
+  const deferredRetry = await reportIncident({
+    code: INCIDENT.DISCORD_LOGIN_FAILED,
+    error: new Error('login still failed'),
+    scope: 'runtime',
+    now: 30_000,
+  });
+  const retried = await reportIncident({
+    code: INCIDENT.DISCORD_LOGIN_FAILED,
+    error: new Error('login still failed'),
+    scope: 'runtime',
+    now: 61_001,
+  });
+
+  assert.equal(failed.state, 'delivery_unknown');
+  assert.equal(deferredRetry.state, 'retry_deferred');
+  assert.equal(retried.state, 'delivered');
+  assert.equal(retried.incidentId, failed.incidentId);
+  assert.equal(attempts, 3);
 });
 
 test('an open incident sends one recovery using the same incident id', async () => {
@@ -148,6 +227,44 @@ test('an open incident sends one recovery using the same incident id', async () 
   assert.ok(JSON.stringify(payloads[1]).includes(opened.incidentId));
 });
 
+test('failed recovery can be retried using the same incident id', async () => {
+  let attempts = 0;
+  globalThis.fetch = async () => {
+    attempts++;
+    if (attempts === 1) return new Response(null, { status: 204 });
+    if (attempts <= 3) return new Response(null, { status: 503 });
+    return new Response(null, { status: 204 });
+  };
+
+  const opened = await reportIncident({
+    code: INCIDENT.BACKUP_PROTECTION_LOST,
+    error: new Error('backup unavailable'),
+    scope: 'database-backup',
+    now: 1_000,
+  });
+  const failedRecovery = await reportRecovery({
+    code: INCIDENT.BACKUP_PROTECTION_LOST,
+    scope: 'database-backup',
+    now: 2_000,
+  });
+  const deferredRetry = await reportRecovery({
+    code: INCIDENT.BACKUP_PROTECTION_LOST,
+    scope: 'database-backup',
+    now: 30_000,
+  });
+  const recovered = await reportRecovery({
+    code: INCIDENT.BACKUP_PROTECTION_LOST,
+    scope: 'database-backup',
+    now: 62_001,
+  });
+
+  assert.equal(failedRecovery.state, 'delivery_unknown');
+  assert.equal(deferredRetry.state, 'retry_deferred');
+  assert.equal(recovered.state, 'delivered');
+  assert.equal(recovered.incidentId, opened.incidentId);
+  assert.equal(attempts, 4);
+});
+
 test('Quest transport failures require three observations before one alert', async () => {
   const payloads = [];
   globalThis.fetch = async (_url, options) => {
@@ -166,10 +283,8 @@ test('Quest transport failures require three observations before one alert', asy
   assert.equal(second.count, 2);
   assert.equal(third.state, 'delivered');
   assert.equal(payloads.length, 1);
-  const serialized = JSON.stringify(payloads[0]);
-  assert.match(serialized, /QUEST_API_TRANSPORT_OUTAGE/);
-  assert.match(serialized, /consecutiveFailures/);
-  assert.match(serialized, /3/);
+  assert.match(JSON.stringify(payloads[0]), /QUEST_API_TRANSPORT_OUTAGE/);
+  assert.equal(contextFromPayload(payloads[0]).consecutiveFailures, 3);
 });
 
 test('scheduled restore failures aggregate before sending one backend incident', async () => {
@@ -187,12 +302,11 @@ test('scheduled restore failures aggregate before sending one backend incident',
   }
 
   assert.equal(payloads.length, 1);
-  const serialized = JSON.stringify(payloads[0]);
-  assert.match(serialized, /RUNNER_RESTORE_SYSTEM_FAILED/);
-  assert.match(serialized, /decryptFailures/);
-  assert.match(serialized, /failed/);
-  assert.match(serialized, /3/);
-  assert.doesNotMatch(serialized, /Runner #1|Runner #2/);
+  assert.match(JSON.stringify(payloads[0]), /RUNNER_RESTORE_SYSTEM_FAILED/);
+  const context = contextFromPayload(payloads[0]);
+  assert.equal(context.decryptFailures, 3);
+  assert.equal(context.failed, 3);
+  assert.doesNotMatch(JSON.stringify(payloads[0]), /Runner #1|Runner #2/);
 });
 
 test('legacy threshold evidence expires instead of accumulating forever', async () => {
@@ -250,9 +364,12 @@ test('incident payload remains within Discord embed limits', () => {
   assert.ok(totalCharacters <= 6000);
 });
 
-test('redaction removes Discord webhook URLs from arbitrary text', () => {
+test('redaction removes webhook URLs and compound secret assignments', () => {
+  const redacted = redactSensitive(
+    `url=${WEBHOOK_URL} apiToken=hidden secretKey=hidden databasePassword=hidden captchaToken=hidden`,
+  );
   assert.equal(
-    redactSensitive(`url=${WEBHOOK_URL}`),
-    'url=[REDACTED_WEBHOOK]',
+    redacted,
+    'url=[REDACTED_WEBHOOK] apiToken=[REDACTED] secretKey=[REDACTED] databasePassword=[REDACTED] captchaToken=[REDACTED]',
   );
 });
