@@ -16,11 +16,10 @@ const ASSIGNMENT = /((?:["']?[\w.-]+["']?)\s*[:=]\s*["']?)([^"',}\s]+)/g;
 function assignmentKey(prefix) {
   const colonIndex = prefix.indexOf(':');
   const equalsIndex = prefix.indexOf('=');
-  const delimiterIndex = colonIndex === -1
-    ? equalsIndex
-    : equalsIndex === -1
-      ? colonIndex
-      : Math.min(colonIndex, equalsIndex);
+  let delimiterIndex = colonIndex;
+  if (delimiterIndex === -1 || (equalsIndex !== -1 && equalsIndex < delimiterIndex)) {
+    delimiterIndex = equalsIndex;
+  }
   return prefix
     .slice(0, delimiterIndex)
     .trim()
