@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import test from 'node:test';
+import { createFakeDiscordWebhookUrl } from '../test-support/fake-webhook.js';
 
 const REQUIRED_ENV = Object.freeze({
   DISCORD_BOT_TOKEN: 'test-bot-token',
@@ -8,7 +9,7 @@ const REQUIRED_ENV = Object.freeze({
   DISCORD_GUILD_ID: '22345678901234567',
   OWNER_ID: '32345678901234567',
   RUNNER_TOKEN_SECRET: 'test-runner-token-secret-32-characters',
-  LOG_WEBHOOK_URL: 'https://discord.com/api/webhooks/42345678901234567/test_webhook_token_abcdefghijklmnopqrstuvwxyz',
+  LOG_WEBHOOK_URL: createFakeDiscordWebhookUrl('config'),
 });
 
 function runConfig({ overrides = {}, remove = [] } = {}) {
