@@ -76,10 +76,16 @@ export function createApp({ exit = process.exit } = {}) {
   const runtimeLeaseName = 'bot-runtime';
   const runtimeLeaseHolder = `${process.pid}:${randomUUID()}`;
   const seenInteractions = new Set();
-  let shuttingDown = false;
   let runtimeLeaseTimer = null;
   let runtimeLeaseAcquired = false;
   let removeProcessHandlers = null;
+  let shutdownPromise = null;
+  let fatalShutdownPromise = null;
+  let requestedExitCode = 0;
+
+  function requestExitCode(exitCode) {
+    requestedExitCode = Math.max(requestedExitCode, Number(exitCode) || 0);
+  }
 
   function markInteractionSeen(id) {
     if (seenInteractions.has(id)) return false;
@@ -133,65 +139,77 @@ export function createApp({ exit = process.exit } = {}) {
     await restoreScheduledRunners(client);
   }
 
-  async function gracefulShutdown(reason, exitCode = 0) {
-    if (shuttingDown) return exitCode;
-    shuttingDown = true;
-    if (runtimeLeaseTimer) {
-      clearInterval(runtimeLeaseTimer);
-      runtimeLeaseTimer = null;
-    }
-    console.log(`🧹 Graceful shutdown — ${reason}`);
+  function gracefulShutdown(reason, exitCode = 0) {
+    requestExitCode(exitCode);
+    if (shutdownPromise) return shutdownPromise;
 
-    try {
-      await stopWorker(5000);
-    } catch (error) {
-      reportError('Runner worker shutdown', error);
-      exitCode ||= 1;
-    }
-
-    try {
-      const stopped = await shutdownRunners();
-      console.log(`🧹 Runner stopped cleanly: ${stopped}`);
-    } catch (error) {
-      reportError('Runner shutdown', error);
-      exitCode ||= 1;
-    }
-
-    try {
-      await client.destroy();
-      await stopDashboard();
-    } catch (error) {
-      reportError('Resource shutdown', error);
-      exitCode ||= 1;
-    }
-
-    try {
-      if (runtimeLeaseAcquired) {
-        releaseRuntimeLease(runtimeLeaseName, runtimeLeaseHolder);
-        runtimeLeaseAcquired = false;
+    shutdownPromise = (async () => {
+      if (runtimeLeaseTimer) {
+        clearInterval(runtimeLeaseTimer);
+        runtimeLeaseTimer = null;
       }
-      closeDatabase();
-    } catch (error) {
-      reportError('Database shutdown', error);
-      exitCode ||= 1;
-    }
+      console.log(`🧹 Graceful shutdown — ${reason}`);
 
-    removeProcessHandlers?.();
-    removeProcessHandlers = null;
-    exit(exitCode);
-    return exitCode;
+      try {
+        await stopWorker(5000);
+      } catch (error) {
+        reportError('Runner worker shutdown', error);
+        requestExitCode(1);
+      }
+
+      try {
+        const stopped = await shutdownRunners();
+        console.log(`🧹 Runner stopped cleanly: ${stopped}`);
+      } catch (error) {
+        reportError('Runner shutdown', error);
+        requestExitCode(1);
+      }
+
+      try {
+        await client.destroy();
+        await stopDashboard();
+      } catch (error) {
+        reportError('Resource shutdown', error);
+        requestExitCode(1);
+      }
+
+      try {
+        if (runtimeLeaseAcquired) {
+          releaseRuntimeLease(runtimeLeaseName, runtimeLeaseHolder);
+          runtimeLeaseAcquired = false;
+        }
+        closeDatabase();
+      } catch (error) {
+        reportError('Database shutdown', error);
+        requestExitCode(1);
+      }
+
+      removeProcessHandlers?.();
+      removeProcessHandlers = null;
+      exit(requestedExitCode);
+      return requestedExitCode;
+    })();
+
+    return shutdownPromise;
   }
 
-  async function fatalShutdown(code, error, context = {}) {
-    const report = reportIncident({
-      code,
-      error,
-      context,
-      scope: 'runtime',
-      source: code,
-    }).catch(() => ({ state: 'report_failed' }));
-    await reportWithinFatalBudget(report);
-    return gracefulShutdown(code, 1);
+  function fatalShutdown(code, error, context = {}) {
+    requestExitCode(1);
+    if (fatalShutdownPromise) return fatalShutdownPromise;
+
+    fatalShutdownPromise = (async () => {
+      const report = reportIncident({
+        code,
+        error,
+        context,
+        scope: 'runtime',
+        source: code,
+      }).catch(() => ({ state: 'report_failed' }));
+      await reportWithinFatalBudget(report);
+      return gracefulShutdown(code, 1);
+    })();
+
+    return fatalShutdownPromise;
   }
 
   function installProcessHandlers() {
