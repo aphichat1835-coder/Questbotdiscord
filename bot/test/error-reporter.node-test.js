@@ -1,12 +1,14 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { createFakeDiscordWebhookUrl } from '../test-support/fake-webhook.js';
 
+const WEBHOOK_URL = createFakeDiscordWebhookUrl('reporter');
 process.env.DISCORD_BOT_TOKEN = 'test-bot-token';
 process.env.DISCORD_CLIENT_ID = '12345678901234567';
 process.env.DISCORD_GUILD_ID = '22345678901234567';
 process.env.OWNER_ID = '32345678901234567';
 process.env.RUNNER_TOKEN_SECRET = 'test-runner-token-secret-32-characters';
-process.env.LOG_WEBHOOK_URL = 'https://discord.com/api/webhooks/42345678901234567/test_webhook_token_abcdefghijklmnopqrstuvwxyz';
+process.env.LOG_WEBHOOK_URL = WEBHOOK_URL;
 process.env.ALLOW_TEST_WEBHOOK = 'true';
 
 const { INCIDENT } = await import('../src/incident-catalog.js');
@@ -61,7 +63,7 @@ test('structured incidents send an allowlisted, mention-safe backend embed', asy
 
   const result = await reportIncident({
     code: INCIDENT.BACKUP_PROTECTION_LOST,
-    error: new Error(`backup failed near ${process.env.LOG_WEBHOOK_URL}`),
+    error: new Error(`backup failed near ${WEBHOOK_URL}`),
     context: {
       consecutiveFailures: 3,
       backupAgeHours: 27,
@@ -73,14 +75,14 @@ test('structured incidents send an allowlisted, mention-safe backend embed', asy
 
   assert.equal(result.state, 'delivered');
   assert.equal(requests.length, 1);
-  assert.equal(requests[0].url, process.env.LOG_WEBHOOK_URL);
+  assert.equal(requests[0].url, WEBHOOK_URL);
   const payload = JSON.parse(requests[0].options.body);
   assert.deepEqual(payload.allowed_mentions, { parse: [] });
   assert.match(payload.embeds[0].title, /การป้องกันฐานข้อมูล/);
   assert.equal(payload.embeds[0].color, 0xED4245);
   assert.match(payload.embeds[0].description, /REDACTED_WEBHOOK/);
   assert.match(JSON.stringify(payload), /consecutiveFailures/);
-  assert.doesNotMatch(JSON.stringify(payload), /must-not-leak|arbitraryInternalObject|test_webhook_token/);
+  assert.doesNotMatch(JSON.stringify(payload), /must-not-leak|arbitraryInternalObject|webhook_token/);
 });
 
 test('duplicate incidents are suppressed by code and scope', async () => {
@@ -248,7 +250,7 @@ test('incident payload remains within Discord embed limits', () => {
 
 test('redaction removes Discord webhook URLs from arbitrary text', () => {
   assert.equal(
-    redactSensitive(`url=${process.env.LOG_WEBHOOK_URL}`),
+    redactSensitive(`url=${WEBHOOK_URL}`),
     'url=[REDACTED_WEBHOOK]',
   );
 });
