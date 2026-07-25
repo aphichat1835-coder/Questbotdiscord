@@ -8,6 +8,7 @@ import {
   accumulateLegacyContext,
   classifyLegacyIncident,
 } from './legacy-incident-policy.js';
+import { redactText } from './redaction.js';
 import { executeDiscordWebhook } from './webhook-delivery.js';
 
 const incidentState = new Map();
@@ -16,10 +17,7 @@ const LEGACY_WINDOW_MS = 10 * 60_000;
 const FAILED_DELIVERY_RETRY_MS = 60_000;
 const CLOSED_INCIDENT_RETENTION_MS = 24 * 60 * 60_000;
 const FAILED_INCIDENT_RETENTION_MS = 7 * 24 * 60 * 60_000;
-const REDACTION_SCAN_LIMIT = 10_000;
 const SENSITIVE_KEY = /authorization|token|secret|cookie|captcha|email|webhook|cipher|password/i;
-const DISCORD_WEBHOOK_URL = /https:\/\/(?:canary\.|ptb\.)?discord(?:app)?\.com\/api\/webhooks\/\d{17,20}\/[a-z0-9._-]+/gi;
-const ASSIGNMENT = /((?:["']?[\w.-]+["']?)\s*[:=]\s*["']?)([^"',}\s]+)/g;
 
 const reporterStatus = {
   lastDeliveryAt: null,
@@ -55,33 +53,11 @@ function printable(value) {
   }
 }
 
-function assignmentKey(prefix) {
-  const colonIndex = prefix.indexOf(':');
-  const equalsIndex = prefix.indexOf('=');
-  let delimiterIndex = colonIndex;
-  if (delimiterIndex === -1 || (equalsIndex !== -1 && equalsIndex < delimiterIndex)) {
-    delimiterIndex = equalsIndex;
-  }
-  return prefix
-    .slice(0, delimiterIndex)
-    .trim()
-    .replaceAll('"', '')
-    .replaceAll("'", '');
-}
-
-function redactAssignments(value) {
-  return value.replace(ASSIGNMENT, (match, prefix) => (
-    SENSITIVE_KEY.test(assignmentKey(prefix))
-      ? `${prefix}[REDACTED]`
-      : match
-  ));
-}
-
 export function redactSensitive(value) {
-  const bounded = printable(value).slice(0, REDACTION_SCAN_LIMIT);
-  return redactAssignments(bounded.replace(DISCORD_WEBHOOK_URL, '[REDACTED_WEBHOOK]'))
-    .replace(/\b[\w-]{20,}\.[\w-]{5,}\.[\w-]{15,}\b/g, '[REDACTED_TOKEN]')
-    .slice(0, 8000);
+  return redactText(printable(value), {
+    scanLimit: 10_000,
+    outputLimit: 8000,
+  });
 }
 
 export function safeErrorMessage(error) {
