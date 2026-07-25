@@ -46,6 +46,23 @@ function assignmentKeyBounds(value, delimiterIndex) {
   return { start: keyStart, end: keyEnd };
 }
 
+function findClosingQuote(value, contentStart, quote) {
+  let escaped = false;
+  for (let index = contentStart; index < value.length; index++) {
+    const character = value[index];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (character === '\\') {
+      escaped = true;
+      continue;
+    }
+    if (character === quote) return index;
+  }
+  return -1;
+}
+
 function assignmentValueBounds(value, delimiterIndex) {
   let start = delimiterIndex + 1;
   while (start < value.length && isWhitespace(value[start])) start++;
@@ -53,7 +70,7 @@ function assignmentValueBounds(value, delimiterIndex) {
   const quote = value[start];
   if (quote === '"' || quote === "'") {
     const contentStart = start + 1;
-    const closingQuote = value.indexOf(quote, contentStart);
+    const closingQuote = findClosingQuote(value, contentStart, quote);
     return {
       start: contentStart,
       end: closingQuote === -1 ? value.length : closingQuote,
