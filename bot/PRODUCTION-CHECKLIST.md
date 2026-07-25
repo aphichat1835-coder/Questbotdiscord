@@ -13,6 +13,7 @@
 - HTTP `/api/status` ปิดเมื่อไม่มี `HEALTH_STATUS_TOKEN` และใช้ Exact Bearer token เมื่อเปิด
 - Render/Console logs เก็บ Error ทุกระดับ
 - Discord Webhook ส่งเฉพาะ Structured Incident ตาม Policy และ Threshold
+- Incident, Fatal shutdown และ Resource cleanup ต้องไม่ทำงานซ้อนจาก Error burst เดียวกัน
 
 ## 2. Environment
 
@@ -49,8 +50,9 @@ PORT=
 - `HEALTH_STATUS_TOKEN` เมื่อเปิดใช้ต้องเป็น Secret คนละค่ากับ Token อื่น
 - ค่า Discord client profile ต้องอัปเดตพร้อมกันทั้งชุดและ Restart หลังเปลี่ยน
 - ห้ามใช้ `DATABASE_BACKUP_DIR`; ระบบไม่รองรับ Backup path จาก Environment
+- Storage resolver และ Runtime ห้ามเขียนค่าอัตโนมัติกลับเข้า `process.env.DATABASE_PATH`
 
-## 3. Safe bootstrap
+## 3. Safe bootstrap และ Shutdown
 
 ตรวจว่า Startup failure ไม่ทำให้ Process ค้างหรือเปิดระบบเพียงบางส่วน:
 
@@ -61,7 +63,10 @@ PORT=
 5. Runtime lease conflict/lost ทำให้ Process ปิดอย่างปลอดภัย
 6. Health server bind failure ต้อง Reject Startup ไม่ปล่อย Bot ทำงานต่อโดยไม่มี Health endpoint
 7. Discord login failure ส่ง Incident แล้ว Shutdown
-8. Fatal report ใช้ Budget จำกัด 3.5 วินาที
+8. Fatal report ใช้ Budget จำกัด 3.5 วินาทีและล้าง Timer เมื่อ Report จบ
+9. Runtime ใช้ Fatal promise เดียวและ Shutdown promise เดียว
+10. Signal ปกติที่ชนกับ Fatal error ต้องจบด้วย Exit code ที่รุนแรงที่สุด
+11. Dashboard ที่กำลัง Bind ต้องถูกติดตามและปิด ไม่ทิ้ง Server ที่ไม่มีเจ้าของ
 
 ## 4. Storage truth
 
@@ -71,6 +76,13 @@ PORT=
 - `local-development` — Local file สำหรับ Development
 - `hosted-ephemeral` — Hosting ไม่มี Persistent mount และต้องแสดง Warning
 - `persistent-candidate` — `/var/data` มีและเขียนได้ แต่ `durabilityVerified` ยังเป็น `false`
+
+Fixed backup mappings:
+
+- Database นอก `/var/data/` → `./data/backups`
+- Database ใต้ `/var/data/` → `/var/data/backups`
+
+Directory creation, Slot backup, Slot cleanup, Latest-backup inspection และ Legacy migration backup ต้องใช้ Backup profile เดียวกัน Profile อื่นต้องถูกปฏิเสธ
 
 เมื่อใช้ Hosting ที่มี Persistent Volume:
 
@@ -89,12 +101,15 @@ PORT=
 
 1. Backup สำเร็จ → `healthy`
 2. Failure ครั้งแรกและครั้งที่สอง → Render log เท่านั้น
-3. Failure ติดต่อกันครั้งที่ 3 → `BACKUP_PROTECTION_LOST`
-4. Backup เก่าเกิน 26 ชั่วโมงและความพยายามใหม่ล้ม → ส่ง Incident แม้เป็น Failure ครั้งแรกในรอบนั้น
-5. ระหว่างผิดปกติ Retry ทุก 15 นาที
-6. เมื่อสำเร็จอีกครั้ง ส่ง Recovery ด้วย Incident ID เดิม
-7. `/api/status` แสดง Last success, age, consecutive failures, next attempt และ Threshold
-8. Status ห้ามแสดง Full database path หรือ Backup directory
+3. Failure ติดต่อกันครั้งที่ 3 → เปิด `BACKUP_PROTECTION_LOST` หนึ่งรายการ
+4. Backup เก่าเกิน 26 ชั่วโมงและความพยายามใหม่ล้ม → เปิด Incident แม้เป็น Failure ครั้งแรกในรอบนั้น
+5. ขณะ Incident เปิดอยู่ Failure ถัดไปต้องอยู่ใน Render log โดยไม่ยิง Webhook ซ้ำ
+6. Fast retry ทุก 15 นาทีสูงสุด 3 รอบ จากนั้นกลับตาราง Daily
+7. เมื่อสำเร็จอีกครั้ง ส่ง Recovery ด้วย Incident ID เดิม
+8. Recovery delivery ที่ล้มต้องถูกเก็บเป็น Pending และ Retry ใน Backup success รอบถัดไป
+9. Failure ใหม่หลัง Pending recovery ต้องเริ่ม Incident lifecycle ใหม่เมื่อถึง Threshold
+10. `/api/status` แสดง Last success, age, consecutive failures, fast retry count/limit, incident open, recovery pending และ next attempt
+11. Status ห้ามแสดง Full database path หรือ Backup directory
 
 ## 6. Emergency Webhook validation
 
@@ -103,14 +118,19 @@ PORT=
 1. Incident ที่บังคับทดสอบส่ง Rich Embed สำเร็จ
 2. Embed มี Status, Incident code, Incident ID, Impact, Action, Runtime และ Deployment
 3. `allowed_mentions.parse` เป็น Array ว่างและข้อความไม่ Ping ผู้ใช้/Role/@everyone
-4. Token, Secret, Cookie, CAPTCHA, Email, Ciphertext, Password และ Webhook URL ไม่ปรากฏใน Payload
-5. Context ใช้ Allowlist ต่อ Incident code
-6. HTTP 400/401/403/404 ไม่ Retry
-7. HTTP 429/502/503/504 Retry ได้สูงสุดหนึ่งครั้ง
-8. Network timeout หลังเริ่ม POST เป็น `delivery_unknown` และไม่ส่งซ้ำแบบเดาสุ่ม
-9. เหตุซ้ำถูก Dedupe ด้วย `code + scope` ภายใน 10 นาที
-10. Webhook ล้มไม่ทำให้ Bot ดับและมี Error ใน Render logs
-11. Recovery ใช้ Incident ID เดิม
+4. Token, Secret, Cookie, CAPTCHA, Email, Ciphertext, Password, Compound secret keys และ Webhook URL ไม่ปรากฏใน Payload
+5. Context ใช้ Deep-frozen Allowlist ต่อ Incident code
+6. Incident code ที่ไม่ใช่ Own property เช่น `constructor`, `toString`, `__proto__` ถูกปฏิเสธ
+7. HTTP 400/401/403/404 ไม่ Retry
+8. HTTP 429/502/503/504 Retry ได้สูงสุดหนึ่งครั้ง
+9. Retryable response สองครั้งติดต้องจบเป็น `delivery_unknown` ที่ Attempts = 2
+10. Network timeout หลังเริ่ม POST เป็น `delivery_unknown` และไม่ส่ง POST ซ้ำทันทีแบบเดาสุ่ม
+11. Concurrent incident ของ `code + scope` เดียวกันต้องมี Network delivery เพียงหนึ่งรายการ
+12. Incident ที่ส่งสำเร็จคงสถานะเปิดและ Suppress เหตุซ้ำจนกว่าจะ Recovery
+13. Delivery ที่ล้มมี Retry guard และเหตุครั้งถัดไปสามารถลองใหม่ด้วย Incident ID เดิม
+14. Webhook ล้มไม่ทำให้ Bot ดับและมี Error ใน Render logs
+15. Recovery ใช้ Incident ID เดิม และ Recovery ที่ล้มสามารถ Retry ได้
+16. Incident/Counter state เก่าถูก Prune และ Legacy threshold ถูก Reset หลัง Escalate
 
 ## 7. Quest และ Restore policy
 
@@ -137,19 +157,21 @@ npm audit --omit=dev --audit-level=high
 
 GitHub Actions ต้องผ่านทั้ง:
 
-- Repository shape
-- Approved database backup destinations
+- Repository shape และ Runtime data safety
+- Sanitized Quest fixture
+- Fixed database backup destinations
+- Incident/Storage architecture boundaries
+- Environment contract และ Semantic no-mutation tests
+- Safe bootstrap, Health bind และ Serialized shutdown tests
+- Storage profile และ Backup profile consistency tests
+- Backup threshold, bounded retry และ Recovery retry tests
+- Incident classification, immutability, redaction, concurrency, delivery และ Recovery lifecycle tests
+- Webhook URL validation, redirect safety และ Retry ceiling tests
 - Unit/Regression tests และ Coverage gate
-- Environment contract tests
-- Safe bootstrap และ Health bind tests
-- Storage profile tests
-- Backup threshold/recovery tests
-- Incident classification/redaction/dedupe/recovery tests
-- Webhook transport tests
 - Syntax check ของ `src` และ `scripts`
 - Production dependency audit
 
-Status จาก Snyk, CodeRabbit และ CI ต้องเป็นของ HEAD SHA ล่าสุด ห้ามใช้ผลจาก Commit เก่า
+Status จาก CI, Snyk, Codacy, SonarCloud และ CodeRabbit ต้องเป็นของ HEAD SHA ล่าสุด ห้ามใช้ผลจาก Commit เก่า
 
 ## 9. Controlled functional validation
 
@@ -166,7 +188,9 @@ Status จาก Snyk, CodeRabbit และ CI ต้องเป็นของ
 9. เรียก HTTP `/api/status` โดยไม่มี/มี Bearer token ผิด แล้วต้องได้ Unauthorized หรือ Not Found ตามการตั้งค่า
 10. ทดสอบ Emergency Webhook ด้วย Error จำลองที่ไม่มี Secret จริง
 11. ทดสอบ Webhook ถูกลบ/หมดอายุแล้ว Bot ยังทำงานและ Render log มีหลักฐาน
-12. Restart/Redeploy แล้ว Database, Backup และ Scheduled Runner ยังอยู่
+12. ทดสอบ Incident burst แล้วห้อง Webhook ได้เพียงหนึ่งข้อความ
+13. ทดสอบ Backup ล้มต่อเนื่องแล้วไม่สแปมทุก Fast retry
+14. Restart/Redeploy แล้ว Database, Backup และ Scheduled Runner ยังอยู่
 
 ## 10. Quest API verification boundary
 
@@ -198,12 +222,13 @@ CI และ Smoke Test จึงไม่ใช่หลักฐานว่�
 อนุมัติ Production ได้เมื่อ:
 
 - CI ของ HEAD ล่าสุดผ่านทั้งหมด
-- Snyk และ CodeRabbit ผ่านหรือ Warning ถูกวิเคราะห์และยอมรับอย่างมีเหตุผล
+- Snyk, Codacy, SonarCloud และ CodeRabbit ผ่านหรือ Warning ถูกวิเคราะห์และยอมรับอย่างมีเหตุผล
 - ไม่มี Review thread ค้าง
-- Persistent storage ผ่าน Controlled restart
+- Persistent storage ผ่าน Controlled restart/redeploy
 - Emergency Webhook ผ่าน Test แบบไม่ใช้ Secret จริง
 - Permission, Runner limit และ Stop lifecycle ผ่าน
-- Backup threshold/recovery ผ่าน
+- Backup threshold, bounded retry และ Recovery retry ผ่าน
+- Rollback path ถูกยืนยัน
 - ผู้ดูแลยอมรับความเสี่ยงด้านบัญชีและข้อกำหนดแพลตฟอร์มอย่างชัดเจน
 
 ## 13. Repository data safety
