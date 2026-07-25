@@ -22,4 +22,5 @@ try {
       component: 'application',
     },
   });
+  process.exit(1);
 }
