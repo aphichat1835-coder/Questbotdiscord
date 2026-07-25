@@ -54,19 +54,20 @@ Startup ทำตามลำดับ:
 7. Login Discord
 8. Start worker และ Restore Scheduled Runner
 
-Health server bind failure ทำให้ Startup ล้มทันที ไม่ปล่อย Bot ทำงานแบบครึ่งระบบ Fatal report มี Budget รวม 3.5 วินาทีก่อน Shutdown
+Health server bind failure ทำให้ Startup ล้มทันที ไม่ปล่อย Bot ทำงานแบบครึ่งระบบ Fatal report มี Budget รวม 3.5 วินาทีก่อน Shutdown Runtime ใช้ Fatal/Shutdown promise เดียวเพื่อไม่ให้ Cleanup ซ้อน และรักษา Exit code ที่รุนแรงที่สุด
 
 ## Backend Incident Webhook
 
 Render/Console logs บันทึก Error ทุกระดับ ส่วน Webhook รับเฉพาะ Structured Incident:
 
 - Incident มี Code, Incident ID, Impact, Action, Runtime และ Deployment
-- Context ใช้ Allowlist ต่อ Code
+- Context ใช้ Allowlist ต่อ Code และ Allowlist ถูก Deep-freeze
 - ปิด Mentions และ Redirect
 - HTTP 429/502/503/504 Retry ได้สูงสุดหนึ่งครั้ง
-- Network timeout หลังเริ่ม POST เป็น `delivery_unknown` และไม่ส่งซ้ำแบบเดาสุ่ม
-- เหตุซ้ำรวมด้วย `code + scope` ภายใน 10 นาที
-- Recovery ใช้ Incident ID เดิม
+- Network timeout หลังเริ่ม POST เป็น `delivery_unknown` และไม่ส่ง POST ซ้ำทันทีแบบเดาสุ่ม
+- ระบบ Reserve Incident state ก่อนส่ง Network request เพื่อกัน Concurrent duplicate
+- Incident ที่ส่งสำเร็จคงสถานะเปิดและ Suppress เหตุซ้ำจนกว่าจะ Recovery
+- Delivery และ Recovery ที่ล้มมี Retry guard ก่อนลองใหม่ด้วย Incident ID เดิม
 - Webhook ล้มไม่ทำให้ Bot ดับ
 
 ### แจ้งทันที
@@ -104,22 +105,23 @@ Render/Console logs บันทึก Error ทุกระดับ ส่ว�
 | `hosted-ephemeral` | Hosting ไม่มี Persistent mount และไฟล์อาจหายหลัง Redeploy |
 | `persistent-candidate` | `/var/data` มีและเขียนได้ แต่ต้องผ่าน Controlled restart ก่อนถือว่า Verified |
 
-ตำแหน่ง Backup อนุญาตเฉพาะ:
+ตำแหน่ง Backup อนุญาตเฉพาะ Fixed mapping ต่อไปนี้:
 
 | Database | Backup |
 |---|---|
-| Local หรือ Path ทั่วไป | `./data/backups` |
-| Path ใต้ `/var/data/` | `/var/data/backups` |
+| Database นอก `/var/data/` | `./data/backups` |
+| Database ใต้ `/var/data/` | `/var/data/backups` |
 
-ระบบไม่รองรับ `DATABASE_BACKUP_DIR` และเก็บสูงสุด 7 Slot
+Directory creation, Backup slots, Cleanup, Latest-backup inspection และ Migration backup ใช้ Backup profile เดียวกัน ระบบไม่รองรับ `DATABASE_BACKUP_DIR` และเก็บสูงสุด 7 Slot
 
 Backup protection:
 
 1. Backup สำเร็จ → `healthy`
 2. Failure ครั้ง 1–2 → Render log เท่านั้น
-3. Failure ครั้ง 3 หรือ Backup เก่าเกิน 26 ชั่วโมง → Incident
-4. ระหว่างผิดปกติ Retry ทุก 15 นาที
-5. สำเร็จอีกครั้ง → Recovery
+3. Failure ครั้ง 3 หรือ Backup เก่าเกิน 26 ชั่วโมง → เปิด Incident หนึ่งรายการ
+4. ระหว่างผิดปกติ Fast retry ทุก 15 นาทีสูงสุด 3 รอบ แล้วกลับตาราง Daily
+5. Failure ถัดไประหว่าง Incident เปิดอยู่ยังถูกบันทึกใน Render แต่ไม่ยิง Webhook ซ้ำ
+6. สำเร็จอีกครั้ง → Recovery; หากส่ง Recovery ไม่สำเร็จจะลองใหม่ใน Backup success รอบถัดไป
 
 ## Health และ Status
 
@@ -127,7 +129,8 @@ Backup protection:
 - HTTP `/api/status` ปิดเมื่อไม่มี `HEALTH_STATUS_TOKEN`
 - Slash `/api-status` ใช้ได้เฉพาะ Owner/Admin/Manager
 - Status แสดง Logging, Storage, Backup, Runner และ Quest API
-- Status ไม่แสดง Webhook URL, Token หรือ Full database path
+- Backup status แสดง Fast retry, Incident open และ Pending recovery evidence
+- Status ไม่แสดง Webhook URL, Token, Full database path หรือ Backup directory
 
 ## คำสั่งและสิทธิ์
 
@@ -175,7 +178,7 @@ Enroll, Claim, Video Progress และ Heartbeat ใช้ Verified mutation re
 
 เมื่อพบตาราง Tracker เก่า (`quests`, `guild_settings`, `quest_logs`) ระบบจะ:
 
-1. สร้าง Backup ในตำแหน่งที่อนุญาต
+1. สร้าง Backup ในตำแหน่งที่อนุญาตจาก Backup profile เดียวกับ Runtime backup
 2. ลบเฉพาะตาราง Tracker เก่าใน Transaction
 3. คง `scheduled_runners` ไว้
 
@@ -190,9 +193,9 @@ npm run check
 npm audit --omit=dev --audit-level=high
 ```
 
-CI ตรวจ Safe bootstrap, Storage profile, Backup threshold/recovery, Incident lifecycle, Webhook transport, Runner regressions, Backup destinations, Syntax และ Dependency audit
+CI ตรวจ Repository shape, Sanitized fixture, Backup destinations, Architecture boundaries, Environment no-mutation, Safe bootstrap, Serialized shutdown, Storage/Backup profile, Backup bounded retry/recovery, Incident concurrency/redaction/recovery, Webhook retry ceiling, Unit/Regression coverage, Syntax และ Dependency audit
 
-`npm run smoke:quest` เป็น Read-only: ตรวจบัญชีและอ่านรายการ Questเท่านั้น ไม่ Enroll, Progress, Heartbeat หรือ Claim
+`npm run smoke:quest` เป็น Read-only: ตรวจบัญชีและอ่านรายการ Quest เท่านั้น ไม่ Enroll, Progress, Heartbeat หรือ Claim
 
 ## Production และ Rollback
 
