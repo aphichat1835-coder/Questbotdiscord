@@ -7,31 +7,58 @@ import {
   listQuestEngineStatuses,
 } from './discord-runner.js';
 import { listScheduledRunners } from './scheduled-runner-store.js';
-import { reportCriticalError } from './error-reporter.js';
+import {
+  getIncidentReporterStatus,
+  reportError,
+} from './error-reporter.js';
 
 const PORT = config.port;
 let botClient = null;
 let server = null;
+let startPromise = null;
 const startedAt = Date.now();
 
 export function startDashboard(client) {
   if (client) botClient = client;
-  if (server) return;
+  if (server?.listening) return Promise.resolve(server);
+  if (startPromise) return startPromise;
 
   server = createServer(handleRequest);
-  server.on('error', (error) => {
-    void reportCriticalError('Health server', error);
+  startPromise = new Promise((resolve, reject) => {
+    const startingServer = server;
+    const onStartupError = (error) => {
+      startingServer.off('listening', onListening);
+      if (server === startingServer) server = null;
+      startPromise = null;
+      reject(error);
+    };
+    const onListening = () => {
+      startingServer.off('error', onStartupError);
+      startingServer.on('error', (error) => reportError('Health server runtime', error, {
+        context: { port: PORT, errorCode: error?.code },
+      }));
+      console.log(`🌐 Health server ready → port ${PORT}`);
+      startPromise = null;
+      resolve(startingServer);
+    };
+
+    startingServer.once('error', onStartupError);
+    startingServer.once('listening', onListening);
+    startingServer.listen(PORT);
   });
-  server.listen(PORT, () => {
-    console.log(`🌐 Health server ready → port ${PORT}`);
-  });
+  return startPromise;
 }
 
 export async function stopDashboard() {
   if (!server) return;
   const activeServer = server;
   server = null;
-  await new Promise((resolve) => activeServer.close(resolve));
+  startPromise = null;
+  if (!activeServer.listening) return;
+  await new Promise((resolve, reject) => activeServer.close((error) => {
+    if (error) reject(error);
+    else resolve();
+  }));
 }
 
 function statusSnapshot(status) {
@@ -67,6 +94,7 @@ export function detailedStatusPayload() {
     ok: botClient?.isReady() ?? false,
     uptimeSeconds: Math.floor((Date.now() - startedAt) / 1000),
     pingMs: botClient?.ws?.ping ?? -1,
+    logging: getIncidentReporterStatus(),
     runners: {
       active: jobs.length,
       oneShot: jobs.filter((job) => job.mode === 'oneshot').length,
