@@ -23,7 +23,9 @@ test('bootstrap reporter sends without importing runtime config or database', as
   let request;
   const result = await reportBootstrapIncident({
     code: INCIDENT.CLIENT_STARTUP_FAILED,
-    error: new Error(`config import failed token=must-not-leak ${WEBHOOK_URL}`),
+    error: new Error(
+      `config import failed apiToken=must-not-leak secretKey=hidden databasePassword=hidden captchaToken=hidden ${WEBHOOK_URL}`,
+    ),
     context: { stage: 'module-import', component: 'application', token: 'hidden' },
     env: { LOG_WEBHOOK_URL: WEBHOOK_URL },
     fetchFn: async (url, options) => {
@@ -38,7 +40,11 @@ test('bootstrap reporter sends without importing runtime config or database', as
   assert.deepEqual(payload.allowed_mentions, { parse: [] });
   assert.match(payload.embeds[0].title, /บอทเริ่มระบบไม่สำเร็จ/);
   assert.match(JSON.stringify(payload), /module-import/);
-  assert.doesNotMatch(JSON.stringify(payload), /must-not-leak|webhook_token|"token"/);
+  assert.doesNotMatch(
+    JSON.stringify(payload),
+    /must-not-leak|secretKey=hidden|databasePassword=hidden|captchaToken=hidden|webhook_token|"token"/,
+  );
+  assert.match(JSON.stringify(payload), /apiToken=\[REDACTED\]/);
 });
 
 test('bootstrap reporter fails closed when the webhook is missing or invalid', async () => {
