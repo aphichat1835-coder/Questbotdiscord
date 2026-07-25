@@ -17,6 +17,7 @@ import { settleWithTimeout } from './async-settle.js';
 
 const MILLISECONDS_PER_DAY = 24 * 60 * 60 * 1000;
 export const BACKUP_RETRY_MS = 15 * 60 * 1000;
+export const BACKUP_FAST_RETRY_LIMIT = 3;
 export const BACKUP_FAILURE_THRESHOLD = 3;
 export const BACKUP_MAX_AGE_MS = 26 * 60 * 60 * 1000;
 const BACKUP_INCIDENT_SCOPE = 'database-backup';
@@ -28,6 +29,9 @@ const backupHealth = {
   state: config.databaseBackupEnabled ? 'unknown' : 'disabled',
   lastSuccessAt: getLatestDatabaseBackupAt(),
   consecutiveFailures: 0,
+  fastRetryAttempts: 0,
+  incidentOpen: false,
+  recoveryPending: false,
   lastError: null,
   nextAttemptAt: null,
 };
@@ -88,6 +92,14 @@ function backupIncidentContext(now) {
   };
 }
 
+function recoveryCompleted(result) {
+  return ['delivered', 'not_open', 'logged_only'].includes(result?.state);
+}
+
+function incidentWasOpened(result) {
+  return ['delivered', 'suppressed', 'delivery_unknown'].includes(result?.state);
+}
+
 export async function runBackupAttempt({
   now = new Date(),
   backupFn = runDatabaseBackup,
@@ -102,22 +114,39 @@ export async function runBackupAttempt({
 
   try {
     const destination = await backupFn(now);
-    const hadFailures = backupHealth.consecutiveFailures > 0
-      || backupHealth.state === 'degraded';
     backupHealth.state = 'healthy';
     backupHealth.lastSuccessAt = now.toISOString();
     backupHealth.consecutiveFailures = 0;
+    backupHealth.fastRetryAttempts = 0;
     backupHealth.lastError = null;
 
-    if (hadFailures) {
-      await reportRecoveryFn({
+    let recovery = null;
+    if (backupHealth.incidentOpen || backupHealth.recoveryPending) {
+      recovery = await reportRecoveryFn({
         code: INCIDENT.BACKUP_PROTECTION_LOST,
         scope: BACKUP_INCIDENT_SCOPE,
         context: backupIncidentContext(now),
       });
+      if (recoveryCompleted(recovery)) {
+        backupHealth.incidentOpen = false;
+        backupHealth.recoveryPending = false;
+      } else {
+        backupHealth.incidentOpen = true;
+        backupHealth.recoveryPending = true;
+      }
     }
-    return { ok: true, skipped: false, destination };
+
+    return {
+      ok: true,
+      skipped: false,
+      destination,
+      recovery,
+    };
   } catch (error) {
+    if (backupHealth.recoveryPending) {
+      backupHealth.recoveryPending = false;
+      backupHealth.incidentOpen = false;
+    }
     backupHealth.state = 'degraded';
     backupHealth.consecutiveFailures++;
     backupHealth.lastError = safeErrorMessage(error);
@@ -126,7 +155,7 @@ export async function runBackupAttempt({
     });
 
     let incident = null;
-    if (shouldEscalateBackupFailure(now)) {
+    if (shouldEscalateBackupFailure(now) && !backupHealth.incidentOpen) {
       incident = await reportIncidentFn({
         code: INCIDENT.BACKUP_PROTECTION_LOST,
         error,
@@ -134,6 +163,7 @@ export async function runBackupAttempt({
         source: 'Database backup protection',
         context: backupIncidentContext(now),
       });
+      if (incidentWasOpened(incident)) backupHealth.incidentOpen = true;
     }
     return { ok: false, skipped: false, error, incident };
   }
@@ -155,8 +185,17 @@ function scheduleAfter(delay, label) {
     backupTimeout = null;
     trackTask((async () => {
       const result = await runBackupAttempt();
-      if (result.ok) scheduleDatabaseBackup();
-      else scheduleAfter(BACKUP_RETRY_MS, 'retry scheduled');
+      if (result.ok) {
+        scheduleDatabaseBackup();
+        return;
+      }
+      if (backupHealth.fastRetryAttempts < BACKUP_FAST_RETRY_LIMIT) {
+        backupHealth.fastRetryAttempts++;
+        scheduleAfter(BACKUP_RETRY_MS, `fast retry ${backupHealth.fastRetryAttempts}/${BACKUP_FAST_RETRY_LIMIT}`);
+        return;
+      }
+      backupHealth.fastRetryAttempts = 0;
+      scheduleDatabaseBackup();
     })());
   }, delay);
   backupTimeout.unref?.();
@@ -204,6 +243,10 @@ export function getBackupHealthStatus(now = new Date()) {
     lastSuccessAt: backupHealth.lastSuccessAt,
     backupAgeHours: config.databaseBackupEnabled ? backupAgeHours(now) : null,
     consecutiveFailures: backupHealth.consecutiveFailures,
+    fastRetryAttempts: backupHealth.fastRetryAttempts,
+    fastRetryLimit: BACKUP_FAST_RETRY_LIMIT,
+    incidentOpen: backupHealth.incidentOpen,
+    recoveryPending: backupHealth.recoveryPending,
     lastError: backupHealth.lastError,
     nextAttemptAt: backupHealth.nextAttemptAt,
     threshold: BACKUP_FAILURE_THRESHOLD,
@@ -215,6 +258,9 @@ export function resetBackupHealthForTests({
   state = config.databaseBackupEnabled ? 'unknown' : 'disabled',
   lastSuccessAt = null,
   consecutiveFailures = 0,
+  fastRetryAttempts = 0,
+  incidentOpen = false,
+  recoveryPending = false,
   lastError = null,
   nextAttemptAt = null,
 } = {}) {
@@ -222,6 +268,9 @@ export function resetBackupHealthForTests({
   backupHealth.state = state;
   backupHealth.lastSuccessAt = lastSuccessAt;
   backupHealth.consecutiveFailures = consecutiveFailures;
+  backupHealth.fastRetryAttempts = fastRetryAttempts;
+  backupHealth.incidentOpen = incidentOpen;
+  backupHealth.recoveryPending = recoveryPending;
   backupHealth.lastError = lastError;
   backupHealth.nextAttemptAt = nextAttemptAt;
   workerStopping = false;
