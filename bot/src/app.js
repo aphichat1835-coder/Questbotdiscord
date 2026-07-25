@@ -50,6 +50,21 @@ async function sendInteractionFailure(interaction) {
   return interaction.reply(message);
 }
 
+async function reportInteractionFailure(interaction, error) {
+  if (isIgnorableInteractionError(error)) {
+    console.warn(`⚠️ Ignored interaction error: ${error.code} ${redactSensitive(error.message)}`);
+    return;
+  }
+  logDiscordError('Interaction error', error);
+  try {
+    await sendInteractionFailure(interaction);
+  } catch (replyError) {
+    if (!isIgnorableInteractionError(replyError)) {
+      logDiscordError('Failed to report interaction error', replyError);
+    }
+  }
+}
+
 export function createApp({ exit = process.exit } = {}) {
   const client = new Client({ intents: [GatewayIntentBits.Guilds] });
   client.commands = new Collection();
@@ -100,21 +115,6 @@ export function createApp({ exit = process.exit } = {}) {
     if (interaction.isStringSelectMenu()) return routeStringSelect(interaction);
     if (interaction.isChatInputCommand()) return routeChatInput(interaction);
     return undefined;
-  }
-
-  async function reportInteractionFailure(interaction, error) {
-    if (isIgnorableInteractionError(error)) {
-      console.warn(`⚠️ Ignored interaction error: ${error.code} ${redactSensitive(error.message)}`);
-      return;
-    }
-    logDiscordError('Interaction error', error);
-    try {
-      await sendInteractionFailure(interaction);
-    } catch (replyError) {
-      if (!isIgnorableInteractionError(replyError)) {
-        logDiscordError('Failed to report interaction error', replyError);
-      }
-    }
   }
 
   async function handleInteraction(interaction) {
