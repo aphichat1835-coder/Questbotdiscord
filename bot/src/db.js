@@ -1,9 +1,11 @@
 import Database from 'better-sqlite3';
 import fs from 'node:fs';
 import path from 'node:path';
-import 'dotenv/config';
+import { config } from './config.js';
+import { INCIDENT } from './incident-catalog.js';
+import { isPersistentDatabasePath } from './storage-profile.js';
 
-const dbPath = process.env.DATABASE_PATH ?? './data/quests.db';
+const dbPath = config.databasePath;
 if (dbPath !== ':memory:') {
   const dir = path.dirname(dbPath);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
@@ -34,12 +36,20 @@ const PERSISTENT_LEGACY_MIGRATION_BACKUP_PATH = '/var/data/backups/pre-tracker-r
 
 export const DATABASE_BACKUP_SLOT_COUNT = LOCAL_BACKUP_SLOT_PATHS.length;
 
-function usesPersistentDatabaseStorage(databasePath) {
-  return databasePath !== ':memory:' && path.resolve(databasePath).startsWith('/var/data/');
+function tagDatabaseError(error, incidentCode, operation) {
+  const tagged = error instanceof Error ? error : new Error(String(error));
+  tagged.incidentCode = incidentCode;
+  tagged.bootstrapContext = {
+    storageMode: config.storageProfile.mode,
+    databasePathType: config.storageProfile.databasePathType,
+    operation,
+    errorCode: tagged.code,
+  };
+  return tagged;
 }
 
 export function resolveDatabaseBackupDirectory(databasePath) {
-  return usesPersistentDatabaseStorage(databasePath)
+  return isPersistentDatabasePath(databasePath)
     ? PERSISTENT_BACKUP_ROOT
     : LOCAL_BACKUP_ROOT;
 }
@@ -48,55 +58,66 @@ export function resolveDatabaseBackupSlotPath(databasePath, slotIndex) {
   if (!Number.isInteger(slotIndex) || slotIndex < 0 || slotIndex >= DATABASE_BACKUP_SLOT_COUNT) {
     throw new RangeError(`Database backup slot is out of range: ${slotIndex}`);
   }
-  const allowedPaths = usesPersistentDatabaseStorage(databasePath)
+  const allowedPaths = isPersistentDatabasePath(databasePath)
     ? PERSISTENT_BACKUP_SLOT_PATHS
     : LOCAL_BACKUP_SLOT_PATHS;
   return allowedPaths[slotIndex];
 }
 
-const backupDirectory = resolveDatabaseBackupDirectory(dbPath);
+const backupDirectory = config.storageProfile.backupDirectory
+  ?? resolveDatabaseBackupDirectory(dbPath);
 
-export const db = new Database(dbPath);
-db.pragma('journal_mode = WAL');
-db.pragma('foreign_keys = ON');
+function openDatabase() {
+  try {
+    const database = new Database(dbPath);
+    database.pragma('journal_mode = WAL');
+    database.pragma('foreign_keys = ON');
+    return database;
+  } catch (error) {
+    throw tagDatabaseError(error, INCIDENT.DATABASE_OPEN_FAILED, 'open');
+  }
+}
 
-db.exec(`
-  CREATE TABLE IF NOT EXISTS scheduled_runners (
-    id                INTEGER PRIMARY KEY AUTOINCREMENT,
-    owner_id          TEXT NOT NULL,
-    guild_id          TEXT,
-    channel_id        TEXT NOT NULL,
-    account_id        TEXT NOT NULL,
-    username          TEXT NOT NULL,
-    token_ciphertext  TEXT NOT NULL,
-    token_iv          TEXT NOT NULL,
-    token_tag         TEXT NOT NULL,
-    token_salt        TEXT NOT NULL,
-    next_check_at     TEXT,
-    last_check_at     TEXT,
-    last_error        TEXT,
-    created_at        TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at        TEXT NOT NULL DEFAULT (datetime('now')),
-    UNIQUE(owner_id, account_id)
-  );
-  CREATE INDEX IF NOT EXISTS idx_scheduled_runners_owner
-    ON scheduled_runners(owner_id);
+export const db = openDatabase();
 
-  CREATE TABLE IF NOT EXISTS runtime_leases (
-    name       TEXT PRIMARY KEY,
-    holder     TEXT NOT NULL,
-    expires_at INTEGER NOT NULL
-  );
-`);
+try {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS scheduled_runners (
+      id                INTEGER PRIMARY KEY AUTOINCREMENT,
+      owner_id          TEXT NOT NULL,
+      guild_id          TEXT,
+      channel_id        TEXT NOT NULL,
+      account_id        TEXT NOT NULL,
+      username          TEXT NOT NULL,
+      token_ciphertext  TEXT NOT NULL,
+      token_iv          TEXT NOT NULL,
+      token_tag         TEXT NOT NULL,
+      token_salt        TEXT NOT NULL,
+      next_check_at     TEXT,
+      last_check_at     TEXT,
+      last_error        TEXT,
+      created_at        TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at        TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(owner_id, account_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_scheduled_runners_owner
+      ON scheduled_runners(owner_id);
+
+    CREATE TABLE IF NOT EXISTS runtime_leases (
+      name       TEXT PRIMARY KEY,
+      holder     TEXT NOT NULL,
+      expires_at INTEGER NOT NULL
+    );
+  `);
+} catch (error) {
+  throw tagDatabaseError(error, INCIDENT.DATABASE_MIGRATION_FAILED, 'schema-bootstrap');
+}
 
 let legacyMigrationBackupPath = null;
 
 function ensureBackupDirectory() {
-  if (backupDirectory === PERSISTENT_BACKUP_ROOT) {
-    fs.mkdirSync(PERSISTENT_BACKUP_ROOT, { recursive: true });
-    return;
-  }
-  fs.mkdirSync(LOCAL_BACKUP_ROOT, { recursive: true });
+  if (!backupDirectory) return;
+  fs.mkdirSync(backupDirectory, { recursive: true });
 }
 
 function tableExists(name) {
@@ -131,6 +152,7 @@ function slotPaths(startIndex = 0) {
 }
 
 export async function backupDatabaseSlot(slotIndex) {
+  if (dbPath === ':memory:') throw new Error('Database backup is unavailable for in-memory storage');
   ensureBackupDirectory();
   const destination = slotPath(slotIndex);
   await db.backup(destination);
@@ -146,10 +168,21 @@ export async function clearAllDatabaseBackupSlots() {
   await Promise.all(slotPaths().map((file) => fs.promises.rm(file, { force: true })));
 }
 
+export function getLatestDatabaseBackupAt() {
+  if (!config.databaseBackupEnabled || dbPath === ':memory:') return null;
+  let latest = 0;
+  for (const file of slotPaths()) {
+    try {
+      latest = Math.max(latest, fs.statSync(file).mtimeMs);
+    } catch {}
+  }
+  return latest > 0 ? new Date(latest).toISOString() : null;
+}
+
 async function createLegacyMigrationBackup() {
   if (dbPath === ':memory:') return null;
   ensureBackupDirectory();
-  const destination = usesPersistentDatabaseStorage(dbPath)
+  const destination = isPersistentDatabasePath(dbPath)
     ? PERSISTENT_LEGACY_MIGRATION_BACKUP_PATH
     : LOCAL_LEGACY_MIGRATION_BACKUP_PATH;
   await fs.promises.rm(destination, { force: true });
@@ -173,7 +206,11 @@ async function migrateLegacyTracker() {
   );
 }
 
-await migrateLegacyTracker();
+try {
+  await migrateLegacyTracker();
+} catch (error) {
+  throw tagDatabaseError(error, INCIDENT.DATABASE_MIGRATION_FAILED, 'legacy-tracker-migration');
+}
 
 const acquireRuntimeLeaseTransaction = db.transaction((name, holder, ttlMs, now) => {
   db.prepare('DELETE FROM runtime_leases WHERE expires_at <= ?').run(now);
