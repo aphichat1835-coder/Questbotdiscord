@@ -8,13 +8,17 @@ import {
   validateDiscordWebhookUrl,
 } from './webhook-delivery.js';
 
-const DISCORD_WEBHOOK_URL = /https:\/\/(?:canary\.|ptb\.)?discord(?:app)?\.com\/api\/webhooks\/\d{17,20}\/[A-Za-z0-9._-]+/gi;
-const SENSITIVE_ASSIGNMENT = /((?:authorization|token|secret|cookie|captcha|email|webhook(?:_url)?|password)['"]?\s*[:=]\s*['"]?)([^"',}\s]+)/gi;
+const DISCORD_WEBHOOK_URL = /https:\/\/(?:canary\.|ptb\.)?discord(?:app)?\.com\/api\/webhooks\/\d{17,20}\/[a-z0-9._-]+/gi;
+const COMMON_SECRET_ASSIGNMENT = /((?:authorization|token|secret|cookie|email|password)['"]?\s*[:=]\s*['"]?)([^"',}\s]+)/gi;
+const CAPTCHA_ASSIGNMENT = /(captcha(?:_[a-z0-9_]+)?['"]?\s*[:=]\s*['"]?)([^"',}\s]+)/gi;
+const WEBHOOK_ASSIGNMENT = /(webhook(?:_url)?['"]?\s*[:=]\s*['"]?)([^"',}\s]+)/gi;
 
 function redactBootstrapValue(value) {
   return String(value ?? 'Unknown error')
     .replace(DISCORD_WEBHOOK_URL, '[REDACTED_WEBHOOK]')
-    .replace(SENSITIVE_ASSIGNMENT, '$1[REDACTED]')
+    .replace(COMMON_SECRET_ASSIGNMENT, '$1[REDACTED]')
+    .replace(CAPTCHA_ASSIGNMENT, '$1[REDACTED]')
+    .replace(WEBHOOK_ASSIGNMENT, '$1[REDACTED]')
     .replace(/\b[\w-]{20,}\.[\w-]{5,}\.[\w-]{15,}\b/g, '[REDACTED_TOKEN]')
     .slice(0, 2500);
 }
