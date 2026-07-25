@@ -1,0 +1,35 @@
+name: Target check diagnostics
+
+permissions:
+  contents: read
+  checks: read
+
+on:
+  push:
+    branches: [diag-aa-checks]
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Inspect Codacy and Sonar checks
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          TARGET_SHA: e48a449dab76a13d1021062f944e251e5340f735
+        run: node .github/scripts/inspect-target-checks.mjs
+
+      - name: Upload check evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: target-check-evidence-${{ github.run_id }}
+          path: target-check-evidence.json
+          if-no-files-found: warn
+          retention-days: 1
