@@ -29,10 +29,11 @@ Discord Bot แบบ Bot-only สำหรับตรวจและดำเ�
 
 - Render/Console logs เก็บ Error ทุกระดับ
 - Discord Webhook ส่งเฉพาะ Structured Incident ที่มี Code และ Context allowlist
-- Webhook ปิด Mention, ปิด Redirect และจำกัด Retry
-- Network timeout หลังเริ่ม POST ไม่ถูกส่งซ้ำแบบเดาสุ่ม
-- เหตุซ้ำรวมด้วย Incident code และ Scope ภายใน 10 นาที
-- ระบบที่กลับมาปกติส่ง Recovery ด้วย Incident ID เดิม
+- Incident state ถูก Reserve ก่อน Network call เพื่อกัน Concurrent duplicate
+- Webhook ปิด Mention, ปิด Redirect และ Retry เฉพาะ 429/502/503/504 สูงสุดหนึ่งครั้ง
+- Network timeout หลังเริ่ม POST เป็น `delivery_unknown` และไม่ส่ง POST ซ้ำทันทีแบบเดาสุ่ม
+- Incident ที่ส่งสำเร็จเปิดอยู่และ Suppress เหตุซ้ำจนกว่าจะ Recovery
+- Delivery/Recovery ที่ล้มมี Retry guard และใช้ Incident ID เดิม
 - User Token หมดอายุ, Error ของบัญชีเดียว และ Unknown Quest event ไม่ส่ง Webhook
 - Quest transport outage และ Scheduled Runner restore failure ต้องผ่าน Threshold ก่อนส่ง
 - Quest schema/parser break ส่งทันที
@@ -41,7 +42,7 @@ Discord Bot แบบ Bot-only สำหรับตรวจและดำเ�
 
 Process handlers และ Bootstrap reporter ถูกติดตั้งก่อนโหลด Config, Database และ Discord runtime ดังนั้น Database open/migration failure, Runtime lease conflict, Health bind failure และ Discord login failure ถูกแยก Incident code และ Shutdown อย่างมี Budget
 
-Health server ต้อง Bind สำเร็จก่อน Startup ผ่าน ระบบไม่ปล่อย Bot ทำงานแบบครึ่งระบบโดยไม่มี Health endpoint
+Health server ต้อง Bind สำเร็จก่อน Startup ผ่าน ระบบไม่ปล่อย Bot ทำงานแบบครึ่งระบบโดยไม่มี Health endpoint Runtime ใช้ Fatal/Shutdown promise เดียวเพื่อป้องกัน Cleanup ซ้อน
 
 ## Storage และ Backup
 
@@ -54,24 +55,28 @@ Storage profile ถูกเลือกโดยอัตโนมัติแ�
 
 Backup สำหรับ Database แบบไฟล์:
 
+- Database นอก `/var/data/` ใช้ `./data/backups`
+- Database ใต้ `/var/data/` ใช้ `/var/data/backups`
+- Directory, Slots, Cleanup, Latest-backup inspection และ Migration backup ใช้ Fixed profile เดียวกัน
 - เก็บสูงสุด 7 Slot
 - Failure ครั้งแรกและครั้งที่สองอยู่ใน Render logs
-- Failure ครั้งที่ 3 หรือ Backup เก่าเกิน 26 ชั่วโมงส่ง Incident
-- Retry ทุก 15 นาทีระหว่างผิดปกติ
-- ส่ง Recovery เมื่อ Backup สำเร็จอีกครั้ง
+- Failure ครั้งที่ 3 หรือ Backup เก่าเกิน 26 ชั่วโมงเปิด Incident หนึ่งรายการ
+- Fast retry ทุก 15 นาทีสูงสุด 3 รอบ แล้วกลับตาราง Daily
+- Failure ระหว่าง Incident เปิดอยู่ไม่ยิง Webhook ซ้ำ
+- Recovery ที่ส่งล้มจะลองใหม่ใน Backup success รอบถัดไป
 
 ## ความปลอดภัยและข้อมูล
 
 - Auto Daily เก็บ Token แบบเข้ารหัส AES-256-GCM โดยผูกข้อมูลกับ Owner และ Account
-- Payload ปิดบัง Token, Secret, Cookie, CAPTCHA, Email, Ciphertext, Password และ Webhook URL
-- Incident context ใช้ Allowlist ต่อ Code ไม่รับ Arbitrary object
+- Payload ปิดบัง Token, Secret, Cookie, CAPTCHA, Email, Ciphertext, Password, Compound secret keys และ Webhook URL
+- Incident context ใช้ Deep-frozen Allowlist ต่อ Code ไม่รับ Arbitrary object
 - Token, Ciphertext, Username และ Account ID ไม่ถูกพิมพ์ใน Smoke Test log
 - HTTP `/api/status` ต้องใช้ Bearer token และจะปิดเมื่อไม่ได้ตั้งค่า
-- Status หลังบ้านไม่แสดง Webhook URL หรือ Full database path
+- Status หลังบ้านไม่แสดง Webhook URL, Full database path หรือ Backup directory
 
 ## การตรวจสอบ
 
-CI ตรวจ Repository shape, Sanitized Quest fixture, ตำแหน่ง Backup ที่อนุญาต, Safe bootstrap, Storage profile, Backup threshold/recovery, Incident lifecycle, Webhook transport, Unit/Regression coverage, Syntax และ Production dependency audit
+CI ตรวจ Repository shape, Sanitized Quest fixture, Fixed backup destinations, Incident/Storage architecture boundaries, Environment no-mutation, Safe bootstrap, Serialized shutdown, Storage/Backup profile, Bounded backup retry/recovery, Incident concurrency/redaction/recovery, Webhook retry ceiling, Unit/Regression coverage, Syntax และ Production dependency audit
 
 Manual Quest API smoke เป็นแบบ Read-only: ตรวจบัญชีและอ่านรายการ Quest เท่านั้น ไม่ Enroll, Progress, Heartbeat หรือ Claim การเปลี่ยนข้อมูลจริงต้องตรวจด้วยขั้นตอนควบคุมก่อน Production
 
