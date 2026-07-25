@@ -95,8 +95,9 @@ test('runner quality refactor keeps static-analysis regressions out', async () =
   assert.match(mutationRetry, /abortableDelay\(ms, signal, \{ unref: true \}\)/);
   assert.doesNotMatch(stopCommand, /function summarizeStopResults/);
   assert.match(db, /resolveDatabaseBackupSlotPath/);
-  assert.match(db, /LOCAL_BACKUP_SLOT_PATHS/);
-  assert.match(db, /PERSISTENT_BACKUP_SLOT_PATHS/);
+  assert.match(db, /LOCAL_BACKUP_PROFILE/);
+  assert.match(db, /PERSISTENT_BACKUP_PROFILE/);
+  assert.match(db, /validateBackupProfile/);
   assert.doesNotMatch(db, /questbot-slot-\$\{/);
   assert.doesNotMatch(db, /DATABASE_BACKUP_DIR/);
   assert.doesNotMatch(db, /backupLocalSlot|backupPersistentSlot|clearLocalInactiveSlots|clearPersistentInactiveSlots/);
@@ -107,14 +108,16 @@ test('runner quality refactor keeps static-analysis regressions out', async () =
   assert.doesNotMatch(auditHardeningTest, /140\.1\.2\.3/);
 
   assert.match(errorReporter, /function incidentIdentity\(code, scope\)/);
+  assert.match(errorReporter, /state = 'delivering'/);
   assert.match(errorReporter, /export async function reportIncident/);
   assert.match(errorReporter, /export async function reportRecovery/);
   assert.match(errorReporter, /allowlistedIncidentContext/);
   assert.match(incidentCatalog, /export const INCIDENT/);
+  assert.match(incidentCatalog, /Object\.hasOwn\(DEFINITIONS, code\)/);
   assert.match(incidentCatalog, /export function allowlistedIncidentContext/);
   assert.match(webhookDelivery, /redirect: 'error'/);
   assert.match(webhookDelivery, /RETRYABLE_STATUSES/);
-  assert.doesNotMatch(webhookDelivery, /status >= 500/);
+  assert.doesNotMatch(webhookDelivery, /status\s*>=\s*500/);
 
   assert.match(httpRetry, /async function consumeRetryableResponse/);
   assert.match(httpRetry, /async function handleFetchFailure/);
