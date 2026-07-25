@@ -1,24 +1,34 @@
+import { randomUUID } from 'node:crypto';
 import { config } from './config.js';
+import {
+  allowlistedIncidentContext,
+  getIncidentDefinition,
+  INCIDENT,
+} from './incident-catalog.js';
+import { executeDiscordWebhook } from './webhook-delivery.js';
 
-const recentlyReported = new Map();
+const incidentState = new Map();
 const DEDUPE_MS = 10 * 60_000;
-const WEBHOOK_TIMEOUT_MS = 5000;
-const WEBHOOK_MAX_ATTEMPTS = 2;
-const SENSITIVE_KEY = /authorization|token|secret|cookie|captcha|email|webhook/i;
+const SENSITIVE_KEY = /authorization|token|secret|cookie|captcha|email|webhook|cipher|password/i;
 const DISCORD_WEBHOOK_URL = /https:\/\/(?:canary\.|ptb\.)?discord(?:app)?\.com\/api\/webhooks\/\d{17,20}\/[A-Za-z0-9._-]+/gi;
-const ALWAYS_EMERGENCY_SOURCES = new Set([
-  'Client startup',
-  'Database backup',
-  'Discord login',
-  'Discord session invalidated',
-  'Health server',
-  'Runtime lease',
-  'Uncaught exception',
-  'Unhandled rejection',
+const LEGACY_SOURCE_CODES = new Map([
+  ['Client startup', INCIDENT.CLIENT_STARTUP_FAILED],
+  ['Database backup', INCIDENT.BACKUP_PROTECTION_LOST],
+  ['Discord login', INCIDENT.DISCORD_LOGIN_FAILED],
+  ['Discord session invalidated', INCIDENT.DISCORD_SESSION_INVALIDATED],
+  ['Health server', INCIDENT.HEALTH_SERVER_BIND_FAILED],
+  ['Runtime lease', INCIDENT.RUNTIME_LEASE_LOST],
+  ['Uncaught exception', INCIDENT.UNCAUGHT_EXCEPTION],
+  ['Unhandled rejection', INCIDENT.UNHANDLED_REJECTION],
 ]);
 
-// Kept as a compatibility hook for existing startup code. Webhook delivery does
-// not depend on the Discord client being connected or having channel permissions.
+const reporterStatus = {
+  lastDeliveryAt: null,
+  lastDeliveryState: 'never',
+  suppressedIncidents: 0,
+};
+
+// Retained temporarily so existing startup code can migrate without a breaking import.
 export function setErrorReporterClient(client) {
   void client;
 }
@@ -55,71 +65,27 @@ export function redactSensitive(value) {
   return printable(value)
     .replace(DISCORD_WEBHOOK_URL, '[REDACTED_WEBHOOK]')
     .replace(
-      /((?:authorization|token|secret|cookie|captcha(?:_[a-z0-9_]+)?|email|webhook(?:_url)?)['"]?\s*[:=]\s*['"]?)([^"',}\s]+)/gi,
+      /((?:authorization|token|secret|cookie|captcha(?:_[a-z0-9_]+)?|email|webhook(?:_url)?|cipher|password)['"]?\s*[:=]\s*['"]?)([^"',}\s]+)/gi,
       '$1[REDACTED]',
     )
     .replace(/\b[\w-]{20,}\.[\w-]{5,}\.[\w-]{15,}\b/g, '[REDACTED_TOKEN]')
-    .slice(0, 3500);
+    .slice(0, 8000);
 }
 
 export function safeErrorMessage(error) {
-  return redactSensitive(error?.message ?? error ?? 'Unknown error');
+  return redactSensitive(error?.message ?? error ?? 'Unknown error').slice(0, 1200);
 }
 
-function emergencyCompatibilityFailure(message) {
-  return /endpoints unavailable|schema changed|could not be parsed|missing a valid id/i.test(message);
-}
-
-function emergencyRestoreFailure(message) {
-  return /decrypt|cipher|authenticate data|runner token secret|token secret/i.test(message);
-}
-
-export function isEmergencyIncident(source, error) {
-  const safeSource = String(source ?? 'Unknown source');
-  const message = safeErrorMessage(error);
-  if (ALWAYS_EMERGENCY_SOURCES.has(safeSource)) return true;
-  if (safeSource === 'Quest API compatibility') return emergencyCompatibilityFailure(message);
-  if (safeSource.startsWith('Restore Scheduled Runner')) return emergencyRestoreFailure(message);
-  return false;
-}
-
-function canDeliverEmergencyWebhook() {
-  if (process.env.QUESTBOT_TEST_MODE === 'true') return false;
-  return process.env.NODE_TEST_WORKER_ID == null
-    || process.env.ALLOW_TEST_WEBHOOK === 'true';
-}
-
-function incidentCategory(source) {
-  if (source.startsWith('Restore Scheduled Runner')) return 'Restore Scheduled Runner';
-  if (source.startsWith('Discord shard ')) return 'Discord shard';
-  return source;
-}
-
-function removeExpiredReports(now) {
-  for (const [reportedKey, reservation] of recentlyReported) {
-    if (now - reservation.reservedAt >= DEDUPE_MS) recentlyReported.delete(reportedKey);
-  }
-}
-
-function reserveCriticalErrorReport(source, safeMessage, now = Date.now()) {
-  removeExpiredReports(now);
-  const key = `${incidentCategory(source)}:${safeMessage.slice(0, 250)}`;
-  const previous = recentlyReported.get(key);
-  if (previous && now - previous.reservedAt < DEDUPE_MS) return null;
-
-  const reservation = { key, reservedAt: now };
-  recentlyReported.set(key, reservation);
-  return reservation;
-}
-
-function releaseCriticalErrorReport(reservation) {
-  if (recentlyReported.get(reservation.key) === reservation) {
-    recentlyReported.delete(reservation.key);
-  }
+function safeErrorStack(error) {
+  const stack = redactSensitive(error?.stack ?? '');
+  if (!stack) return '';
+  return stack.split('\n').slice(0, 4).join('\n').slice(0, 1800);
 }
 
 function codeBlock(value, limit) {
-  const safe = String(value).replaceAll('```', '`\u200b``').slice(0, limit);
+  const safe = String(value || 'No additional detail')
+    .replaceAll('```', '`\u200b``')
+    .slice(0, limit);
   return `\`\`\`\n${safe}\n\`\`\``;
 }
 
@@ -135,107 +101,250 @@ function deployField() {
   return `Commit: ${commit}\nInstance: ${instance}`.slice(0, 1024);
 }
 
-function contextField(context) {
-  if (!context || (typeof context === 'object' && Object.keys(context).length === 0)) return null;
-  return codeBlock(redactSensitive(context), 900);
+function incidentIdentity(code, scope) {
+  return `${code}:${String(scope || 'system').slice(0, 120)}`;
 }
 
-export function buildEmergencyWebhookPayload(source, error, context = {}) {
-  const safeSource = redactSensitive(source).slice(0, 256);
-  const safeMessage = redactSensitive(error?.stack || error?.message || error);
+function createIncidentId() {
+  return `NQB-${randomUUID().replaceAll('-', '').slice(0, 8).toUpperCase()}`;
+}
+
+function canDeliverEmergencyWebhook() {
+  if (process.env.QUESTBOT_TEST_MODE === 'true') return false;
+  return process.env.NODE_TEST_WORKER_ID == null
+    || process.env.ALLOW_TEST_WEBHOOK === 'true';
+}
+
+function contextField(code, context) {
+  const allowed = allowlistedIncidentContext(code, context);
+  if (Object.keys(allowed).length === 0) return null;
+  return codeBlock(redactSensitive(allowed), 900);
+}
+
+function incidentFields({ code, incidentId, status, context, occurrences }) {
+  const definition = getIncidentDefinition(code);
   const fields = [
-    { name: 'Source', value: safeSource || 'Unknown', inline: true },
-    { name: 'Severity', value: 'CRITICAL', inline: true },
-    { name: 'Uptime', value: `${Math.floor(process.uptime())} seconds`, inline: true },
+    { name: 'สถานะ', value: status === 'RECOVERED' ? 'RECOVERED' : 'CRITICAL · DETECTED', inline: true },
+    { name: 'เหตุการณ์', value: code, inline: true },
+    { name: 'Incident ID', value: incidentId, inline: true },
+    { name: 'ผลกระทบ', value: definition.impact.slice(0, 1024), inline: false },
+    { name: 'สิ่งที่ควรทำ', value: definition.action.slice(0, 1024), inline: false },
     { name: 'Runtime', value: runtimeField(), inline: false },
     { name: 'Deployment', value: deployField(), inline: false },
   ];
-  const safeContext = contextField(context);
+  if (occurrences > 1) {
+    fields.push({ name: 'เกิดซ้ำ', value: `${occurrences} ครั้ง`, inline: true });
+  }
+  const safeContext = contextField(code, context);
   if (safeContext) fields.push({ name: 'Context', value: safeContext, inline: false });
+  return fields;
+}
+
+export function buildIncidentWebhookPayload({
+  code,
+  error = null,
+  context = {},
+  incidentId = createIncidentId(),
+  status = 'DETECTED',
+  occurrences = 1,
+} = {}) {
+  const definition = getIncidentDefinition(code);
+  const details = status === 'RECOVERED'
+    ? 'ระบบกลับมาทำงานภายในเกณฑ์ที่กำหนดแล้ว'
+    : [safeErrorMessage(error), safeErrorStack(error)].filter(Boolean).join('\n');
 
   return {
-    username: 'Quest Bot Emergency',
+    username: 'Quest Bot Backend',
     allowed_mentions: { parse: [] },
     embeds: [{
-      title: '🚨 SYSTEM EMERGENCY',
-      description: codeBlock(safeMessage, 3200),
-      color: 0xED4245,
-      fields,
-      footer: { text: 'NeverDie Quest Bot · Backend Emergency Log' },
+      title: `${status === 'RECOVERED' ? '✅' : '🚨'} ${definition.title}`,
+      description: codeBlock(details, 2200),
+      color: status === 'RECOVERED' ? 0x57F287 : 0xED4245,
+      fields: incidentFields({ code, incidentId, status, context, occurrences }),
+      footer: { text: 'NeverDie Quest Bot · Backend Incident Log' },
       timestamp: new Date().toISOString(),
     }],
   };
 }
 
-function retryableWebhookStatus(status) {
-  return status === 429 || status >= 500;
-}
-
-function retryDelay(attempt, response = null) {
-  const retryAfter = Number(response?.headers?.get?.('retry-after'));
-  const delayMs = Number.isFinite(retryAfter) && retryAfter > 0
-    ? Math.min(5000, Math.ceil(retryAfter * 1000))
-    : attempt * 750;
-  return new Promise((resolve) => setTimeout(resolve, delayMs));
-}
-
-function logWebhookDeliveryFailure(error) {
+function logWebhookDeliveryFailure(code, incidentId, result) {
   console.error(
-    '❌ [ErrorReporter] Emergency webhook delivery failed:',
-    safeErrorMessage(error),
+    `❌ [Incident delivery ${code} ${incidentId}]`,
+    redactSensitive(result),
   );
 }
 
-async function postEmergencyWebhook(payload) {
-  for (let attempt = 1; attempt <= WEBHOOK_MAX_ATTEMPTS; attempt++) {
-    let response;
-    try {
-      response = await fetch(config.logWebhookUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-        signal: AbortSignal.timeout(WEBHOOK_TIMEOUT_MS),
-      });
-    } catch (reportError) {
-      if (attempt < WEBHOOK_MAX_ATTEMPTS) {
-        await retryDelay(attempt);
-        continue;
-      }
-      logWebhookDeliveryFailure(reportError);
-      return false;
-    }
+export function reportError(source, error, { context = {} } = {}) {
+  const safeSource = redactSensitive(source || 'Unknown source').slice(0, 256);
+  const safeMessage = redactSensitive(error?.stack || error?.message || error);
+  const safeContext = redactSensitive(sanitizeValue(context));
+  console.error(`❌ [${safeSource}]`, safeMessage, safeContext === '{}' ? '' : safeContext);
+  return { state: 'logged' };
+}
 
-    if (response.ok) return true;
-    if (attempt < WEBHOOK_MAX_ATTEMPTS && retryableWebhookStatus(response.status)) {
-      await retryDelay(attempt, response);
-      continue;
-    }
+export async function reportIncident({
+  code,
+  error,
+  context = {},
+  scope = 'system',
+  source = code,
+  now = Date.now(),
+  notify = true,
+} = {}) {
+  getIncidentDefinition(code);
+  reportError(source, error, { context: allowlistedIncidentContext(code, context) });
 
-    logWebhookDeliveryFailure(new Error(`Discord webhook returned HTTP ${response.status}`));
-    return false;
+  if (!notify || !canDeliverEmergencyWebhook()) {
+    return { state: 'logged_only', code };
   }
-  return false;
+
+  const key = incidentIdentity(code, scope);
+  let incident = incidentState.get(key);
+  if (incident?.state === 'open' && now - incident.lastSentAt < DEDUPE_MS) {
+    incident.occurrences++;
+    reporterStatus.suppressedIncidents++;
+    return {
+      state: 'suppressed',
+      code,
+      incidentId: incident.incidentId,
+      occurrences: incident.occurrences,
+    };
+  }
+
+  if (!incident || incident.state === 'recovered') {
+    incident = {
+      incidentId: createIncidentId(),
+      code,
+      scope,
+      occurrences: 0,
+      firstSeenAt: now,
+      lastSentAt: 0,
+      state: 'open',
+    };
+  }
+  incident.occurrences++;
+  incident.lastSeenAt = now;
+
+  const payload = buildIncidentWebhookPayload({
+    code,
+    error,
+    context,
+    incidentId: incident.incidentId,
+    occurrences: incident.occurrences,
+  });
+  const delivery = await executeDiscordWebhook({
+    url: config.logWebhookUrl,
+    payload,
+  });
+
+  incident.lastSentAt = now;
+  incident.delivery = delivery;
+  incident.state = 'open';
+  incidentState.set(key, incident);
+  reporterStatus.lastDeliveryState = delivery.state;
+  if (delivery.state === 'delivered') {
+    reporterStatus.lastDeliveryAt = new Date(now).toISOString();
+  } else {
+    logWebhookDeliveryFailure(code, incident.incidentId, delivery);
+  }
+
+  return {
+    state: delivery.state,
+    code,
+    incidentId: incident.incidentId,
+    occurrences: incident.occurrences,
+  };
+}
+
+export async function reportRecovery({
+  code,
+  context = {},
+  scope = 'system',
+  now = Date.now(),
+} = {}) {
+  getIncidentDefinition(code);
+  const key = incidentIdentity(code, scope);
+  const incident = incidentState.get(key);
+  if (!incident || incident.state === 'recovered') return { state: 'not_open', code };
+  if (!canDeliverEmergencyWebhook()) {
+    incident.state = 'recovered';
+    incident.recoveredAt = now;
+    return { state: 'logged_only', code, incidentId: incident.incidentId };
+  }
+
+  const payload = buildIncidentWebhookPayload({
+    code,
+    context,
+    incidentId: incident.incidentId,
+    status: 'RECOVERED',
+    occurrences: incident.occurrences,
+  });
+  const delivery = await executeDiscordWebhook({ url: config.logWebhookUrl, payload });
+  incident.recoveryDelivery = delivery;
+  incident.recoveredAt = now;
+  incident.state = delivery.state === 'delivered' ? 'recovered' : 'recovery_pending';
+  incidentState.set(key, incident);
+  reporterStatus.lastDeliveryState = delivery.state;
+  if (delivery.state === 'delivered') {
+    reporterStatus.lastDeliveryAt = new Date(now).toISOString();
+  } else {
+    logWebhookDeliveryFailure(code, incident.incidentId, delivery);
+  }
+  return { state: delivery.state, code, incidentId: incident.incidentId };
+}
+
+function legacyIncidentCode(source, error, emergency) {
+  if (emergency === true) return INCIDENT.SYSTEM_FAILURE;
+  if (LEGACY_SOURCE_CODES.has(source)) return LEGACY_SOURCE_CODES.get(source);
+  if (String(source).startsWith('Restore Scheduled Runner')) {
+    return INCIDENT.RUNNER_RESTORE_SYSTEM_FAILED;
+  }
+  if (source === 'Quest API compatibility') {
+    const message = safeErrorMessage(error);
+    if (/unknown events/i.test(message)) return null;
+    if (error?.name === 'QuestCompatibilityError'
+      || /schema changed|could not be parsed|missing a valid id/i.test(message)) {
+      return INCIDENT.QUEST_API_SCHEMA_INCOMPATIBLE;
+    }
+  }
+  return null;
+}
+
+export function isEmergencyIncident(source, error) {
+  return Boolean(legacyIncidentCode(source, error, undefined));
+}
+
+export function buildEmergencyWebhookPayload(source, error, context = {}) {
+  return buildIncidentWebhookPayload({
+    code: legacyIncidentCode(source, error, true),
+    error,
+    context,
+  });
 }
 
 export async function reportCriticalError(
   source,
   error,
-  { notify = true, emergency = undefined, context = {} } = {},
+  { notify = true, emergency = undefined, context = {}, incidentCode = null, scope = 'system' } = {},
 ) {
-  const safeSource = redactSensitive(source);
-  const safeMessage = redactSensitive(error?.stack || error?.message || error);
+  const code = incidentCode || legacyIncidentCode(source, error, emergency);
+  if (!code) return reportError(source, error, { context });
+  return reportIncident({ code, error, context, scope, source, notify });
+}
 
-  // Render/console logging remains the complete source of truth for every error.
-  console.error(`❌ [${safeSource}]`, safeMessage);
+export function getIncidentReporterStatus() {
+  return {
+    webhookConfigured: Boolean(config.logWebhookUrl),
+    lastDeliveryAt: reporterStatus.lastDeliveryAt,
+    lastDeliveryState: reporterStatus.lastDeliveryState,
+    suppressedIncidents: reporterStatus.suppressedIncidents,
+    openIncidents: [...incidentState.values()].filter((item) => item.state !== 'recovered').length,
+  };
+}
 
-  const shouldNotify = emergency ?? isEmergencyIncident(safeSource, error);
-  if (!notify || !shouldNotify || !canDeliverEmergencyWebhook()) return;
-
-  const reservation = reserveCriticalErrorReport(safeSource, safeMessage);
-  if (!reservation) return;
-
-  const delivered = await postEmergencyWebhook(
-    buildEmergencyWebhookPayload(safeSource, error, context),
-  );
-  if (!delivered) releaseCriticalErrorReport(reservation);
+export function resetIncidentReporterStateForTests() {
+  incidentState.clear();
+  reporterStatus.lastDeliveryAt = null;
+  reporterStatus.lastDeliveryState = 'never';
+  reporterStatus.suppressedIncidents = 0;
 }
