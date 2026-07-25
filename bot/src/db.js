@@ -48,6 +48,13 @@ function tagDatabaseError(error, incidentCode, operation) {
   return tagged;
 }
 
+function validatedSlotIndex(slotIndex) {
+  if (!Number.isInteger(slotIndex) || slotIndex < 0 || slotIndex >= DATABASE_BACKUP_SLOT_COUNT) {
+    throw new RangeError(`Database backup slot is out of range: ${slotIndex}`);
+  }
+  return slotIndex;
+}
+
 export function resolveDatabaseBackupDirectory(databasePath) {
   return isPersistentDatabasePath(databasePath)
     ? PERSISTENT_BACKUP_ROOT
@@ -55,17 +62,11 @@ export function resolveDatabaseBackupDirectory(databasePath) {
 }
 
 export function resolveDatabaseBackupSlotPath(databasePath, slotIndex) {
-  if (!Number.isInteger(slotIndex) || slotIndex < 0 || slotIndex >= DATABASE_BACKUP_SLOT_COUNT) {
-    throw new RangeError(`Database backup slot is out of range: ${slotIndex}`);
-  }
   const allowedPaths = isPersistentDatabasePath(databasePath)
     ? PERSISTENT_BACKUP_SLOT_PATHS
     : LOCAL_BACKUP_SLOT_PATHS;
-  return allowedPaths[slotIndex];
+  return allowedPaths[validatedSlotIndex(slotIndex)];
 }
-
-const backupDirectory = config.storageProfile.backupDirectory
-  ?? resolveDatabaseBackupDirectory(dbPath);
 
 function openDatabase() {
   try {
@@ -170,6 +171,52 @@ const PERSISTENT_BACKUP_OPERATIONS = Object.freeze([
   }),
 ]);
 
+const LOCAL_BACKUP_PROFILE = Object.freeze({
+  directory: LOCAL_BACKUP_ROOT,
+  slotPaths: LOCAL_BACKUP_SLOT_PATHS,
+  operations: LOCAL_BACKUP_OPERATIONS,
+  ensureDirectory: () => fs.mkdirSync('./data/backups', { recursive: true }),
+  migrationPath: LOCAL_LEGACY_MIGRATION_BACKUP_PATH,
+  removeMigration: () => fs.promises.rm('./data/backups/pre-tracker-removal.db', { force: true }),
+  backupMigration: () => db.backup('./data/backups/pre-tracker-removal.db'),
+});
+
+const PERSISTENT_BACKUP_PROFILE = Object.freeze({
+  directory: PERSISTENT_BACKUP_ROOT,
+  slotPaths: PERSISTENT_BACKUP_SLOT_PATHS,
+  operations: PERSISTENT_BACKUP_OPERATIONS,
+  ensureDirectory: () => fs.mkdirSync('/var/data/backups', { recursive: true }),
+  migrationPath: PERSISTENT_LEGACY_MIGRATION_BACKUP_PATH,
+  removeMigration: () => fs.promises.rm('/var/data/backups/pre-tracker-removal.db', { force: true }),
+  backupMigration: () => db.backup('/var/data/backups/pre-tracker-removal.db'),
+});
+
+function validateBackupProfile(profile) {
+  if (profile.slotPaths.length !== DATABASE_BACKUP_SLOT_COUNT) {
+    throw new Error(`Backup profile ${profile.directory} has an invalid slot count`);
+  }
+  for (const [index, operation] of profile.operations.entries()) {
+    if (operation.path !== profile.slotPaths[index]) {
+      throw new Error(`Backup operation ${index} does not match its fixed slot path`);
+    }
+  }
+  return profile;
+}
+
+validateBackupProfile(LOCAL_BACKUP_PROFILE);
+validateBackupProfile(PERSISTENT_BACKUP_PROFILE);
+
+function resolveBackupProfile(directory) {
+  if (directory == null) return null;
+  if (directory === LOCAL_BACKUP_ROOT) return LOCAL_BACKUP_PROFILE;
+  if (directory === PERSISTENT_BACKUP_ROOT) return PERSISTENT_BACKUP_PROFILE;
+  throw new Error(`Unsupported database backup directory: ${directory}`);
+}
+
+const backupDirectory = config.storageProfile.backupDirectory
+  ?? (dbPath === ':memory:' ? null : resolveDatabaseBackupDirectory(dbPath));
+const backupProfile = resolveBackupProfile(backupDirectory);
+
 try {
   db.exec(`
     CREATE TABLE IF NOT EXISTS scheduled_runners (
@@ -206,18 +253,11 @@ try {
 let legacyMigrationBackupPath = null;
 
 function ensureBackupDirectory() {
-  if (!backupDirectory) return;
-  if (isPersistentDatabasePath(dbPath)) {
-    fs.mkdirSync('/var/data/backups', { recursive: true });
-  } else {
-    fs.mkdirSync('./data/backups', { recursive: true });
-  }
+  backupProfile?.ensureDirectory();
 }
 
 function backupOperations() {
-  return isPersistentDatabasePath(dbPath)
-    ? PERSISTENT_BACKUP_OPERATIONS
-    : LOCAL_BACKUP_OPERATIONS;
+  return backupProfile?.operations ?? [];
 }
 
 function tableExists(name) {
@@ -240,15 +280,8 @@ function dropLegacyTables(existing) {
   if (existing.includes('quests')) db.exec('DROP TABLE IF EXISTS quests');
 }
 
-function validatedSlotIndex(slotIndex) {
-  if (!Number.isInteger(slotIndex) || slotIndex < 0 || slotIndex >= DATABASE_BACKUP_SLOT_COUNT) {
-    throw new RangeError(`Database backup slot is out of range: ${slotIndex}`);
-  }
-  return slotIndex;
-}
-
 export async function backupDatabaseSlot(slotIndex) {
-  if (dbPath === ':memory:') throw new Error('Database backup is unavailable for in-memory storage');
+  if (!backupProfile) throw new Error('Database backup is unavailable for in-memory storage');
   ensureBackupDirectory();
   const operation = backupOperations()[validatedSlotIndex(slotIndex)];
   await operation.backup();
@@ -265,7 +298,7 @@ export async function clearAllDatabaseBackupSlots() {
 }
 
 export function getLatestDatabaseBackupAt() {
-  if (!config.databaseBackupEnabled || dbPath === ':memory:') return null;
+  if (!config.databaseBackupEnabled || !backupProfile) return null;
   let latest = 0;
   for (const operation of backupOperations()) {
     try {
@@ -276,16 +309,11 @@ export function getLatestDatabaseBackupAt() {
 }
 
 async function createLegacyMigrationBackup() {
-  if (dbPath === ':memory:') return null;
+  if (!backupProfile) return null;
   ensureBackupDirectory();
-  if (isPersistentDatabasePath(dbPath)) {
-    await fs.promises.rm('/var/data/backups/pre-tracker-removal.db', { force: true });
-    await db.backup('/var/data/backups/pre-tracker-removal.db');
-    return PERSISTENT_LEGACY_MIGRATION_BACKUP_PATH;
-  }
-  await fs.promises.rm('./data/backups/pre-tracker-removal.db', { force: true });
-  await db.backup('./data/backups/pre-tracker-removal.db');
-  return LOCAL_LEGACY_MIGRATION_BACKUP_PATH;
+  await backupProfile.removeMigration();
+  await backupProfile.backupMigration();
+  return backupProfile.migrationPath;
 }
 
 async function migrateLegacyTracker() {
@@ -352,14 +380,9 @@ export function getDatabasePath() {
 }
 
 export function getDatabaseBackupDirectory() {
-  return backupDirectory;
+  return backupProfile?.directory ?? null;
 }
 
 export function getLegacyMigrationBackupPath() {
   return legacyMigrationBackupPath;
-}
-
-export function stats() {
-  const scheduled = db.prepare('SELECT COUNT(*) AS n FROM scheduled_runners').get().n;
-  return { scheduled };
 }
