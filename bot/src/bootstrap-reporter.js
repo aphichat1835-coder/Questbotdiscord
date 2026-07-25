@@ -3,43 +3,17 @@ import {
   allowlistedIncidentContext,
   getIncidentDefinition,
 } from './incident-catalog.js';
+import { redactText } from './redaction.js';
 import {
   executeDiscordWebhook,
   validateDiscordWebhookUrl,
 } from './webhook-delivery.js';
 
-const REDACTION_SCAN_LIMIT = 10_000;
-const SENSITIVE_KEY = /authorization|token|secret|cookie|captcha|email|webhook|cipher|password/i;
-const DISCORD_WEBHOOK_URL = /https:\/\/(?:canary\.|ptb\.)?discord(?:app)?\.com\/api\/webhooks\/\d{17,20}\/[a-z0-9._-]+/gi;
-const ASSIGNMENT = /((?:["']?[\w.-]+["']?)\s*[:=]\s*["']?)([^"',}\s]+)/g;
-
-function assignmentKey(prefix) {
-  const colonIndex = prefix.indexOf(':');
-  const equalsIndex = prefix.indexOf('=');
-  let delimiterIndex = colonIndex;
-  if (delimiterIndex === -1 || (equalsIndex !== -1 && equalsIndex < delimiterIndex)) {
-    delimiterIndex = equalsIndex;
-  }
-  return prefix
-    .slice(0, delimiterIndex)
-    .trim()
-    .replaceAll('"', '')
-    .replaceAll("'", '');
-}
-
-function redactAssignments(value) {
-  return value.replace(ASSIGNMENT, (match, prefix) => (
-    SENSITIVE_KEY.test(assignmentKey(prefix))
-      ? `${prefix}[REDACTED]`
-      : match
-  ));
-}
-
 function redactBootstrapValue(value) {
-  const bounded = String(value ?? 'Unknown error').slice(0, REDACTION_SCAN_LIMIT);
-  return redactAssignments(bounded.replace(DISCORD_WEBHOOK_URL, '[REDACTED_WEBHOOK]'))
-    .replace(/\b[\w-]{20,}\.[\w-]{5,}\.[\w-]{15,}\b/g, '[REDACTED_TOKEN]')
-    .slice(0, 2500);
+  return redactText(value, {
+    scanLimit: 10_000,
+    outputLimit: 2500,
+  });
 }
 
 function incidentId() {
