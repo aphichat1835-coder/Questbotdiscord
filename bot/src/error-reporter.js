@@ -3,7 +3,6 @@ import { config } from './config.js';
 import {
   allowlistedIncidentContext,
   getIncidentDefinition,
-  INCIDENT,
 } from './incident-catalog.js';
 import {
   accumulateLegacyContext,
@@ -16,18 +15,16 @@ const legacyCounters = new Map();
 const DEDUPE_MS = 10 * 60_000;
 const LEGACY_WINDOW_MS = 10 * 60_000;
 const SENSITIVE_KEY = /authorization|token|secret|cookie|captcha|email|webhook|cipher|password/i;
-const DISCORD_WEBHOOK_URL = /https:\/\/(?:canary\.|ptb\.)?discord(?:app)?\.com\/api\/webhooks\/\d{17,20}\/[A-Za-z0-9._-]+/gi;
+const DISCORD_WEBHOOK_URL = /https:\/\/(?:canary\.|ptb\.)?discord(?:app)?\.com\/api\/webhooks\/\d{17,20}\/[a-z0-9._-]+/gi;
+const COMMON_SECRET_ASSIGNMENT = /((?:authorization|token|secret|cookie|email|cipher|password)['"]?\s*[:=]\s*['"]?)([^"',}\s]+)/gi;
+const CAPTCHA_ASSIGNMENT = /(captcha(?:_[a-z0-9_]+)?['"]?\s*[:=]\s*['"]?)([^"',}\s]+)/gi;
+const WEBHOOK_ASSIGNMENT = /(webhook(?:_url)?['"]?\s*[:=]\s*['"]?)([^"',}\s]+)/gi;
 
 const reporterStatus = {
   lastDeliveryAt: null,
   lastDeliveryState: 'never',
   suppressedIncidents: 0,
 };
-
-// Retained temporarily so existing startup code can migrate without a breaking import.
-export function setErrorReporterClient(client) {
-  void client;
-}
 
 function sanitizeValue(value, seen = new WeakSet(), depth = 0) {
   if (value == null || typeof value !== 'object') return value;
@@ -57,13 +54,19 @@ function printable(value) {
   }
 }
 
+function redactAssignments(value) {
+  return value
+    .replace(COMMON_SECRET_ASSIGNMENT, '$1[REDACTED]')
+    .replace(CAPTCHA_ASSIGNMENT, '$1[REDACTED]')
+    .replace(WEBHOOK_ASSIGNMENT, '$1[REDACTED]');
+}
+
 export function redactSensitive(value) {
-  return printable(value)
-    .replace(DISCORD_WEBHOOK_URL, '[REDACTED_WEBHOOK]')
-    .replace(
-      /((?:authorization|token|secret|cookie|captcha(?:_[a-z0-9_]+)?|email|webhook(?:_url)?|cipher|password)['"]?\s*[:=]\s*['"]?)([^"',}\s]+)/gi,
-      '$1[REDACTED]',
-    )
+  const withoutWebhookUrls = printable(value).replace(
+    DISCORD_WEBHOOK_URL,
+    '[REDACTED_WEBHOOK]',
+  );
+  return redactAssignments(withoutWebhookUrls)
     .replace(/\b[\w-]{20,}\.[\w-]{5,}\.[\w-]{15,}\b/g, '[REDACTED_TOKEN]')
     .slice(0, 8000);
 }
