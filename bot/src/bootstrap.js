@@ -4,15 +4,17 @@ import { reportBootstrapIncident } from './bootstrap-reporter.js';
 export const FATAL_REPORT_BUDGET_MS = 3500;
 let fatalBootstrapPromise = null;
 
-function delay(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 export async function reportWithinFatalBudget(reportPromise, budgetMs = FATAL_REPORT_BUDGET_MS) {
-  return Promise.race([
-    Promise.resolve(reportPromise),
-    delay(budgetMs).then(() => ({ state: 'budget_expired' })),
-  ]);
+  let timer = null;
+  const timeout = new Promise((resolve) => {
+    timer = setTimeout(() => resolve({ state: 'budget_expired' }), budgetMs);
+    timer.unref?.();
+  });
+  try {
+    return await Promise.race([Promise.resolve(reportPromise), timeout]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 export async function fatalBootstrapShutdown({
@@ -21,9 +23,9 @@ export async function fatalBootstrapShutdown({
   context = {},
 } = {}) {
   if (fatalBootstrapPromise) return fatalBootstrapPromise;
-  fatalBootstrapPromise = reportWithinFatalBudget(
-    reportBootstrapIncident({ code, error, context }),
-  ).catch(() => ({ state: 'report_failed' }));
+  const report = reportBootstrapIncident({ code, error, context })
+    .catch(() => ({ state: 'report_failed' }));
+  fatalBootstrapPromise = reportWithinFatalBudget(report);
   const result = await fatalBootstrapPromise;
   process.exitCode = 1;
   return result;
