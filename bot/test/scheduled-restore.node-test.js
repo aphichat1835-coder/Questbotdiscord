@@ -6,6 +6,7 @@ import {
   createScheduledRunner,
   deleteAllScheduledRunners,
 } from '../src/scheduled-runner-store.js';
+import { encryptRunnerToken } from '../src/runner-token-crypto.js';
 import { restoreScheduledRunnerRows } from '../src/quest/scheduled-restore.js';
 import {
   beginRunnerState,
@@ -19,6 +20,23 @@ const OWNER_ID = 'scheduled-restore-test-owner';
 function cleanup() {
   deleteAllScheduledRunners(OWNER_ID);
   clearRunnerStatesForTests();
+}
+
+function unresolvedRow(id, token) {
+  const encrypted = encryptRunnerToken(token, config.runnerTokenSecret, OWNER_ID, null);
+  return {
+    id,
+    owner_id: OWNER_ID,
+    guild_id: null,
+    channel_id: `channel-${id}`,
+    account_id: null,
+    username: `unresolved-${id}`,
+    token_ciphertext: encrypted.ciphertext,
+    token_iv: encrypted.iv,
+    token_tag: encrypted.tag,
+    token_salt: encrypted.salt,
+    next_check_at: null,
+  };
 }
 
 test.beforeEach(cleanup);
@@ -56,6 +74,25 @@ test('scheduled restore decrypts the persisted token and delegates to the runner
   assert.equal(starts[0].userToken, 'persisted-user-token');
   assert.equal(starts[0].mode, 'scheduled');
   assert.equal(starts[0].initialNextCheckAt, '2030-01-01T08:00:00.000Z');
+});
+
+test('multiple unresolved account rows restore independently', async () => {
+  const rows = [
+    unresolvedRow(900001, 'unresolved-token-1'),
+    unresolvedRow(900002, 'unresolved-token-2'),
+  ];
+  const starts = [];
+
+  const result = await restoreScheduledRunnerRows({}, async (args) => {
+    starts.push(args);
+  }, { rows });
+
+  assert.deepEqual(result, { restored: 2, failed: 0 });
+  assert.deepEqual(starts.map((args) => args.userToken), [
+    'unresolved-token-1',
+    'unresolved-token-2',
+  ]);
+  assert.deepEqual(starts.map((args) => args.accountId), [null, null]);
 });
 
 test('recovering durable states without a matching scheduled row become failed', async () => {
