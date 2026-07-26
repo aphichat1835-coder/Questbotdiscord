@@ -17,6 +17,9 @@ const LEGACY_WINDOW_MS = 10 * 60_000;
 const FAILED_DELIVERY_RETRY_MS = 60_000;
 const CLOSED_INCIDENT_RETENTION_MS = 24 * 60 * 60_000;
 const FAILED_INCIDENT_RETENTION_MS = 7 * 24 * 60 * 60_000;
+const OPEN_INCIDENT_MAX_AGE_MS = 30 * 24 * 60 * 60_000;
+const MAX_INCIDENT_STATE_ENTRIES = 256;
+const IN_FLIGHT_INCIDENT_STATES = new Set(['delivering', 'recovering']);
 const SENSITIVE_KEY = /authorization|token|secret|cookie|captcha|email|webhook|cipher|password/i;
 
 const reporterStatus = {
@@ -170,20 +173,40 @@ export function reportError(source, error, { context = {} } = {}) {
   return { state: 'logged' };
 }
 
+function incidentReferenceTime(incident, now) {
+  return incident.recoveredAt
+    ?? incident.recoveryAttemptAt
+    ?? incident.lastSeenAt
+    ?? incident.firstSeenAt
+    ?? now;
+}
+
+function pruneIncidentCapacity() {
+  if (incidentState.size <= MAX_INCIDENT_STATE_ENTRIES) return;
+  const candidates = [...incidentState.entries()]
+    .filter(([, incident]) => !IN_FLIGHT_INCIDENT_STATES.has(incident.state))
+    .sort(([, left], [, right]) => (
+      incidentReferenceTime(left, 0) - incidentReferenceTime(right, 0)
+    ));
+  while (incidentState.size > MAX_INCIDENT_STATE_ENTRIES && candidates.length) {
+    incidentState.delete(candidates.shift()[0]);
+  }
+}
+
 function pruneReporterState(now) {
   for (const [key, incident] of incidentState) {
-    if (['delivering', 'open', 'recovering', 'recovery_pending'].includes(incident.state)) {
+    const reference = incidentReferenceTime(incident, now);
+    if (['open', 'recovery_pending'].includes(incident.state)) {
+      if (now - reference >= OPEN_INCIDENT_MAX_AGE_MS) incidentState.delete(key);
       continue;
     }
-    const reference = incident.recoveredAt
-      ?? incident.lastSeenAt
-      ?? incident.firstSeenAt
-      ?? now;
+    if (IN_FLIGHT_INCIDENT_STATES.has(incident.state)) continue;
     const retention = incident.state === 'recovered'
       ? CLOSED_INCIDENT_RETENTION_MS
       : FAILED_INCIDENT_RETENTION_MS;
     if (now - reference >= retention) incidentState.delete(key);
   }
+  pruneIncidentCapacity();
 
   for (const [key, counter] of legacyCounters) {
     if (now - (counter.lastSeenAt ?? counter.firstSeenAt ?? now) >= LEGACY_WINDOW_MS) {
@@ -219,6 +242,14 @@ function newIncident(code, scope, now) {
   };
 }
 
+function reopenRecoveryPendingIncident(incident) {
+  incident.recoveryDelivery = null;
+  incident.recoveryAttemptAt = null;
+  incident.nextRecoveryRetryAt = null;
+  incident.recoveredAt = null;
+  return incident;
+}
+
 function suppressionForExistingIncident(incident, code, now) {
   if (!incident) return null;
   if (['delivering', 'recovering', 'open'].includes(incident.state)) {
@@ -238,8 +269,10 @@ function reserveIncident(code, scope, now) {
   const suppression = suppressionForExistingIncident(incident, code, now);
   if (suppression) return { suppression };
 
-  if (!incident || ['recovered', 'recovery_pending'].includes(incident.state)) {
+  if (!incident || incident.state === 'recovered') {
     incident = newIncident(code, scope, now);
+  } else if (incident.state === 'recovery_pending') {
+    reopenRecoveryPendingIncident(incident);
   }
 
   incident.occurrences++;
@@ -287,6 +320,7 @@ function applyIncidentDelivery(key, incident, delivery, now) {
     incident.nextRetryAt = now + FAILED_DELIVERY_RETRY_MS;
   }
   incidentState.set(key, incident);
+  pruneReporterState(now);
 }
 
 function incidentDeliveryResult(code, incident, delivery) {
@@ -345,7 +379,7 @@ export async function reportRecovery({
     return { state: 'retry_deferred', code, incidentId: incident.incidentId };
   }
   if (incident.state === 'recovering') {
-    return suppressIncident(incident, code, now, 'recovery_in_progress');
+    return { state: 'recovery_in_progress', code, incidentId: incident.incidentId };
   }
   if (incident.state === 'recovery_pending' && now < (incident.nextRecoveryRetryAt ?? 0)) {
     return { state: 'retry_deferred', code, incidentId: incident.incidentId };
@@ -354,6 +388,7 @@ export async function reportRecovery({
     incident.state = 'recovered';
     incident.recoveredAt = now;
     incidentState.set(key, incident);
+    pruneReporterState(now);
     return { state: 'logged_only', code, incidentId: incident.incidentId };
   }
 
@@ -380,6 +415,7 @@ export async function reportRecovery({
     incident.nextRecoveryRetryAt = now + FAILED_DELIVERY_RETRY_MS;
   }
   incidentState.set(key, incident);
+  pruneReporterState(now);
 
   recordDeliveryStatus(code, incident.incidentId, delivery, now);
   return { state: delivery.state, code, incidentId: incident.incidentId };
