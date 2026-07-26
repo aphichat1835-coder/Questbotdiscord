@@ -1,5 +1,6 @@
 import { config } from '../config.js';
 import * as legacyRunner from '../discord-runner.js';
+import { isProcessRoleActive } from '../process-topology.js';
 import { listScheduledRunners } from '../scheduled-runner-store.js';
 import { observeRunnerCompletion } from './runner-completion-observer.js';
 import { restoreScheduledRunnerRows } from './scheduled-restore.js';
@@ -22,6 +23,12 @@ import {
   stopRunnerStateObserver,
   syncAllRunnerStates,
 } from './runner-state-observer.js';
+
+const TERMINAL_RUNNER_STATES = new Set([
+  RUNNER_STATE.STOPPED,
+  RUNNER_STATE.COMPLETED,
+  RUNNER_STATE.FAILED,
+]);
 
 function beginDurableStart(args, source = 'runner-service') {
   beginRunnerState({
@@ -56,6 +63,17 @@ function markStartFailure(args, error) {
     metadata: { stage: 'start' },
   });
   clearSmartWake(args.jobKey);
+}
+
+function transitionOwnedRunner(jobKey, ownerId, state, metadata) {
+  const current = getRunnerState(jobKey);
+  if (!current || current.owner_id !== ownerId || TERMINAL_RUNNER_STATES.has(current.state)) {
+    return current;
+  }
+  return transitionRunnerState(jobKey, state, {
+    nextActionAt: null,
+    metadata: { ...(current.metadata ?? {}), ...metadata },
+  });
 }
 
 export function shouldDelegateScheduledRunner(processRole, mode) {
@@ -130,14 +148,32 @@ export async function shutdownRunners(timeoutMs = null) {
 
 export function stopJob(ownerId, jobKey, options = {}) {
   const stopped = legacyRunner.stopJob(ownerId, jobKey, options);
-  if (stopped && options.removeSchedule !== false) clearSmartWake(jobKey);
+  if (stopped) {
+    transitionOwnedRunner(jobKey, ownerId, RUNNER_STATE.STOPPING, {
+      stopSource: config.processRole,
+    });
+    if (options.removeSchedule !== false) clearSmartWake(jobKey);
+  }
   return stopped;
 }
 
 export function stopScheduledJob(ownerId, scheduleId) {
+  const jobKey = `scheduled:${scheduleId}`;
+  const hadLocalJob = Boolean(legacyRunner.getJob(jobKey));
   const stopped = legacyRunner.stopScheduledJob(ownerId, scheduleId);
-  if (stopped) clearSmartWake(`scheduled:${scheduleId}`);
-  return stopped;
+  if (!stopped) return false;
+
+  clearSmartWake(jobKey);
+  const workerMayStillBeRunning = config.processRole === 'control'
+    && isProcessRoleActive('worker');
+  const state = hadLocalJob || workerMayStillBeRunning
+    ? RUNNER_STATE.STOPPING
+    : RUNNER_STATE.STOPPED;
+  transitionOwnedRunner(jobKey, ownerId, state, {
+    stopSource: config.processRole,
+    delegated: workerMayStillBeRunning,
+  });
+  return true;
 }
 
 export function stopAllForUser(ownerId, options = {}) {
@@ -146,7 +182,14 @@ export function stopAllForUser(ownerId, options = {}) {
     includeStopping: true,
   });
   const stopped = legacyRunner.stopAllForUser(ownerId, options);
-  if (stopped > 0) jobs.forEach((job) => clearSmartWake(job.key));
+  if (stopped > 0) {
+    for (const job of jobs) {
+      transitionOwnedRunner(job.key, ownerId, RUNNER_STATE.STOPPING, {
+        stopSource: config.processRole,
+      });
+      clearSmartWake(job.key);
+    }
+  }
   return stopped;
 }
 
