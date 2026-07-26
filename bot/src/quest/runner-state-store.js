@@ -29,10 +29,10 @@ const TERMINAL_STATES = new Set([
   RUNNER_STATE.FAILED,
 ]);
 const ACTIVE_STATES = [...VALID_STATES].filter((state) => !TERMINAL_STATES.has(state));
+const ACTIVE_STATE_PLACEHOLDERS = ACTIVE_STATES.map(() => '?').join(', ');
 
 function assertState(state) {
   if (!VALID_STATES.has(state)) throw new Error(`Unknown durable runner state: ${state}`);
-  return state;
 }
 
 function json(value) {
@@ -42,7 +42,11 @@ function json(value) {
 function parseMetadata(row) {
   if (!row) return null;
   let metadata = null;
-  try { metadata = row.metadata_json ? JSON.parse(row.metadata_json) : null; } catch {}
+  try {
+    metadata = row.metadata_json ? JSON.parse(row.metadata_json) : null;
+  } catch {
+    metadata = { invalidMetadata: true };
+  }
   return { ...row, metadata };
 }
 
@@ -127,7 +131,7 @@ export function beginRunnerState({
     retryCount: 0,
     lastError: null,
     metadataJson: json(metadata),
-    completedAt: null,
+    completedAt: TERMINAL_STATES.has(state) ? new Date().toISOString() : null,
   });
   return getRunnerState(jobKey);
 }
@@ -151,23 +155,22 @@ export function transitionRunnerState(jobKey, state, {
   if (!current && (!ownerId || !mode)) {
     throw new Error(`Runner state ${jobKey} does not exist and cannot be created implicitly`);
   }
-  const terminal = TERMINAL_STATES.has(state);
   upsertRunnerState.run({
     jobKey,
-    ownerId: ownerId ?? current.owner_id,
-    accountId: accountId ?? current.account_id,
-    username: username ?? current.username,
-    mode: mode ?? current.mode,
-    scheduleId: scheduleId ?? current.schedule_id,
+    ownerId: ownerId ?? current?.owner_id,
+    accountId: accountId ?? current?.account_id ?? null,
+    username: username ?? current?.username ?? null,
+    mode: mode ?? current?.mode,
+    scheduleId: scheduleId ?? current?.schedule_id ?? null,
     state,
     questId,
     questName,
     progress,
     nextActionAt,
-    retryCount: retryCount ?? current.retry_count ?? 0,
+    retryCount: retryCount ?? current?.retry_count ?? 0,
     lastError,
     metadataJson: json(metadata),
-    completedAt: terminal ? new Date().toISOString() : null,
+    completedAt: TERMINAL_STATES.has(state) ? new Date().toISOString() : null,
   });
   return getRunnerState(jobKey);
 }
@@ -186,7 +189,7 @@ export function listRunnerStates({ ownerId = null, activeOnly = false, limit = 1
     params.push(ownerId);
   }
   if (activeOnly) {
-    clauses.push(`state IN (${ACTIVE_STATES.map(() => '?').join(', ')})`);
+    clauses.push(`state IN (${ACTIVE_STATE_PLACEHOLDERS})`);
     params.push(...ACTIVE_STATES);
   }
   params.push(Math.max(1, Math.min(500, limit)));
@@ -200,15 +203,42 @@ export function listRunnerStates({ ownerId = null, activeOnly = false, limit = 1
 }
 
 export function markInterruptedRunnerStates(now = new Date()) {
-  const placeholders = ACTIVE_STATES.map(() => '?').join(', ');
-  return db.prepare(`
+  const nextActionAt = now.toISOString();
+  const completedAt = now.toISOString();
+  const markScheduled = db.prepare(`
     UPDATE runner_states
     SET state = ?,
         next_action_at = ?,
+        completed_at = NULL,
         last_error = 'Process restarted before the previous lifecycle completed',
         updated_at = datetime('now')
-    WHERE state IN (${placeholders})
-  `).run(RUNNER_STATE.RECOVERING, now.toISOString(), ...ACTIVE_STATES).changes;
+    WHERE mode = 'scheduled'
+      AND state IN (${ACTIVE_STATE_PLACEHOLDERS})
+  `);
+  const failOneShot = db.prepare(`
+    UPDATE runner_states
+    SET state = ?,
+        next_action_at = NULL,
+        completed_at = ?,
+        last_error = 'Process restarted; one-shot runners cannot be restored',
+        updated_at = datetime('now')
+    WHERE mode != 'scheduled'
+      AND state IN (${ACTIVE_STATE_PLACEHOLDERS})
+  `);
+  const reconcile = db.transaction(() => {
+    const scheduled = markScheduled.run(
+      RUNNER_STATE.RECOVERING,
+      nextActionAt,
+      ...ACTIVE_STATES,
+    ).changes;
+    const oneShot = failOneShot.run(
+      RUNNER_STATE.FAILED,
+      completedAt,
+      ...ACTIVE_STATES,
+    ).changes;
+    return scheduled + oneShot;
+  });
+  return reconcile();
 }
 
 export function pruneRunnerStates({ retentionDays = 30, keepLatest = 500 } = {}) {
