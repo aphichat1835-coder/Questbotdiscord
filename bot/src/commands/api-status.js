@@ -77,12 +77,11 @@ export async function execute(interaction) {
   const accountStatuses = listQuestEngineStatuses({ ownerId: interaction.user.id });
   const jobs = listJobs();
   const persisted = listScheduledRunners();
-  const durable = listRunnerStates({ ownerId: interaction.user.id, limit: 50 });
-  const activeDurable = durable.filter((row) => ![
-    RUNNER_STATE.STOPPED,
-    RUNNER_STATE.COMPLETED,
-    RUNNER_STATE.FAILED,
-  ].includes(row.state));
+  const activeDurable = listRunnerStates({
+    ownerId: interaction.user.id,
+    activeOnly: true,
+    limit: 50,
+  });
   const stopping = listStoppingAccounts(interaction.user.id).length;
   const transport = getDiscordApiRuntimeStatus();
 
@@ -126,6 +125,7 @@ export async function execute(interaction) {
           `Queue: **${transport.rateLimit.queued}** · Active: **${transport.rateLimit.active}**`,
           `429: **${transport.rateLimit.rateLimited}** · Global: **${transport.rateLimit.globalRateLimits}**`,
           `Blocked buckets: **${transport.rateLimit.blockedBuckets}**`,
+          `Hint errors: **${transport.rateLimit.scheduleHintErrors ?? 0}**`,
         ].join('\n'),
         inline: false,
       },
