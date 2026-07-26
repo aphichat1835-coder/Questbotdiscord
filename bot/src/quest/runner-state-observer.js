@@ -105,18 +105,22 @@ export function syncRunnerState(job) {
   return transitionRunnerState(job.key, transition.state, transition.values);
 }
 
-export function syncAllRunnerStates() {
-  return listJobs().flatMap((job) => {
+export function syncRunnerStates(jobs, sync = syncRunnerState, log = console.error) {
+  return jobs.flatMap((job) => {
     try {
-      const result = syncRunnerState(job);
+      const result = sync(job);
       return result ? [result] : [];
     } catch (error) {
-      console.error(
+      log(
         `[RunnerState:${String(job.key).slice(0, 100)}] sync failed — ${error?.message ?? 'unknown error'}`,
       );
       return [];
     }
   });
+}
+
+export function syncAllRunnerStates() {
+  return syncRunnerStates(listJobs());
 }
 
 export function startRunnerStateObserver() {
