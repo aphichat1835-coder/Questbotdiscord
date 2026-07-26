@@ -39,6 +39,43 @@ test('Discord API runtime rewrites older versioned URLs to v10 only', async () =
   }
 });
 
+test('Request input method reaches the coordinator when options do not override it', async () => {
+  const scheduled = [];
+  const transported = [];
+  const coordinator = {
+    async schedule(url, options, execute) {
+      scheduled.push({ url, method: options.method });
+      return execute();
+    },
+  };
+  installDiscordApiRuntime({
+    coordinator,
+    fetchFn: async (input) => {
+      transported.push({ url: input.url, method: input.method });
+      return response();
+    },
+  });
+
+  try {
+    const request = new Request('https://discord.com/api/v9/quests/quest-1/claim-reward', {
+      method: 'POST',
+      headers: { Authorization: 'request-account' },
+      body: '{}',
+    });
+    await globalThis.fetch(request);
+    assert.deepEqual(scheduled, [{
+      url: 'https://discord.com/api/v10/quests/quest-1/claim-reward',
+      method: 'POST',
+    }]);
+    assert.deepEqual(transported, [{
+      url: 'https://discord.com/api/v10/quests/quest-1/claim-reward',
+      method: 'POST',
+    }]);
+  } finally {
+    uninstallDiscordApiRuntime();
+  }
+});
+
 test('non-Discord traffic is not rewritten or coordinated', async () => {
   const calls = [];
   installDiscordApiRuntime({
@@ -131,6 +168,28 @@ test('an earlier blocked bucket replaces a later queue wakeup timer', async () =
   assert.equal(order[0][0], 'short');
   assert.ok(order[0][1] < 80, `short bucket started after ${order[0][1]}ms`);
   assert.ok(order[1][1] >= 90, `long bucket started after only ${order[1][1]}ms`);
+});
+
+test('coordinator settles the caller even when response bookkeeping throws', async () => {
+  class ThrowingCoordinator extends DiscordRateLimitCoordinator {
+    updateRateLimitState() {
+      throw new Error('bookkeeping failed');
+    }
+
+    publishSchedule() {
+      throw new Error('schedule publication failed');
+    }
+  }
+
+  const coordinator = new ThrowingCoordinator();
+  const result = await coordinator.schedule('https://discord.com/api/v10/users/@me', {
+    headers: { Authorization: 'account-a' },
+  }, async () => response(200));
+
+  assert.equal(result.status, 200);
+  const status = coordinator.snapshot();
+  assert.equal(status.bookkeepingErrors, 1);
+  assert.equal(status.scheduleHintErrors, 1);
 });
 
 test('Quest list responses publish a smart hint without consuming the engine response body', async () => {
