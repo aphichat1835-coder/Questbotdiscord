@@ -33,16 +33,11 @@ export function installDiscordApiRuntime({ fetchFn = globalThis.fetch } = {}) {
   globalThis.fetch = (input, options = {}) => {
     const rewritten = rewriteDiscordApiUrl(input);
     if (!rewritten.coordinated) return originalFetch(input, options);
-    const requestOptions = input instanceof Request
-      ? { ...Object.fromEntries(input.headers), ...options }
-      : options;
+    const headers = options.headers ?? (input instanceof Request ? input.headers : undefined);
     return discordRateLimitCoordinator.schedule(
       rewritten.url,
-      {
-        ...options,
-        headers: options.headers ?? (input instanceof Request ? input.headers : undefined),
-      },
-      () => originalFetch(rewritten.input, requestOptions),
+      { ...options, headers },
+      () => originalFetch(rewritten.input, options),
     );
   };
   installed = true;
