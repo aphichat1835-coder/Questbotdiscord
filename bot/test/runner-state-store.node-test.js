@@ -38,7 +38,7 @@ test('runner state persists lifecycle, quest and next action data', () => {
   assert.deepEqual(state.metadata, { source: 'test' });
 });
 
-test('process restart marks non-terminal work as recovering without touching terminal rows', () => {
+test('process restart recovers scheduled work and fails non-restorable one-shot work', () => {
   beginRunnerState({
     jobKey: 'scheduled:1',
     ownerId: 'owner-1',
@@ -46,16 +46,36 @@ test('process restart marks non-terminal work as recovering without touching ter
     state: RUNNER_STATE.RUNNING_PROGRESS,
   });
   beginRunnerState({
-    jobKey: 'oneshot:1',
+    jobKey: 'oneshot:active',
+    ownerId: 'owner-1',
+    mode: 'oneshot',
+    state: RUNNER_STATE.RUNNING_PROGRESS,
+  });
+  beginRunnerState({
+    jobKey: 'oneshot:completed',
     ownerId: 'owner-1',
     mode: 'oneshot',
     state: RUNNER_STATE.COMPLETED,
   });
 
   const changed = markInterruptedRunnerStates(new Date('2030-01-01T00:00:00.000Z'));
-  assert.equal(changed, 1);
+  assert.equal(changed, 2);
   assert.equal(getRunnerState('scheduled:1').state, RUNNER_STATE.RECOVERING);
-  assert.equal(getRunnerState('oneshot:1').state, RUNNER_STATE.COMPLETED);
+  const failedOneShot = getRunnerState('oneshot:active');
+  assert.equal(failedOneShot.state, RUNNER_STATE.FAILED);
+  assert.match(failedOneShot.last_error, /cannot be restored/);
+  assert.ok(failedOneShot.completed_at);
+  assert.equal(getRunnerState('oneshot:completed').state, RUNNER_STATE.COMPLETED);
+});
+
+test('terminal states created directly include a completion timestamp', () => {
+  const state = beginRunnerState({
+    jobKey: 'terminal',
+    ownerId: 'owner-1',
+    mode: 'oneshot',
+    state: RUNNER_STATE.STOPPED,
+  });
+  assert.ok(state.completed_at);
 });
 
 test('activeOnly excludes completed, stopped and failed rows', () => {
