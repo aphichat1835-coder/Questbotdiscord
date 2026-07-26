@@ -7,7 +7,7 @@ import {
   publishScheduleHint,
 } from '../src/quest/schedule-hint-bus.js';
 import {
-  clearSmartWake,
+  clearAllSmartWakes,
   MAX_SMART_WAKE_TIMER_MS,
   registerSmartWake,
   smartWakeTimerDelay,
@@ -19,21 +19,26 @@ import {
   RUNNER_STATE,
 } from '../src/quest/runner-state-store.js';
 
-const JOB_KEY = 'scheduled:smart-wake-test';
-const TOKEN = 'smart-wake-test-token';
+const ENROLLMENT_JOB_KEY = 'scheduled:smart-wake-enrollment';
+const ENROLLMENT_TOKEN = 'smart-wake-enrollment-token';
+const BASELINE_JOB_KEY = 'scheduled:smart-wake-baseline';
+const BASELINE_TOKEN = 'smart-wake-baseline-token';
 
-function cleanup() {
-  clearSmartWake(JOB_KEY);
+test.before(() => {
+  clearAllSmartWakes();
   clearScheduleHintsForTests();
   clearRunnerStatesForTests();
-}
+});
 
-test.beforeEach(cleanup);
-test.afterEach(cleanup);
+test.after(() => {
+  clearAllSmartWakes();
+  clearScheduleHintsForTests();
+  clearRunnerStatesForTests();
+});
 
 test('enrollment hints persist an earlier durable wake-up state', () => {
   beginRunnerState({
-    jobKey: JOB_KEY,
+    jobKey: ENROLLMENT_JOB_KEY,
     ownerId: 'owner-1',
     accountId: 'account-1',
     username: 'runner',
@@ -42,9 +47,9 @@ test('enrollment hints persist an earlier durable wake-up state', () => {
     state: RUNNER_STATE.RUNNING,
   });
   registerSmartWake({
-    jobKey: JOB_KEY,
+    jobKey: ENROLLMENT_JOB_KEY,
     ownerId: 'owner-1',
-    userToken: TOKEN,
+    userToken: ENROLLMENT_TOKEN,
     channelId: 'channel-1',
     client: {},
     mode: 'scheduled',
@@ -54,13 +59,13 @@ test('enrollment hints persist an earlier durable wake-up state', () => {
   });
 
   const nextActionAt = new Date(Date.now() + 60_000).toISOString();
-  publishScheduleHint(authorizationFingerprint(TOKEN), {
+  publishScheduleHint(authorizationFingerprint(ENROLLMENT_TOKEN), {
     nextActionAt,
     reason: 'enrollment:quest-1',
     priority: 70,
   });
 
-  const state = getRunnerState(JOB_KEY);
+  const state = getRunnerState(ENROLLMENT_JOB_KEY);
   assert.equal(state.state, RUNNER_STATE.WAITING_ENROLLMENT);
   assert.equal(state.next_action_at, nextActionAt);
   assert.deepEqual(state.metadata, { reason: 'enrollment:quest-1', priority: 70 });
@@ -68,29 +73,29 @@ test('enrollment hints persist an earlier durable wake-up state', () => {
 
 test('baseline hints do not replace the runner fixed schedule', () => {
   beginRunnerState({
-    jobKey: JOB_KEY,
+    jobKey: BASELINE_JOB_KEY,
     ownerId: 'owner-1',
     mode: 'scheduled',
-    scheduleId: 1,
+    scheduleId: 2,
     state: RUNNER_STATE.RUNNING,
   });
   registerSmartWake({
-    jobKey: JOB_KEY,
+    jobKey: BASELINE_JOB_KEY,
     ownerId: 'owner-1',
-    userToken: TOKEN,
+    userToken: BASELINE_TOKEN,
     channelId: 'channel-1',
     client: {},
     mode: 'scheduled',
-    scheduleId: 1,
+    scheduleId: 2,
   });
 
-  publishScheduleHint(authorizationFingerprint(TOKEN), {
+  publishScheduleHint(authorizationFingerprint(BASELINE_TOKEN), {
     nextActionAt: new Date(Date.now() + 60_000).toISOString(),
     reason: 'baseline',
     priority: 10,
   });
 
-  assert.equal(getRunnerState(JOB_KEY).state, RUNNER_STATE.RUNNING);
+  assert.equal(getRunnerState(BASELINE_JOB_KEY).state, RUNNER_STATE.RUNNING);
 });
 
 test('far-future smart wake uses bounded timer chunks instead of overflowing setTimeout', () => {
