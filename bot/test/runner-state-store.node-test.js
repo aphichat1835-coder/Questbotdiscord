@@ -127,6 +127,30 @@ test('process restart recovers scheduled work and fails non-restorable one-shot 
   assert.equal(getRunnerState('oneshot:completed').state, RUNNER_STATE.COMPLETED);
 });
 
+test('worker recovery touches scheduled states only and leaves control one-shot states active', () => {
+  beginRunnerState({
+    jobKey: 'scheduled:worker',
+    ownerId: 'owner-1',
+    mode: 'scheduled',
+    state: RUNNER_STATE.RUNNING_PROGRESS,
+  });
+  beginRunnerState({
+    jobKey: 'oneshot:control',
+    ownerId: 'owner-1',
+    mode: 'oneshot',
+    state: RUNNER_STATE.RUNNING_PROGRESS,
+  });
+
+  const changed = markInterruptedRunnerStates(
+    new Date('2030-01-01T00:00:00.000Z'),
+    { includeOneShot: false },
+  );
+
+  assert.equal(changed, 1);
+  assert.equal(getRunnerState('scheduled:worker').state, RUNNER_STATE.RECOVERING);
+  assert.equal(getRunnerState('oneshot:control').state, RUNNER_STATE.RUNNING_PROGRESS);
+});
+
 test('terminal states created directly include a completion timestamp', () => {
   const state = beginRunnerState({
     jobKey: 'terminal',
