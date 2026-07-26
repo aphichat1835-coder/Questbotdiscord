@@ -180,6 +180,29 @@ test('settled incident state remains capped when caller-controlled scopes keep c
   assert.ok(getIncidentReporterStatus().openIncidents <= 256);
 });
 
+test('capacity pruning evicts recovered incidents before an ongoing open incident', async () => {
+  globalThis.fetch = async () => new Response(null, { status: 204 });
+  const base = Date.now();
+  const protectedIncident = await healthIncident('protected-open', base, 'ongoing failure');
+
+  await healthIncident('terminal-candidate', base + 1, 'temporary failure');
+  const recovery = await reportRecovery({
+    code: INCIDENT.HEALTH_SERVER_BIND_FAILED,
+    scope: 'terminal-candidate',
+    now: base + 2,
+  });
+  assert.equal(recovery.state, 'delivered');
+
+  for (let index = 0; index < 255; index++) {
+    await healthIncident(`capacity-noise-${index}`, base + 10 + index, 'new failure', { log: false });
+  }
+
+  const duplicate = await healthIncident('protected-open', base + 1_000, 'still failing');
+  assert.equal(duplicate.state, 'suppressed');
+  assert.equal(duplicate.incidentId, protectedIncident.incidentId);
+  assert.ok(getIncidentReporterStatus().openIncidents <= 256);
+});
+
 test('relative database paths are never classified as persistent regardless of cwd', () => {
   assert.equal(isPersistentDatabasePath('/var/data/quests.db'), true);
   assert.equal(isPersistentDatabasePath('/var/data/nested/quests.db'), true);
