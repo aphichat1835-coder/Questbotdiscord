@@ -219,39 +219,25 @@ function newIncident(code, scope, now) {
   };
 }
 
-export async function reportIncident({
-  code,
-  error,
-  context = {},
-  scope = 'system',
-  source = code,
-  now = Date.now(),
-  notify = true,
-  log = true,
-} = {}) {
-  getIncidentDefinition(code);
-  if (log) reportError(source, error, { context: allowlistedIncidentContext(code, context) });
-
-  if (!notify || !canDeliverEmergencyWebhook()) {
-    return { state: 'logged_only', code };
+function suppressionForExistingIncident(incident, code, now) {
+  if (!incident) return null;
+  if (['delivering', 'recovering', 'open'].includes(incident.state)) {
+    return suppressIncident(incident, code, now);
   }
+  const retryPending = ['delivery_failed', 'delivery_unknown'].includes(incident.state)
+    && now < (incident.nextRetryAt ?? 0);
+  return retryPending
+    ? suppressIncident(incident, code, now, 'retry_deferred')
+    : null;
+}
 
+function reserveIncident(code, scope, now) {
   pruneReporterState(now);
   const key = incidentIdentity(code, scope);
   let incident = incidentState.get(key);
+  const suppression = suppressionForExistingIncident(incident, code, now);
+  if (suppression) return { suppression };
 
-  if (incident?.state === 'delivering' || incident?.state === 'recovering') {
-    return suppressIncident(incident, code, now);
-  }
-  if (incident?.state === 'open') {
-    return suppressIncident(incident, code, now);
-  }
-  if (
-    ['delivery_failed', 'delivery_unknown'].includes(incident?.state)
-    && now < (incident.nextRetryAt ?? 0)
-  ) {
-    return suppressIncident(incident, code, now, 'retry_deferred');
-  }
   if (!incident || ['recovered', 'recovery_pending'].includes(incident.state)) {
     incident = newIncident(code, scope, now);
   }
@@ -261,29 +247,34 @@ export async function reportIncident({
   incident.lastAttemptAt = now;
   incident.state = 'delivering';
   incidentState.set(key, incident);
+  return { key, incident };
+}
 
-  const payload = buildIncidentWebhookPayload({
-    code,
-    error,
-    context,
-    incidentId: incident.incidentId,
-    occurrences: incident.occurrences,
-  });
-
-  let delivery;
+async function deliverWebhook(payload, fallbackReason) {
   try {
-    delivery = await executeDiscordWebhook({
+    return await executeDiscordWebhook({
       url: config.logWebhookUrl,
       payload,
     });
   } catch (deliveryError) {
-    delivery = {
+    return {
       state: 'delivery_unknown',
       attempts: 0,
-      reason: deliveryError?.name || 'unexpected delivery failure',
+      reason: deliveryError?.name || fallbackReason,
     };
   }
+}
 
+function recordDeliveryStatus(code, incidentId, delivery, now) {
+  reporterStatus.lastDeliveryState = delivery.state;
+  if (delivery.state === 'delivered') {
+    reporterStatus.lastDeliveryAt = new Date(now).toISOString();
+    return;
+  }
+  logWebhookDeliveryFailure(code, incidentId, delivery);
+}
+
+function applyIncidentDelivery(key, incident, delivery, now) {
   incident.delivery = delivery;
   if (delivery.state === 'delivered') {
     incident.state = 'open';
@@ -296,20 +287,46 @@ export async function reportIncident({
     incident.nextRetryAt = now + FAILED_DELIVERY_RETRY_MS;
   }
   incidentState.set(key, incident);
+}
 
-  reporterStatus.lastDeliveryState = delivery.state;
-  if (delivery.state === 'delivered') {
-    reporterStatus.lastDeliveryAt = new Date(now).toISOString();
-  } else {
-    logWebhookDeliveryFailure(code, incident.incidentId, delivery);
-  }
-
+function incidentDeliveryResult(code, incident, delivery) {
   return {
     state: delivery.state,
     code,
     incidentId: incident.incidentId,
     occurrences: incident.occurrences,
   };
+}
+
+export async function reportIncident({
+  code,
+  error,
+  context = {},
+  scope = 'system',
+  source = code,
+  now = Date.now(),
+  notify = true,
+  log = true,
+} = {}) {
+  getIncidentDefinition(code);
+  if (log) reportError(source, error, { context: allowlistedIncidentContext(code, context) });
+  if (!notify || !canDeliverEmergencyWebhook()) return { state: 'logged_only', code };
+
+  const reservation = reserveIncident(code, scope, now);
+  if (reservation.suppression) return reservation.suppression;
+
+  const { key, incident } = reservation;
+  const payload = buildIncidentWebhookPayload({
+    code,
+    error,
+    context,
+    incidentId: incident.incidentId,
+    occurrences: incident.occurrences,
+  });
+  const delivery = await deliverWebhook(payload, 'unexpected delivery failure');
+  applyIncidentDelivery(key, incident, delivery, now);
+  recordDeliveryStatus(code, incident.incidentId, delivery, now);
+  return incidentDeliveryResult(code, incident, delivery);
 }
 
 export async function reportRecovery({
@@ -351,17 +368,7 @@ export async function reportRecovery({
     status: 'RECOVERED',
     occurrences: incident.occurrences,
   });
-
-  let delivery;
-  try {
-    delivery = await executeDiscordWebhook({ url: config.logWebhookUrl, payload });
-  } catch (deliveryError) {
-    delivery = {
-      state: 'delivery_unknown',
-      attempts: 0,
-      reason: deliveryError?.name || 'unexpected recovery delivery failure',
-    };
-  }
+  const delivery = await deliverWebhook(payload, 'unexpected recovery delivery failure');
 
   incident.recoveryDelivery = delivery;
   if (delivery.state === 'delivered') {
@@ -374,12 +381,7 @@ export async function reportRecovery({
   }
   incidentState.set(key, incident);
 
-  reporterStatus.lastDeliveryState = delivery.state;
-  if (delivery.state === 'delivered') {
-    reporterStatus.lastDeliveryAt = new Date(now).toISOString();
-  } else {
-    logWebhookDeliveryFailure(code, incident.incidentId, delivery);
-  }
+  recordDeliveryStatus(code, incident.incidentId, delivery, now);
   return { state: delivery.state, code, incidentId: incident.incidentId };
 }
 
