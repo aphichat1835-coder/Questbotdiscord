@@ -69,7 +69,7 @@ test('runtime backup profile validation rejects an operation that targets a diff
         ? source.replace('questbot-slot-1.db', 'questbot-slot-2.db')
         : source;
     };
-    await import('../src/db.js');
+    await import('./src/db.js');
   `;
   const child = spawnSync(process.execPath, ['--input-type=module', '--eval', script], {
     cwd: new URL('..', import.meta.url),
