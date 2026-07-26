@@ -101,6 +101,7 @@ export class DiscordRateLimitCoordinator {
       completed: 0,
       rateLimited: 0,
       globalRateLimits: 0,
+      bookkeepingErrors: 0,
       scheduleHintErrors: 0,
       lastRateLimitAt: null,
       lastScheduleHintAt: null,
@@ -194,6 +195,20 @@ export class DiscordRateLimitCoordinator {
       });
   }
 
+  handleResponse(task, response) {
+    try {
+      this.updateRateLimitState(task, response);
+    } catch {
+      this.stats.bookkeepingErrors++;
+    }
+    try {
+      this.publishSchedule(task, response);
+    } catch {
+      this.stats.scheduleHintErrors++;
+    }
+    task.resolve(response);
+  }
+
   run(task) {
     this.activeCount++;
     this.activeAccounts.add(task.account);
@@ -202,11 +217,10 @@ export class DiscordRateLimitCoordinator {
 
     void Promise.resolve()
       .then(() => task.execute())
-      .then((response) => {
-        this.updateRateLimitState(task, response);
-        this.publishSchedule(task, response);
-        task.resolve(response);
-      }, task.reject)
+      .then(
+        (response) => this.handleResponse(task, response),
+        (error) => task.reject(error),
+      )
       .finally(() => {
         this.activeCount--;
         this.activeAccounts.delete(task.account);
