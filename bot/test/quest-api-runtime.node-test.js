@@ -117,6 +117,27 @@ test('coordinator never runs two requests for the same account concurrently', as
   assert.equal(maximum, 1);
 });
 
+test('quest list and per-quest endpoints keep separate route bucket mappings', async () => {
+  const coordinator = new DiscordRateLimitCoordinator({ maxConcurrency: 2 });
+
+  await Promise.all([
+    coordinator.schedule('https://discord.com/api/v10/quests/@me', {
+      headers: { Authorization: 'list-account' },
+    }, async () => response(200, { 'x-ratelimit-bucket': 'bucket-list' })),
+    coordinator.schedule('https://discord.com/api/v10/quests/quest-123/heartbeat', {
+      method: 'POST',
+      headers: { Authorization: 'quest-account' },
+    }, async () => response(200, { 'x-ratelimit-bucket': 'bucket-quest' })),
+  ]);
+
+  assert.equal(coordinator.snapshot().knownRoutes, 2);
+  assert.equal(coordinator.routeBuckets.get('GET:/quests/@me'), 'bucket-list');
+  assert.equal(
+    coordinator.routeBuckets.get('POST:/quests/:questId/heartbeat'),
+    'bucket-quest',
+  );
+});
+
 test('global 429 pauses the next queued Discord request', async () => {
   const coordinator = new DiscordRateLimitCoordinator({ maxConcurrency: 1 });
   const started = [];
