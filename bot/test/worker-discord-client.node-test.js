@@ -17,6 +17,28 @@ test('worker status client exposes an explicit readiness lifecycle', () => {
   assert.equal(client.isReady(), false);
 });
 
+test('worker resolves global fetch when the request is sent, not when the client is created', async () => {
+  const originalFetch = globalThis.fetch;
+  const client = createWorkerDiscordClient({ botToken: 'bot-token-fixture' });
+  const calls = [];
+  globalThis.fetch = async (url, options) => {
+    calls.push({ url, options });
+    return new Response(JSON.stringify({ id: 'late-runtime-message' }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+  };
+
+  try {
+    const channel = await client.channels.fetch('channel-late');
+    await channel.send({ content: 'late runtime' });
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].url, 'https://discord.com/api/v10/channels/channel-late/messages');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('worker status client sends and edits messages through Discord API v10', async () => {
   const calls = [];
   const fetchFn = async (url, options) => {
