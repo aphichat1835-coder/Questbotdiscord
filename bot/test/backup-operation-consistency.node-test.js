@@ -1,4 +1,6 @@
+import './setup-env.js';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
@@ -55,7 +57,31 @@ test('every fixed backup slot block keeps copy, cleanup and timestamp operations
     slotArrayName: 'PERSISTENT_BACKUP_SLOT_PATHS',
     root: '/var/data/backups',
   });
+});
 
-  assert.match(source, /operationContainsDeclaredPath\(operation, method\)/);
-  assert.match(source, /targets a different fixed path/);
+test('runtime backup profile validation rejects an operation that targets a different slot', () => {
+  const script = String.raw`
+    const originalToString = Function.prototype.toString;
+    Function.prototype.toString = function patchedToString() {
+      const source = originalToString.call(this);
+      const expected = "db.backup('./data/backups/questbot-slot-1.db')";
+      return source.includes(expected)
+        ? source.replace('questbot-slot-1.db', 'questbot-slot-2.db')
+        : source;
+    };
+    await import('../src/db.js');
+  `;
+  const child = spawnSync(process.execPath, ['--input-type=module', '--eval', script], {
+    cwd: new URL('..', import.meta.url),
+    env: {
+      ...process.env,
+      DATABASE_PATH: ':memory:',
+      QUESTBOT_TEST_MODE: 'true',
+    },
+    encoding: 'utf8',
+    timeout: 10_000,
+  });
+
+  assert.notEqual(child.status, 0, child.stdout);
+  assert.match(child.stderr, /targets a different fixed path/);
 });
