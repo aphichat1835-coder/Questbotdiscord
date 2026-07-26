@@ -1,4 +1,6 @@
 import { createHash } from 'node:crypto';
+import { chooseNextQuestAction } from './smart-scheduler.js';
+import { publishScheduleHint } from './schedule-hint-bus.js';
 
 const MAX_RESET_DELAY_MS = 60_000;
 const DEFAULT_MAX_CONCURRENCY = 4;
@@ -8,8 +10,10 @@ function headerNumber(headers, name) {
   return Number.isFinite(value) && value >= 0 ? value : null;
 }
 
-function accountKey(headers = {}) {
-  const authorization = new Headers(headers).get('authorization') ?? 'anonymous';
+export function authorizationFingerprint(value = '') {
+  const authorization = typeof value === 'string'
+    ? value
+    : new Headers(value).get('authorization') ?? 'anonymous';
   return createHash('sha256').update(authorization).digest('hex').slice(0, 16);
 }
 
@@ -38,6 +42,46 @@ function retryDelayMs(response) {
   return seconds == null ? 0 : Math.min(MAX_RESET_DELAY_MS, Math.ceil(seconds * 1000));
 }
 
+function questArray(candidate) {
+  if (Array.isArray(candidate)) return candidate;
+  if (candidate && typeof candidate === 'object' && Array.isArray(candidate.quests)) {
+    return candidate.quests;
+  }
+  return null;
+}
+
+function schedulingQuest(raw, enrollmentBlockedUntil) {
+  const questConfig = raw?.config ?? {};
+  const userStatus = raw?.user_status ?? {};
+  return {
+    id: raw?.id ?? 'unknown',
+    startsAt: questConfig.starts_at ?? null,
+    expiresAt: questConfig.expires_at ?? null,
+    enrollmentBlockedUntil,
+    enrolled: Boolean(userStatus.enrolled_at),
+    completed: Boolean(userStatus.completed_at),
+    claimed: Boolean(userStatus.claimed_at) || userStatus.orb_quantity_claimed != null,
+  };
+}
+
+function isQuestListRequest(task) {
+  if (task.method !== 'GET') return false;
+  const path = new URL(task.url).pathname.replace(/^\/api\/v\d+/, '');
+  return path === '/quests/@me' || path === '/users/@me/quests';
+}
+
+async function publishQuestSchedule(task, response) {
+  if (!response.ok || !isQuestListRequest(task)) return;
+  const candidate = await response.clone().json().catch(() => null);
+  const quests = questArray(candidate);
+  if (!quests) return;
+  const enrollmentBlockedUntil = candidate?.quest_enrollment_blocked_until ?? null;
+  const hint = chooseNextQuestAction({
+    quests: quests.map((quest) => schedulingQuest(quest, enrollmentBlockedUntil)),
+  });
+  publishScheduleHint(task.account, hint);
+}
+
 export class DiscordRateLimitCoordinator {
   constructor({ maxConcurrency = DEFAULT_MAX_CONCURRENCY, now = Date.now } = {}) {
     this.maxConcurrency = maxConcurrency;
@@ -57,6 +101,7 @@ export class DiscordRateLimitCoordinator {
       rateLimited: 0,
       globalRateLimits: 0,
       lastRateLimitAt: null,
+      lastScheduleHintAt: null,
     };
   }
 
@@ -68,7 +113,7 @@ export class DiscordRateLimitCoordinator {
       options,
       execute,
       method,
-      account: accountKey(options?.headers),
+      account: authorizationFingerprint(options?.headers),
       route: routeKey(url, method),
       priority: requestPriority(url, method),
     };
@@ -144,6 +189,11 @@ export class DiscordRateLimitCoordinator {
       .then(() => task.execute())
       .then((response) => {
         this.updateRateLimitState(task, response);
+        void publishQuestSchedule(task, response).then(() => {
+          if (isQuestListRequest(task)) {
+            this.stats.lastScheduleHintAt = new Date(this.now()).toISOString();
+          }
+        });
         task.resolve(response);
       }, task.reject)
       .finally(() => {
