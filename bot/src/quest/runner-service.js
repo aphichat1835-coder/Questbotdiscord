@@ -58,8 +58,8 @@ function markStartFailure(args, error) {
   clearSmartWake(args.jobKey);
 }
 
-function shouldDelegateToWorker(args) {
-  return config.processRole === 'control' && args.mode === 'scheduled';
+export function shouldDelegateScheduledRunner(processRole, mode) {
+  return processRole === 'control' && mode === 'scheduled';
 }
 
 export async function startLocalRunner(args) {
@@ -75,7 +75,9 @@ export async function startLocalRunner(args) {
 }
 
 export async function startRunner(args) {
-  if (!shouldDelegateToWorker(args)) return startLocalRunner(args);
+  if (!shouldDelegateScheduledRunner(config.processRole, args.mode)) {
+    return startLocalRunner(args);
+  }
 
   beginDurableStart(args, 'control-plane');
   const nextActionAt = new Date().toISOString();
