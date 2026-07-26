@@ -21,7 +21,7 @@ function routeKey(url, method) {
   const parsed = new URL(url);
   const normalized = parsed.pathname
     .replace(/^\/api\/v\d+/, '')
-    .replace(/\/quests\/[^/]+/g, '/quests/:questId')
+    .replace(/^\/quests\/(?!@me(?:\/|$))[^/]+/, '/quests/:questId')
     .replace(/\/channels\/\d+/g, '/channels/:channelId')
     .replace(/\/guilds\/\d+/g, '/guilds/:guildId');
   return `${method}:${normalized}`;
