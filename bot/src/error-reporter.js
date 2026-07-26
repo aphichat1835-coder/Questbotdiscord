@@ -20,6 +20,14 @@ const FAILED_INCIDENT_RETENTION_MS = 7 * 24 * 60 * 60_000;
 const OPEN_INCIDENT_MAX_AGE_MS = 30 * 24 * 60 * 60_000;
 const MAX_INCIDENT_STATE_ENTRIES = 256;
 const IN_FLIGHT_INCIDENT_STATES = new Set(['delivering', 'recovering']);
+const INCIDENT_EVICTION_PRIORITY = new Map([
+  ['recovered', 0],
+  ['delivery_failed', 1],
+  ['delivery_unknown', 1],
+  ['new', 1],
+  ['open', 2],
+  ['recovery_pending', 2],
+]);
 const SENSITIVE_KEY = /authorization|token|secret|cookie|captcha|email|webhook|cipher|password/i;
 
 const reporterStatus = {
@@ -181,15 +189,21 @@ function incidentReferenceTime(incident, now) {
     ?? now;
 }
 
+function incidentEvictionPriority(incident) {
+  return INCIDENT_EVICTION_PRIORITY.get(incident.state) ?? 1;
+}
+
 function pruneIncidentCapacity() {
   if (incidentState.size <= MAX_INCIDENT_STATE_ENTRIES) return;
   const candidates = [...incidentState.entries()]
     .filter(([, incident]) => !IN_FLIGHT_INCIDENT_STATES.has(incident.state))
-    .sort(([, left], [, right]) => (
-      incidentReferenceTime(left, 0) - incidentReferenceTime(right, 0)
-    ));
+    .sort(([, left], [, right]) => {
+      const priorityDifference = incidentEvictionPriority(left) - incidentEvictionPriority(right);
+      return priorityDifference || incidentReferenceTime(left, 0) - incidentReferenceTime(right, 0);
+    });
   while (incidentState.size > MAX_INCIDENT_STATE_ENTRIES && candidates.length) {
-    incidentState.delete(candidates.shift()[0]);
+    const [key] = candidates.shift();
+    incidentState.delete(key);
   }
 }
 
@@ -247,7 +261,6 @@ function reopenRecoveryPendingIncident(incident) {
   incident.recoveryAttemptAt = null;
   incident.nextRecoveryRetryAt = null;
   incident.recoveredAt = null;
-  return incident;
 }
 
 function suppressionForExistingIncident(incident, code, now) {
