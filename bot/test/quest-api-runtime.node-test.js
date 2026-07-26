@@ -6,7 +6,14 @@ import {
   installDiscordApiRuntime,
   uninstallDiscordApiRuntime,
 } from '../src/quest/discord-api-runtime.js';
-import { DiscordRateLimitCoordinator } from '../src/quest/rate-limit-coordinator.js';
+import {
+  authorizationFingerprint,
+  DiscordRateLimitCoordinator,
+} from '../src/quest/rate-limit-coordinator.js';
+import {
+  clearScheduleHintsForTests,
+  getLatestScheduleHint,
+} from '../src/quest/schedule-hint-bus.js';
 
 function response(status = 200, headers = {}) {
   return new Response('{}', { status, headers });
@@ -95,4 +102,58 @@ test('global 429 pauses the next queued Discord request', async () => {
   await Promise.all([first, second]);
   assert.ok(started[1] - started[0] >= 20, `global pause was only ${started[1] - started[0]}ms`);
   assert.equal(coordinator.snapshot().globalRateLimits, 1);
+});
+
+test('an earlier blocked bucket replaces a later queue wakeup timer', async () => {
+  const coordinator = new DiscordRateLimitCoordinator({ maxConcurrency: 2 });
+  const startedAt = Date.now();
+  const order = [];
+
+  coordinator.routeBuckets.set('GET:/long', 'bucket-long');
+  coordinator.bucketResetAt.set('bucket-long', startedAt + 120);
+  const long = coordinator.schedule('https://discord.com/api/v10/long', {
+    headers: { Authorization: 'account-long' },
+  }, async () => {
+    order.push(['long', Date.now() - startedAt]);
+    return response();
+  });
+
+  coordinator.routeBuckets.set('GET:/short', 'bucket-short');
+  coordinator.bucketResetAt.set('bucket-short', startedAt + 20);
+  const short = coordinator.schedule('https://discord.com/api/v10/short', {
+    headers: { Authorization: 'account-short' },
+  }, async () => {
+    order.push(['short', Date.now() - startedAt]);
+    return response();
+  });
+
+  await Promise.all([short, long]);
+  assert.equal(order[0][0], 'short');
+  assert.ok(order[0][1] < 80, `short bucket started after ${order[0][1]}ms`);
+  assert.ok(order[1][1] >= 90, `long bucket started after only ${order[1][1]}ms`);
+});
+
+test('Quest list responses publish a smart hint without consuming the engine response body', async () => {
+  clearScheduleHintsForTests();
+  const token = 'schedule-hint-account';
+  const coordinator = new DiscordRateLimitCoordinator();
+  const result = await coordinator.schedule('https://discord.com/api/v10/quests/@me', {
+    headers: { Authorization: token },
+  }, async () => new Response(JSON.stringify({
+    quests: [{
+      id: 'claim-ready',
+      config: {},
+      user_status: { completed_at: '2030-01-01T00:00:00.000Z' },
+    }],
+  }), {
+    status: 200,
+    headers: { 'content-type': 'application/json' },
+  }));
+
+  const body = await result.json();
+  assert.equal(body.quests[0].id, 'claim-ready');
+  await new Promise((resolve) => setImmediate(resolve));
+  const hint = getLatestScheduleHint(authorizationFingerprint(token));
+  assert.equal(hint.reason, 'claim:claim-ready');
+  assert.equal(hint.priority, 100);
 });
