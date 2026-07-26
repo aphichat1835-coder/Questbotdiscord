@@ -6,6 +6,7 @@ import {
   listJobs,
   listQuestEngineStatuses,
 } from './discord-runner.js';
+import { listActiveProcessRoles } from './process-topology.js';
 import { listScheduledRunners } from './scheduled-runner-store.js';
 import {
   getIncidentReporterStatus,
@@ -115,6 +116,11 @@ export function detailedStatusPayload() {
     ok: botClient?.isReady() ?? false,
     uptimeSeconds: Math.floor((Date.now() - startedAt) / 1000),
     pingMs: botClient?.ws?.ping ?? -1,
+    runtime: {
+      role: config.processRole,
+      activeRoles: listActiveProcessRoles(),
+      workerPollIntervalMs: config.workerPollIntervalMs,
+    },
     logging: getIncidentReporterStatus(),
     storage: storageStatus(),
     backup: getBackupHealthStatus(),
