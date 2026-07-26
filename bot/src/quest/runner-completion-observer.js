@@ -42,6 +42,7 @@ function handleResolved(jobKey, mode, scheduleId) {
 }
 
 function handleRejected(jobKey, error) {
+  if (isSmartWakeRestarting(jobKey)) return;
   const current = getRunnerState(jobKey);
   if (current) {
     transitionRunnerState(jobKey, RUNNER_STATE.FAILED, {
