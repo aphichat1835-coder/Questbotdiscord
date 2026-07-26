@@ -71,15 +71,16 @@ function isQuestListRequest(task) {
 }
 
 async function publishQuestSchedule(task, response) {
-  if (!response.ok || !isQuestListRequest(task)) return;
+  if (!response.ok || !isQuestListRequest(task)) return false;
   const candidate = await response.clone().json().catch(() => null);
   const quests = questArray(candidate);
-  if (!quests) return;
+  if (!quests) return false;
   const enrollmentBlockedUntil = candidate?.quest_enrollment_blocked_until ?? null;
   const hint = chooseNextQuestAction({
     quests: quests.map((quest) => schedulingQuest(quest, enrollmentBlockedUntil)),
   });
   publishScheduleHint(task.account, hint);
+  return true;
 }
 
 export class DiscordRateLimitCoordinator {
@@ -153,7 +154,6 @@ export class DiscordRateLimitCoordinator {
       this.wakeupTimer = null;
       this.pump();
     }, delay);
-    this.wakeupTimer.unref?.();
   }
 
   updateRateLimitState(task, response) {
@@ -189,10 +189,8 @@ export class DiscordRateLimitCoordinator {
       .then(() => task.execute())
       .then((response) => {
         this.updateRateLimitState(task, response);
-        void publishQuestSchedule(task, response).then(() => {
-          if (isQuestListRequest(task)) {
-            this.stats.lastScheduleHintAt = new Date(this.now()).toISOString();
-          }
+        void publishQuestSchedule(task, response).then((published) => {
+          if (published) this.stats.lastScheduleHintAt = new Date(this.now()).toISOString();
         });
         task.resolve(response);
       }, task.reject)
