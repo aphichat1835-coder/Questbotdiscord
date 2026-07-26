@@ -81,7 +81,11 @@ test('runtime backup profile validation rejects an operation that targets a diff
     encoding: 'utf8',
     timeout: 10_000,
   });
+  const output = [child.stderr, child.stdout].filter(Boolean).join('\n');
 
-  assert.notEqual(child.status, 0, child.stdout);
-  assert.match(child.stderr, /targets a different fixed path/);
+  assert.equal(child.error, undefined, child.error?.message);
+  assert.equal(child.signal, null, `child terminated by ${child.signal}\n${output}`);
+  assert.equal(Number.isInteger(child.status), true, `missing integer exit status\n${output}`);
+  assert.notEqual(child.status, 0, `child unexpectedly succeeded\n${output}`);
+  assert.match(output, /targets a different fixed path/);
 });
