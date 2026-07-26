@@ -8,6 +8,15 @@ import {
 import { stateScheduleReason } from './smart-scheduler.js';
 
 const OBSERVER_INTERVAL_MS = 1000;
+const SMART_WAKE_STATES = new Set([
+  RUNNER_STATE.WAITING_RATE_LIMIT,
+  RUNNER_STATE.WAITING_ENROLLMENT,
+  RUNNER_STATE.WAITING_RETRY,
+  RUNNER_STATE.CLAIMING,
+  RUNNER_STATE.VERIFYING_PROGRESS,
+  RUNNER_STATE.VERIFYING_COMPLETION,
+  RUNNER_STATE.VERIFYING_CLAIM,
+]);
 let observerTimer = null;
 
 function stateFromStatus(job) {
@@ -38,11 +47,48 @@ function questNameFromStatus(status) {
   return progress?.[1]?.trim().slice(0, 160) ?? null;
 }
 
+function observedTransition(job, current, observedState) {
+  const preserveSmartWake = Boolean(
+    current
+    && SMART_WAKE_STATES.has(current.state)
+    && observedState === RUNNER_STATE.WAITING_SCHEDULE,
+  );
+  const state = preserveSmartWake ? current.state : observedState;
+  const questName = questNameFromStatus(job.status);
+  const progress = progressFromStatus(job.status);
+  const metadata = preserveSmartWake
+    ? {
+        ...(current.metadata ?? {}),
+        lifecycle: job.lifecycle,
+        status: String(job.status ?? '').slice(0, 500),
+      }
+    : {
+        lifecycle: job.lifecycle,
+        scheduleReason: stateScheduleReason(state),
+        status: String(job.status ?? '').slice(0, 500),
+      };
+
+  return {
+    state,
+    values: {
+      ...(job.accountId != null ? { accountId: job.accountId } : {}),
+      ...(job.username != null ? { username: job.username } : {}),
+      ...(questName != null ? { questName } : {}),
+      ...(progress != null ? { progress } : {}),
+      nextActionAt: preserveSmartWake ? current.next_action_at : job.nextCheckAt,
+      lastError: state === RUNNER_STATE.FAILED
+        ? String(job.status ?? '').slice(0, 500)
+        : null,
+      metadata,
+    },
+  };
+}
+
 export function syncRunnerState(job) {
-  const current = getRunnerState(job.key);
+  let current = getRunnerState(job.key);
   if (!current && (!job.ownerId || !job.mode)) return null;
   if (!current) {
-    beginRunnerState({
+    current = beginRunnerState({
       jobKey: job.key,
       ownerId: job.ownerId,
       accountId: job.accountId,
@@ -55,24 +101,22 @@ export function syncRunnerState(job) {
     });
   }
 
-  const state = stateFromStatus(job);
-  return transitionRunnerState(job.key, state, {
-    accountId: job.accountId,
-    username: job.username,
-    questName: questNameFromStatus(job.status),
-    progress: progressFromStatus(job.status),
-    nextActionAt: job.nextCheckAt,
-    lastError: state === RUNNER_STATE.FAILED ? String(job.status ?? '').slice(0, 500) : null,
-    metadata: {
-      lifecycle: job.lifecycle,
-      scheduleReason: stateScheduleReason(state),
-      status: String(job.status ?? '').slice(0, 500),
-    },
-  });
+  const transition = observedTransition(job, current, stateFromStatus(job));
+  return transitionRunnerState(job.key, transition.state, transition.values);
 }
 
 export function syncAllRunnerStates() {
-  return listJobs().map(syncRunnerState).filter(Boolean);
+  return listJobs().flatMap((job) => {
+    try {
+      const result = syncRunnerState(job);
+      return result ? [result] : [];
+    } catch (error) {
+      console.error(
+        `[RunnerState:${String(job.key).slice(0, 100)}] sync failed — ${error?.message ?? 'unknown error'}`,
+      );
+      return [];
+    }
+  });
 }
 
 export function startRunnerStateObserver() {
