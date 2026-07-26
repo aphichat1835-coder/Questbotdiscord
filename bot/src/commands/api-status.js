@@ -1,15 +1,16 @@
 import { EmbedBuilder, SlashCommandBuilder } from 'discord.js';
+import { config } from '../config.js';
 import { db } from '../db.js';
+import { redactSensitive } from '../error-reporter.js';
+import { isManager } from '../permissions.js';
+import { listActiveProcessRoles } from '../process-topology.js';
+import { getDiscordApiRuntimeStatus } from '../quest/discord-api-runtime.js';
 import {
   getQuestEngineStatus,
   listJobs,
   listQuestEngineStatuses,
 } from '../quest/runner-service.js';
-import { getDiscordApiRuntimeStatus } from '../quest/discord-api-runtime.js';
 import { listRunnerStates, RUNNER_STATE } from '../quest/runner-state-store.js';
-import { redactSensitive } from '../error-reporter.js';
-import { isManager } from '../permissions.js';
-import { listStoppingAccounts } from '../runner-control.js';
 import { listScheduledRunners } from '../scheduled-runner-store.js';
 
 export const data = new SlashCommandBuilder()
@@ -82,7 +83,7 @@ export async function execute(interaction) {
     activeOnly: true,
     limit: 50,
   });
-  const stopping = listStoppingAccounts(interaction.user.id).length;
+  const activeRoles = listActiveProcessRoles();
   const transport = getDiscordApiRuntimeStatus();
 
   const questDetails = [
@@ -119,6 +120,15 @@ export async function execute(interaction) {
       { name: 'Heap ที่ใช้', value: `${toMB(memory.heapUsed)} MB`, inline: true },
       { name: 'Heap ทั้งหมด', value: `${toMB(memory.heapTotal)} MB`, inline: true },
       {
+        name: 'Process Topology',
+        value: [
+          `Process นี้: **${config.processRole.toUpperCase()}**`,
+          `Lease ที่ทำงาน: **${activeRoles.length ? activeRoles.join(' + ').toUpperCase() : 'NONE'}**`,
+          `Worker poll: **${config.workerPollIntervalMs}ms**`,
+        ].join('\n'),
+        inline: false,
+      },
+      {
         name: `Discord HTTP API v${transport.apiVersion}`,
         value: [
           `Runtime: **${transport.installed ? 'ACTIVE' : 'INACTIVE'}**`,
@@ -132,12 +142,12 @@ export async function execute(interaction) {
       {
         name: 'Runner',
         value: [
-          `One-shot: **${jobs.filter((job) => job.mode === 'oneshot').length}**`,
-          `Auto Daily ในหน่วยความจำ: **${jobs.filter((job) => job.mode === 'scheduled').length}**`,
+          `One-shot ใน Process นี้: **${jobs.filter((job) => job.mode === 'oneshot').length}**`,
+          `Auto Daily ใน Process นี้: **${jobs.filter((job) => job.mode === 'scheduled').length}**`,
           `Auto Daily ที่บันทึก: **${persisted.length}**`,
           `Durable state ที่ยังทำงาน: **${activeDurable.length}**`,
           `Recovering: **${activeDurable.filter((row) => row.state === RUNNER_STATE.RECOVERING).length}**`,
-          `กำลังหยุดของคุณ: **${stopping}**`,
+          `Stopping: **${activeDurable.filter((row) => row.state === RUNNER_STATE.STOPPING).length}**`,
         ].join('\n'),
         inline: false,
       },
