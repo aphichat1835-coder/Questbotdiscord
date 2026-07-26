@@ -44,3 +44,23 @@ test('all-in-one remains the default role and split start scripts are explicit',
   assert.match(manifest.scripts['start:control'], /QUEST_PROCESS_ROLE=control/);
   assert.match(manifest.scripts['start:worker'], /QUEST_PROCESS_ROLE=worker/);
 });
+
+test('control restart reconciles local one-shot states without taking ownership of worker states', async () => {
+  const runnerService = await source('../src/quest/runner-service.js');
+  assert.match(runnerService, /includeOneShot:\s*true/);
+  assert.match(runnerService, /includeScheduled:\s*false/);
+});
+
+test('completion rejection exits before state mutation during a smart-wake restart', async () => {
+  const observer = await source('../src/quest/runner-completion-observer.js');
+  const rejectedHandler = observer.slice(
+    observer.indexOf('function handleRejected'),
+    observer.indexOf('export function observeRunnerCompletion'),
+  );
+  assert.ok(rejectedHandler.indexOf('isSmartWakeRestarting(jobKey)') >= 0);
+  assert.ok(
+    rejectedHandler.indexOf('isSmartWakeRestarting(jobKey)')
+      < rejectedHandler.indexOf('getRunnerState(jobKey)'),
+    'restart guard must run before reading or mutating durable state',
+  );
+});
