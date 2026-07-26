@@ -11,7 +11,7 @@ import {
   findAnyJobByAccount,
   getUserJobs,
   startRunner,
-} from '../discord-runner.js';
+} from '../quest/runner-service.js';
 import { isAccountStopping } from '../runner-control.js';
 import {
   withAccountAdmissionLock,
