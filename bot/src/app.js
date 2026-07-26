@@ -7,7 +7,11 @@ import {
   refreshBuildInfo as logConfiguredClientProfile,
   restoreScheduledRunners,
   shutdownRunners,
-} from './discord-runner.js';
+} from './quest/runner-service.js';
+import {
+  installDiscordApiRuntime,
+  uninstallDiscordApiRuntime,
+} from './quest/discord-api-runtime.js';
 import {
   acquireRuntimeLease,
   closeDatabase,
@@ -168,6 +172,7 @@ export function createApp({ exit = process.exit } = {}) {
       try {
         await client.destroy();
         await stopDashboard();
+        uninstallDiscordApiRuntime();
       } catch (error) {
         reportError('Resource shutdown', error);
         requestExitCode(1);
@@ -241,6 +246,7 @@ export function createApp({ exit = process.exit } = {}) {
   }
 
   async function start() {
+    installDiscordApiRuntime();
     if (!acquireRuntimeLease(runtimeLeaseName, runtimeLeaseHolder)) {
       return fatalShutdown(
         INCIDENT.RUNTIME_LEASE_CONFLICT,
