@@ -3,7 +3,7 @@ import {
   getUserJobs,
   stopJob as stopJobImmediately,
   stopScheduledJob as stopScheduledJobImmediately,
-} from './discord-runner.js';
+} from './quest/runner-service.js';
 
 const DEFAULT_STOP_TIMEOUT_MS = 15_000;
 const stoppingAccounts = new Set();
@@ -88,8 +88,6 @@ export async function stopJobAndWait(ownerId, jobKey, {
     return result(false, false);
   }
 
-  // The caller may stop waiting after the timeout, but the account stays blocked
-  // until job.done settles and the real cleanup finishes.
   return result(true, await waitForCompletion(completion, timeoutMs));
 }
 
