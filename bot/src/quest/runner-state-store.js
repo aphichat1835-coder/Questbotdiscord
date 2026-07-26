@@ -197,7 +197,7 @@ export function listRunnerStates({ ownerId = null, activeOnly = false, limit = 1
   `).all(...params).map(parseMetadata);
 }
 
-export function markInterruptedRunnerStates(now = new Date()) {
+export function markInterruptedRunnerStates(now = new Date(), { includeOneShot = true } = {}) {
   const nextActionAt = now.toISOString();
   const completedAt = now.toISOString();
   const markScheduled = db.prepare(`
@@ -226,6 +226,7 @@ export function markInterruptedRunnerStates(now = new Date()) {
       nextActionAt,
       ...ACTIVE_STATES,
     ).changes;
+    if (!includeOneShot) return scheduled;
     const oneShot = failOneShot.run(
       RUNNER_STATE.FAILED,
       completedAt,
