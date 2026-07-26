@@ -9,6 +9,8 @@
   },
   "scripts": {
     "start": "node src/index.js",
+    "start:control": "QUEST_PROCESS_ROLE=control node src/index.js",
+    "start:worker": "QUEST_PROCESS_ROLE=worker node src/index.js",
     "dev": "node --watch src/index.js",
     "register": "node src/register-commands.js",
     "test": "node --import ./test/setup-env.js --test",
