@@ -8,6 +8,8 @@ import {
   transitionRunnerState,
 } from './runner-state-store.js';
 
+export const MAX_SMART_WAKE_TIMER_MS = 24 * 60 * 60 * 1000;
+
 const smartWakeups = new Map();
 const restartingJobs = new Set();
 let restartRunner = null;
@@ -32,6 +34,12 @@ function recordWakeFailure(jobKey, error) {
     lastError: error?.message ?? String(error),
     metadata: { stage: 'smart-wakeup' },
   });
+}
+
+export function smartWakeTimerDelay(nextActionAt, now = Date.now()) {
+  const at = Date.parse(nextActionAt);
+  if (!Number.isFinite(at)) return null;
+  return Math.max(0, Math.min(MAX_SMART_WAKE_TIMER_MS, at - now));
 }
 
 async function restartSleepingRunner(args) {
@@ -64,15 +72,25 @@ async function restartSleepingRunner(args) {
 }
 
 function installWakeTimer(args, hint, existing) {
-  const at = Date.parse(hint.nextActionAt);
-  const delay = Math.max(0, at - Date.now());
+  const delay = smartWakeTimerDelay(hint.nextActionAt);
+  if (delay == null) return false;
+
   const timer = setTimeout(() => {
     const entry = smartWakeups.get(args.jobKey);
-    if (entry) entry.timer = null;
+    if (!entry || entry.hint !== hint) return;
+    entry.timer = null;
+
+    const remaining = Date.parse(hint.nextActionAt) - Date.now();
+    if (remaining > 0) {
+      installWakeTimer(args, hint, entry);
+      return;
+    }
+
     void restartSleepingRunner(args).catch((error) => recordWakeFailure(args.jobKey, error));
   }, delay);
   timer.unref?.();
   smartWakeups.set(args.jobKey, { ...existing, timer, args, hint });
+  return true;
 }
 
 function scheduleSmartWake(args, hint) {
