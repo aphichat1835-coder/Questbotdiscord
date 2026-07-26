@@ -30,6 +30,8 @@ export function createWorkerDiscordClient({
   fetchFn = globalThis.fetch,
   botToken = config.token,
 } = {}) {
+  let ready = false;
+
   async function request(path, options = {}) {
     const response = await fetchFn(`${DISCORD_API_BASE}${path}`, {
       ...options,
@@ -71,6 +73,10 @@ export function createWorkerDiscordClient({
   }
 
   return {
+    ws: { ping: -1 },
+    isReady: () => ready,
+    markReady: () => { ready = true; },
+    markNotReady: () => { ready = false; },
     channels: {
       async fetch(channelId) {
         if (!channelId) return null;
