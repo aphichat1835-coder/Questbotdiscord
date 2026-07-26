@@ -84,7 +84,7 @@ export async function restoreScheduledRunnerRows(client, startRunner) {
       recordSkippedRestore(row, 'Restore skipped: owner runner limit exceeded');
       continue;
     }
-    if (restoredAccounts.has(row.account_id)) {
+    if (row.account_id && restoredAccounts.has(row.account_id)) {
       failed++;
       recordSkippedRestore(row, 'Restore skipped: Discord account already restored');
       continue;
@@ -94,7 +94,7 @@ export async function restoreScheduledRunnerRows(client, startRunner) {
       const nextOwnerCount = await restoreRow({ row, client, startRunner, ownerCount });
       restored++;
       restoredByOwner.set(row.owner_id, nextOwnerCount);
-      restoredAccounts.add(row.account_id);
+      if (row.account_id) restoredAccounts.add(row.account_id);
     } catch (error) {
       failed++;
       const message = `Restore failed: ${error.message}`;
