@@ -4,7 +4,9 @@ import {
   getQuestEngineStatus,
   listJobs,
   listQuestEngineStatuses,
-} from '../discord-runner.js';
+} from '../quest/runner-service.js';
+import { getDiscordApiRuntimeStatus } from '../quest/discord-api-runtime.js';
+import { listRunnerStates, RUNNER_STATE } from '../quest/runner-state-store.js';
 import { redactSensitive } from '../error-reporter.js';
 import { isManager } from '../permissions.js';
 import { listStoppingAccounts } from '../runner-control.js';
@@ -75,7 +77,14 @@ export async function execute(interaction) {
   const accountStatuses = listQuestEngineStatuses({ ownerId: interaction.user.id });
   const jobs = listJobs();
   const persisted = listScheduledRunners();
+  const durable = listRunnerStates({ ownerId: interaction.user.id, limit: 50 });
+  const activeDurable = durable.filter((row) => ![
+    RUNNER_STATE.STOPPED,
+    RUNNER_STATE.COMPLETED,
+    RUNNER_STATE.FAILED,
+  ].includes(row.state));
   const stopping = listStoppingAccounts(interaction.user.id).length;
+  const transport = getDiscordApiRuntimeStatus();
 
   const questDetails = [
     '**สรุปรวมจากสถานะแยกของทุก Job/Account**',
@@ -111,11 +120,23 @@ export async function execute(interaction) {
       { name: 'Heap ที่ใช้', value: `${toMB(memory.heapUsed)} MB`, inline: true },
       { name: 'Heap ทั้งหมด', value: `${toMB(memory.heapTotal)} MB`, inline: true },
       {
+        name: `Discord HTTP API v${transport.apiVersion}`,
+        value: [
+          `Runtime: **${transport.installed ? 'ACTIVE' : 'INACTIVE'}**`,
+          `Queue: **${transport.rateLimit.queued}** · Active: **${transport.rateLimit.active}**`,
+          `429: **${transport.rateLimit.rateLimited}** · Global: **${transport.rateLimit.globalRateLimits}**`,
+          `Blocked buckets: **${transport.rateLimit.blockedBuckets}**`,
+        ].join('\n'),
+        inline: false,
+      },
+      {
         name: 'Runner',
         value: [
           `One-shot: **${jobs.filter((job) => job.mode === 'oneshot').length}**`,
           `Auto Daily ในหน่วยความจำ: **${jobs.filter((job) => job.mode === 'scheduled').length}**`,
           `Auto Daily ที่บันทึก: **${persisted.length}**`,
+          `Durable state ที่ยังทำงาน: **${activeDurable.length}**`,
+          `Recovering: **${activeDurable.filter((row) => row.state === RUNNER_STATE.RECOVERING).length}**`,
           `กำลังหยุดของคุณ: **${stopping}**`,
         ].join('\n'),
         inline: false,
