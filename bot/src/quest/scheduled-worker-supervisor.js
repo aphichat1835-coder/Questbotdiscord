@@ -65,15 +65,23 @@ export async function reconcileScheduledWorker(client, {
   jobs = listJobs(),
   startRunner = startLocalRunner,
   stop = stopJob,
+  reportStopError = reportCriticalError,
   now = Date.now(),
 } = {}) {
   const active = activeScheduledJobs(jobs);
   const rowIds = new Set(rows.map((row) => Number(row.id)));
   let stopRequested = 0;
+  let stopFailures = 0;
 
   for (const job of active) {
     if (rowIds.has(Number(job.scheduleId))) continue;
-    if (stop(job.ownerId, job.key, { removeSchedule: false })) stopRequested++;
+    try {
+      if (stop(job.ownerId, job.key, { removeSchedule: false })) stopRequested++;
+    } catch (error) {
+      stopFailures++;
+      await Promise.resolve(reportStopError(`Scheduled worker stop ${job.key}`, error))
+        .catch(() => undefined);
+    }
   }
 
   const surviving = active.filter((job) => rowIds.has(Number(job.scheduleId)));
@@ -93,6 +101,7 @@ export async function reconcileScheduledWorker(client, {
     scheduledRows: rows.length,
     activeBefore: active.length,
     stopRequested,
+    stopFailures,
     finalizedStops,
     restore,
   };
@@ -121,11 +130,11 @@ async function runReconcile(client) {
 
 export async function startScheduledWorkerSupervisor(client) {
   if (supervisorTimer) return false;
-  await runReconcile(client);
   supervisorTimer = setInterval(() => {
     void runReconcile(client).catch(() => undefined);
   }, config.workerPollIntervalMs);
   supervisorTimer.unref?.();
+  await runReconcile(client).catch(() => undefined);
   return true;
 }
 
