@@ -40,6 +40,7 @@ function questNameFromStatus(status) {
 
 export function syncRunnerState(job) {
   const current = getRunnerState(job.key);
+  if (!current && (!job.ownerId || !job.mode)) return null;
   if (!current) {
     beginRunnerState({
       jobKey: job.key,
@@ -71,7 +72,7 @@ export function syncRunnerState(job) {
 }
 
 export function syncAllRunnerStates() {
-  return listJobs().map(syncRunnerState);
+  return listJobs().map(syncRunnerState).filter(Boolean);
 }
 
 export function startRunnerStateObserver() {
