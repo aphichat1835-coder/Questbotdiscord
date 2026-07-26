@@ -4,7 +4,8 @@ export const DISCORD_API_VERSION = 10;
 export const DISCORD_API_BASE = `https://discord.com/api/v${DISCORD_API_VERSION}`;
 
 let installed = false;
-let originalFetch = null;
+let previousGlobalFetch = null;
+let transportFetch = null;
 
 function isDiscordApiUrl(url) {
   return url.origin === 'https://discord.com' && /^\/api\/v\d+(?:\/|$)/.test(url.pathname);
@@ -29,15 +30,16 @@ export function installDiscordApiRuntime({ fetchFn = globalThis.fetch } = {}) {
   if (installed) return false;
   if (typeof fetchFn !== 'function') throw new TypeError('Global fetch is unavailable');
 
-  originalFetch = fetchFn.bind(globalThis);
+  previousGlobalFetch = globalThis.fetch;
+  transportFetch = fetchFn.bind(globalThis);
   globalThis.fetch = (input, options = {}) => {
     const rewritten = rewriteDiscordApiUrl(input);
-    if (!rewritten.coordinated) return originalFetch(input, options);
+    if (!rewritten.coordinated) return transportFetch(input, options);
     const headers = options.headers ?? (input instanceof Request ? input.headers : undefined);
     return discordRateLimitCoordinator.schedule(
       rewritten.url,
       { ...options, headers },
-      () => originalFetch(rewritten.input, options),
+      () => transportFetch(rewritten.input, options),
     );
   };
   installed = true;
@@ -45,10 +47,11 @@ export function installDiscordApiRuntime({ fetchFn = globalThis.fetch } = {}) {
 }
 
 export function uninstallDiscordApiRuntime() {
-  if (!installed || !originalFetch) return false;
-  globalThis.fetch = originalFetch;
+  if (!installed) return false;
+  globalThis.fetch = previousGlobalFetch;
   installed = false;
-  originalFetch = null;
+  previousGlobalFetch = null;
+  transportFetch = null;
   return true;
 }
 
