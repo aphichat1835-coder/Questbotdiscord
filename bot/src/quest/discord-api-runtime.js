@@ -34,16 +34,22 @@ function schedulingOptions(input, options) {
   };
 }
 
-export function installDiscordApiRuntime({ fetchFn = globalThis.fetch } = {}) {
+export function installDiscordApiRuntime({
+  fetchFn = globalThis.fetch,
+  coordinator = discordRateLimitCoordinator,
+} = {}) {
   if (installed) return false;
   if (typeof fetchFn !== 'function') throw new TypeError('Global fetch is unavailable');
+  if (typeof coordinator?.schedule !== 'function') {
+    throw new TypeError('Discord API coordinator must provide schedule()');
+  }
 
   previousGlobalFetch = globalThis.fetch;
   transportFetch = fetchFn.bind(globalThis);
   globalThis.fetch = (input, options = {}) => {
     const rewritten = rewriteDiscordApiUrl(input);
     if (!rewritten.coordinated) return transportFetch(input, options);
-    return discordRateLimitCoordinator.schedule(
+    return coordinator.schedule(
       rewritten.url,
       schedulingOptions(input, options),
       () => transportFetch(rewritten.input, options),
