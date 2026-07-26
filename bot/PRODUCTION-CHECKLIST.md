@@ -5,19 +5,22 @@
 ## 1. ขอบเขตที่ต้องยืนยัน
 
 - Repository เป็น Bot-only และไม่มี Desktop/Tauri/CDP/Game Simulator กลับเข้ามา
+- Panel เดิมยังเป็น `START NOW` / `STOP ALL`
 - Runner สูงสุด 10 บัญชีต่อ Owner และคำสั่งพร้อมกันไม่ทำให้เกินจำนวน
 - One-shot หยุดเองเมื่อไม่มี Quest ที่รองรับ
 - Auto Daily ตรวจทันทีและตามเวลา 00:00 / 08:00 / 16:00 ใน Timezone ที่กำหนด
-- Stop รอ Cleanup และไม่อนุญาตให้บัญชีเดิมเริ่มซ้ำระหว่างกำลังหยุด
+- Smart wake ไม่ตัด Progress mutation กลางทาง
+- Stop รอ Cleanup และไม่ประกาศสำเร็จก่อน Durable terminal confirmation
 - `/api-status` ใช้ได้เฉพาะ Owner/Admin/Manager
 - HTTP `/api/status` ปิดเมื่อไม่มี `HEALTH_STATUS_TOKEN` และใช้ Exact Bearer token เมื่อเปิด
+- Public `/healthz` เปิดเผยเฉพาะ `{ ok }`
 - Render/Console logs เก็บ Error ทุกระดับ
 - Discord Webhook ส่งเฉพาะ Structured Incident ตาม Policy และ Threshold
-- Incident, Fatal shutdown และ Resource cleanup ต้องไม่ทำงานซ้อนจาก Error burst เดียวกัน
+- Fatal shutdown และ Resource cleanup ไม่ทำงานซ้อนจาก Error burst เดียวกัน
 
 ## 2. Environment
 
-ค่าหลักที่ต้องตั้งครบ 6 ค่า:
+ค่าหลักที่ต้องตั้งครบทุก Process:
 
 ```env
 DISCORD_BOT_TOKEN=
@@ -28,7 +31,7 @@ RUNNER_TOKEN_SECRET=
 LOG_WEBHOOK_URL=
 ```
 
-ค่า Optional ที่ระบบมีค่าเริ่มต้นหรือปิดอย่างปลอดภัยให้เอง:
+ค่า Optional:
 
 ```env
 MANAGER_ROLE_ID=
@@ -39,110 +42,153 @@ DATABASE_BACKUP_ENABLED=
 DATABASE_BACKUP_RETENTION=7
 HEALTH_STATUS_TOKEN=
 PORT=
+QUEST_PROCESS_ROLE=all
+QUEST_WORKER_POLL_MS=5000
 ```
 
 ข้อกำหนด:
 
-- `RUNNER_TOKEN_SECRET` ต้องยาวอย่างน้อย 16 ตัวอักษร เป็น Secret แบบสุ่ม และห้าม Commit
-- `LOG_WEBHOOK_URL` ต้องเป็น Discord HTTPS Incoming Webhook ในห้องหลังบ้านที่มีเฉพาะเจ้าของระบบ
-- `LOG_WEBHOOK_URL` ถือเป็น Credential ต้องหมุนใหม่ทันทีเมื่อสงสัยว่ารั่ว
-- `LOG_CHANNEL_ID` เป็น Optional fallback สำหรับข้อความสถานะ Runner ไม่ใช่ Emergency Webhook
+- `RUNNER_TOKEN_SECRET` ยาวอย่างน้อย 16 ตัวอักษร เป็น Secret แบบสุ่ม และห้าม Commit
+- `LOG_WEBHOOK_URL` เป็น Discord HTTPS Incoming Webhook ส่วนตัวและถือเป็น Credential
 - `HEALTH_STATUS_TOKEN` เมื่อเปิดใช้ต้องเป็น Secret คนละค่ากับ Token อื่น
-- ค่า Discord client profile ต้องอัปเดตพร้อมกันทั้งชุดและ Restart หลังเปลี่ยน
-- ห้ามใช้ `DATABASE_BACKUP_DIR`; ระบบไม่รองรับ Backup path จาก Environment
-- Storage resolver และ Runtime ห้ามเขียนค่าอัตโนมัติกลับเข้า `process.env.DATABASE_PATH`
+- `QUEST_PROCESS_ROLE` รับเฉพาะ `all`, `control`, `worker`
+- `QUEST_WORKER_POLL_MS` อยู่ระหว่าง 1000–60000 ms
+- ค่า Discord client profile ต้องอัปเดตพร้อมกันทั้งชุดและ Restart
+- ห้ามใช้ `DATABASE_BACKUP_DIR`
+- Runtime ห้ามเขียนค่าอัตโนมัติกลับเข้า `process.env.DATABASE_PATH`
 
-## 3. Safe bootstrap และ Shutdown
+## 3. Process topology
 
-ตรวจว่า Startup failure ไม่ทำให้ Process ค้างหรือเปิดระบบเพียงบางส่วน:
+### All-in-one
 
-1. Bootstrap handlers ถูกติดตั้งก่อน Dynamic import ของ Runtime
+- ใช้ `QUEST_PROCESS_ROLE=all`
+- เปิด Gateway, Commands, One-shot และ Auto Daily ใน Process เดียว
+- เป็นค่าเริ่มต้นและรูปแบบแนะนำสำหรับ Single-service deployment
+
+### Split Control + Worker
+
+Control:
+
+```env
+QUEST_PROCESS_ROLE=control
+PORT=3000
+```
+
+Worker:
+
+```env
+QUEST_PROCESS_ROLE=worker
+PORT=3001
+```
+
+ต้องยืนยัน:
+
+1. Control และ Worker ใช้ `DATABASE_PATH` เดียวกันจริง
+2. ใช้ `RUNNER_TOKEN_SECRET` เดียวกัน
+3. ใช้ Port คนละค่า
+4. Filesystem/Database รองรับการเข้าถึงจากทั้งสอง Process อย่างน่าเชื่อถือ
+5. One-shot อยู่ Control และไม่ Persist Token เพิ่ม
+6. Scheduled row จาก Control ถูก Worker รับภายใน Poll interval
+7. Worker ใช้ Discord REST v10 และไม่เปิด Gateway
+8. Worker `/healthz` เป็น 503 ระหว่าง Bootstrap และ 200 หลัง Restore/Supervisor พร้อม
+9. `all` ชนกับ `control`/`worker`
+10. Control ซ้ำหรือ Worker ซ้ำด้วย Holder คนละตัวถูกปฏิเสธ
+11. Lease หมดอายุหลัง Process ไม่ Renew
+12. Deployment ที่แต่ละ Service มี Local disk แยกกันไม่ใช้ Split mode
+
+## 4. Safe bootstrap และ Shutdown
+
+1. Bootstrap handlers ติดตั้งก่อน Dynamic import ของ Config/Runtime
 2. Config/Module import failure ถูกบันทึกโดยไม่พึ่ง SQLite หรือ Discord Client
-3. Database open failure ใช้ Incident `DATABASE_OPEN_FAILED`
-4. Database schema/migration failure ใช้ Incident `DATABASE_MIGRATION_FAILED`
-5. Runtime lease conflict/lost ทำให้ Process ปิดอย่างปลอดภัย
-6. Health server bind failure ต้อง Reject Startup ไม่ปล่อย Bot ทำงานต่อโดยไม่มี Health endpoint
-7. Discord login failure ส่ง Incident แล้ว Shutdown
-8. Fatal report ใช้ Budget จำกัด 3.5 วินาทีและล้าง Timer เมื่อ Report จบ
-9. Runtime ใช้ Fatal promise เดียวและ Shutdown promise เดียว
-10. Signal ปกติที่ชนกับ Fatal error ต้องจบด้วย Exit code ที่รุนแรงที่สุด
-11. Dashboard ที่กำลัง Bind ต้องถูกติดตามและปิด ไม่ทิ้ง Server ที่ไม่มีเจ้าของ
+3. Entrypoint เลือก `app.js` หรือ `worker-app.js` ตาม Role
+4. Database open failure ใช้ `DATABASE_OPEN_FAILED`
+5. Schema/migration failure ใช้ `DATABASE_MIGRATION_FAILED`
+6. Topology lease conflict/lost ทำให้ Process ปิดอย่างปลอดภัย
+7. Health server bind failure Reject Startup
+8. Control/All login failure ส่ง Incident แล้ว Shutdown
+9. Worker ไม่ Login Gateway
+10. Fatal report ใช้ Budget จำกัด 3.5 วินาที
+11. Runtime ใช้ Fatal promise และ Shutdown promise อย่างละชุดเดียว
+12. Signal ปกติชน Fatal errorต้องรักษา Exit code ที่รุนแรงที่สุด
+13. Worker Mark not-ready ก่อน Shutdown
+14. Dashboard ที่กำลัง Bind ถูกปิด ไม่ทิ้ง Server ไม่มีเจ้าของ
 
-## 4. Storage truth
+## 5. Storage truth
 
-ระบบต้องรายงาน Storage mode ตามความจริง:
+ระบบต้องรายงาน Storage modeตามจริง:
 
-- `memory` — ไม่มี Durability และ Backup ปิดเสมอ
+- `memory` — ไม่มี Durability และ Backup ปิด
 - `local-development` — Local file สำหรับ Development
-- `hosted-ephemeral` — Hosting ไม่มี Persistent mount และต้องแสดง Warning
-- `persistent-candidate` — `/var/data` มีและเขียนได้ แต่ `durabilityVerified` ยังเป็น `false`
+- `hosted-ephemeral` — Hosting ไม่มี Persistent mount และแสดง Warning
+- `persistent-candidate` — `/var/data` เขียนได้แต่ยังต้อง Controlled restart
 
 Fixed backup mappings:
 
 - Database นอก `/var/data/` → `./data/backups`
 - Database ใต้ `/var/data/` → `/var/data/backups`
 
-Directory creation, Slot backup, Slot cleanup, Latest-backup inspection และ Legacy migration backup ต้องใช้ Backup profile เดียวกัน Profile อื่นต้องถูกปฏิเสธ
+ตรวจว่า Directory creation, Slot backup, Cleanup, Latest inspection และ Migration backup ใช้ Backup profile เดียวกัน เก็บไม่เกิน 7 Slot และ Restart แล้วยังอยู่
 
-เมื่อใช้ Hosting ที่มี Persistent Volume:
-
-- Mount `/var/data` แบบ Persistent และให้ Process เขียนได้
-- เมื่อไม่ตั้ง `DATABASE_PATH` ระบบต้องเลือก `/var/data/quests.db` อัตโนมัติ
-- Backup ต้องเกิดที่ `/var/data/backups`
-- ตรวจว่ามีสูงสุดตาม `DATABASE_BACKUP_RETENTION` และไม่เกิน 7 Slot
-- Restart/Redeploy แล้วตรวจว่า Database และ Backup ยังอยู่
-- ห้ามถือว่า Persistent verified จากการตรวจ Directory อย่างเดียว
-
-เมื่อไม่มี `/var/data` ระบบต้อง fallback เป็น `./data/quests.db` และ `./data/backups` พร้อมรายงาน `hosted-ephemeral` บน Hosting
-
-## 5. Backup protection
-
-ตรวจ State machine ต่อไปนี้:
+## 6. Backup protection
 
 1. Backup สำเร็จ → `healthy`
-2. Failure ครั้งแรกและครั้งที่สอง → Render log เท่านั้น
-3. Failure ติดต่อกันครั้งที่ 3 → เปิด `BACKUP_PROTECTION_LOST` หนึ่งรายการ
-4. Backup เก่าเกิน 26 ชั่วโมงและความพยายามใหม่ล้ม → เปิด Incident แม้เป็น Failure ครั้งแรกในรอบนั้น
-5. ขณะ Incident เปิดอยู่ Failure ถัดไปต้องอยู่ใน Render log โดยไม่ยิง Webhook ซ้ำ
-6. Fast retry ทุก 15 นาทีสูงสุด 3 รอบ จากนั้นกลับตาราง Daily
-7. เมื่อสำเร็จอีกครั้ง ส่ง Recovery ด้วย Incident ID เดิม
-8. Recovery delivery ที่ล้มต้องถูกเก็บเป็น Pending และ Retry ใน Backup success รอบถัดไป
-9. Failure ใหม่หลัง Pending recovery ต้องเริ่ม Incident lifecycle ใหม่เมื่อถึง Threshold
-10. `/api/status` แสดง Last success, age, consecutive failures, fast retry count/limit, incident open, recovery pending และ next attempt
-11. Status ห้ามแสดง Full database path หรือ Backup directory
+2. Failure ครั้ง 1–2 → Log เท่านั้น
+3. Failure ครั้ง 3 → เปิด `BACKUP_PROTECTION_LOST` หนึ่งรายการ
+4. Backup เก่าเกิน 26 ชั่วโมงและความพยายามใหม่ล้ม → เปิด Incident
+5. Incident เปิดอยู่แล้วห้ามยิง Webhook ซ้ำทุกครั้ง
+6. Fast retry ทุก 15 นาทีสูงสุด 3 รอบ
+7. สำเร็จอีกครั้งส่ง Recovery ด้วย Incident ID เดิม
+8. Recovery delivery ล้มถูกเก็บ Pending และ Retry รอบถัดไป
+9. `/api/status` แสดง Last success, age, failure, retry และ recovery state
+10. Status ไม่แสดง Full database path หรือ Backup directory
 
-## 6. Emergency Webhook validation
+## 7. Discord API และ Rate limit
 
-ใช้ Webhook ทดสอบที่แยกจาก Production แล้วตรวจว่า:
+- Outbound Discord API ถูกส่งจริงเป็น v10
+- `Request` object รักษา Method/Headers/Body
+- URL ภายนอกและ Webhook ไม่ถูก Rewrite
+- บัญชีเดียวไม่ยิงพร้อมกันเกินหนึ่ง Request
+- Global 429 หยุด Queue ทั้งหมด
+- Bucket timer ตื่นตามเวลาที่เร็วที่สุด
+- Claim/Verification Priority สูงกว่า Background
+- Authorization ใน Queue เป็น Fingerprint ไม่ใช่ Raw token
+- Bookkeeping/Hint error ไม่ทำ Caller promise ค้าง
+- Worker REST clientเลือก Runtime fetch ตอน Request จริง
 
-1. Incident ที่บังคับทดสอบส่ง Rich Embed สำเร็จ
-2. Embed มี Status, Incident code, Incident ID, Impact, Action, Runtime และ Deployment
-3. `allowed_mentions.parse` เป็น Array ว่างและข้อความไม่ Ping ผู้ใช้/Role/@everyone
-4. Token, Secret, Cookie, CAPTCHA, Email, Ciphertext, Password, Compound secret keys และ Webhook URL ไม่ปรากฏใน Payload
-5. Context ใช้ Deep-frozen Allowlist ต่อ Incident code
-6. Incident code ที่ไม่ใช่ Own property เช่น `constructor`, `toString`, `__proto__` ถูกปฏิเสธ
+## 8. Durable state, Restore และ Stop
+
+- Partial transition รักษา Checkpoint ที่ไม่ได้ส่งค่าใหม่
+- Explicit `null` เคลียร์ Optional field ได้
+- Scheduled interruption → `RECOVERING`
+- One-shot interruption → `FAILED`
+- Orphaned recovering state → `FAILED`
+- Restore ไม่ถือ `account_id=null` หลายแถวเป็นบัญชีเดียว
+- Restore จำกัด 10 Runner ต่อ Owner
+- Failed worker rowมี Retry cooldown 5 นาที
+- Control stop ตั้ง `STOPPING` เมื่อ Worker อาจยังทำงาน
+- Worker Abort job เมื่อ Scheduled row หาย
+- Worker เปลี่ยน Detached `STOPPING` เป็น `STOPPED` เมื่อทั้ง row/job หาย
+- `/stop` รายงาน Pending เมื่อ Terminal confirmation ยังไม่มาถึง
+- Stop ไม่ลบ Scheduled row ระหว่าง Smart wake restart
+
+## 9. Emergency Webhook validation
+
+ใช้ Webhook ทดสอบแยกจาก Production:
+
+1. Incident จำลองส่ง Rich Embed สำเร็จ
+2. Embed มี Code, Incident ID, Impact, Action, Runtime และ Deployment
+3. `allowed_mentions.parse` เป็น Array ว่าง
+4. Token, Secret, Cookie, CAPTCHA, Email, Ciphertext, Password และ Webhook URL ไม่ปรากฏ
+5. Context ใช้ Deep-frozen allowlist
+6. `constructor`, `toString`, `__proto__` ถูกปฏิเสธ
 7. HTTP 400/401/403/404 ไม่ Retry
-8. HTTP 429/502/503/504 Retry ได้สูงสุดหนึ่งครั้ง
-9. Retryable response สองครั้งติดต้องจบเป็น `delivery_unknown` ที่ Attempts = 2
-10. Network timeout หลังเริ่ม POST เป็น `delivery_unknown` และไม่ส่ง POST ซ้ำทันทีแบบเดาสุ่ม
-11. Concurrent incident ของ `code + scope` เดียวกันต้องมี Network delivery เพียงหนึ่งรายการ
-12. Incident ที่ส่งสำเร็จคงสถานะเปิดและ Suppress เหตุซ้ำจนกว่าจะ Recovery
-13. Delivery ที่ล้มมี Retry guard และเหตุครั้งถัดไปสามารถลองใหม่ด้วย Incident ID เดิม
-14. Webhook ล้มไม่ทำให้ Bot ดับและมี Error ใน Render logs
-15. Recovery ใช้ Incident ID เดิม และ Recovery ที่ล้มสามารถ Retry ได้
-16. Incident/Counter state เก่าถูก Prune และ Legacy threshold ถูก Reset หลัง Escalate
+8. HTTP 429/502/503/504 Retry สูงสุดหนึ่งครั้ง
+9. Network timeout หลังเริ่ม POST เป็น `delivery_unknown`
+10. Concurrent incident เดียวกันมี Network delivery หนึ่งรายการ
+11. Webhook ล้มไม่ทำ Bot ดับ
+12. Recovery ใช้ Incident ID เดิม
 
-## 7. Quest และ Restore policy
-
-- User Token หมดอายุหรือบัญชีเดียวมีปัญหาไม่ส่ง Webhook
-- Unknown Quest event ไม่ส่ง Emergency
-- Quest schema/parser break ส่ง `QUEST_API_SCHEMA_INCOMPATIBLE` ทันที
-- Quest transport outage ต้องพบ 3 ครั้งภายใน 10 นาทีจึงส่ง `QUEST_API_TRANSPORT_OUTAGE`
-- Scheduled Runner restore failure ต้องครบ 3 รายการภายใน 10 นาทีจึงส่ง Incident เดียว
-- Restore payload แสดงเฉพาะยอดรวม ห้ามมี User Token, Username หรือ Account ID
-- Transitional bridge อยู่ใน `legacy-incident-policy.js` และมี Regression tests จนกว่า Caller ใหญ่จะถูกแยกโมดูล
-
-## 8. Quality gates
+## 10. Quality gates
 
 รันจากโฟลเดอร์ `bot`:
 
@@ -155,85 +201,89 @@ npm run check
 npm audit --omit=dev --audit-level=high
 ```
 
-GitHub Actions ต้องผ่านทั้ง:
+GitHub Actions ต้องผ่าน:
 
 - Repository shape และ Runtime data safety
 - Sanitized Quest fixture
-- Fixed database backup destinations
+- Fixed backup destinations
 - Incident/Storage architecture boundaries
-- Environment contract และ Semantic no-mutation tests
-- Safe bootstrap, Health bind และ Serialized shutdown tests
-- Storage profile และ Backup profile consistency tests
-- Backup threshold, bounded retry และ Recovery retry tests
-- Incident classification, immutability, redaction, concurrency, delivery และ Recovery lifecycle tests
-- Webhook URL validation, redirect safety และ Retry ceiling tests
-- Unit/Regression tests และ Coverage gate
-- Syntax check ของ `src` และ `scripts`
+- Environment contract และ no-mutation tests
+- Safe bootstrap และ Role-aware entrypoint
+- Process topology leases
+- Worker REST/readiness/Supervisor tests
+- Durable state/Restore/Stop tests
+- Smart scheduler/wake tests
+- Fault injection และ Mutation verification tests
+- Coverage gate
+- Syntax check
 - Production dependency audit
 
-Status จาก CI, Snyk, Codacy, SonarCloud และ CodeRabbit ต้องเป็นของ HEAD SHA ล่าสุด ห้ามใช้ผลจาก Commit เก่า
+CI, Snyk, Codacy, SonarCloud และ CodeRabbit ต้องเป็นผลของ HEAD SHA ล่าสุด
 
-## 9. Controlled functional validation
+## 11. Controlled functional validation
 
-ทดสอบใน Server และบัญชีทดสอบที่แยกจากบัญชีหลัก:
+ทดสอบใน Server และบัญชีทดสอบ:
 
-1. ผู้ใช้ทั่วไปเรียก `/api-status` แล้วต้องถูกปฏิเสธแบบ Ephemeral
-2. Manager เรียก `/api-status` แล้วเห็น Logging, Storage และ Backup state โดยไม่มี Secret
-3. ส่ง Modal เริ่ม Runner พร้อมกันหลายชุด แล้วจำนวนรวมต้องไม่เกิน 10
-4. กด Stop ระหว่าง Runner ทำงาน แล้วบัญชีต้องอยู่สถานะ Cleanup จน Job จบจริง
-5. เปิด Auto Daily, Restart Bot และตรวจว่า Scheduled Runner ถูก Restore
-6. ตรวจข้อความ Runner ที่ยาวมากว่ายังไม่เกิน Discord message limit
-7. ตรวจไฟล์ Backup Slot และ Retention
-8. เรียก `/healthz` และตรวจว่าไม่เปิดเผยรายละเอียด
-9. เรียก HTTP `/api/status` โดยไม่มี/มี Bearer token ผิด แล้วต้องได้ Unauthorized หรือ Not Found ตามการตั้งค่า
-10. ทดสอบ Emergency Webhook ด้วย Error จำลองที่ไม่มี Secret จริง
-11. ทดสอบ Webhook ถูกลบ/หมดอายุแล้ว Bot ยังทำงานและ Render log มีหลักฐาน
-12. ทดสอบ Incident burst แล้วห้อง Webhook ได้เพียงหนึ่งข้อความ
-13. ทดสอบ Backup ล้มต่อเนื่องแล้วไม่สแปมทุก Fast retry
-14. Restart/Redeploy แล้ว Database, Backup และ Scheduled Runner ยังอยู่
+1. ผู้ใช้ทั่วไปเรียก `/api-status` แล้วถูกปฏิเสธ Ephemeral
+2. Manager เห็น Process topology, Storage, Backup และ Durable state โดยไม่มี Secret
+3. Modal พร้อมกันหลายชุดไม่เกิน 10 Runner
+4. Stop ระหว่างทำงานแล้วบัญชีอยู่ Cleanup จน Terminal จริง
+5. เปิด Auto Daily, Restart และตรวจ Restore
+6. ข้อความ Runner ไม่เกิน Discord message limit
+7. Backup Slot และ Retention ถูกต้อง
+8. `/healthz` ไม่เปิดเผยรายละเอียด
+9. Protected `/api/status` ปฏิเสธ Bearer token ผิด
+10. Incident burst ส่ง Webhook เพียงหนึ่งข้อความ
+11. Backup failure ไม่ Spam ทุก Fast retry
+12. Restart/Redeploy แล้ว Database, Backup และ Scheduled Runner ยังอยู่
+13. Split mode: Start Control ก่อน Worker แล้ว Scheduled row ถูก Worker รับ
+14. Split mode: Stop จาก Control แล้ว Workerหยุดและ Durable state เป็น `STOPPED`
+15. Split mode: ปิด Workerแล้ว Control `/healthz` ยังสะท้อนเฉพาะ Control readiness
+16. All-in-one และ Split topology ไม่สามารถทำงานพร้อมกัน
 
-## 10. Quest API verification boundary
+## 12. Quest API verification boundary
 
-`npm run smoke:quest` และ Workflow `Quest API smoke` เป็น Read-only เท่านั้น โดยตรวจบัญชีและอ่านรายการ Quest ไม่ Enroll, Progress, Heartbeat หรือ Claim
+`npm run smoke:quest` เป็น Read-only ตรวจบัญชีและอ่านรายการ Quest ไม่ Enroll, Progress, Heartbeat หรือ Claim
 
-CI และ Smoke Test จึงไม่ใช่หลักฐานว่าการเปลี่ยนข้อมูลจริงผ่านครบทุก Flow การตรวจ Mutation จริงต้องผ่านการอนุมัติด้านความเสี่ยงและข้อกำหนดแพลตฟอร์มก่อน ห้ามใช้บัญชีหลักเป็นบัญชีทดลอง
+CI/Smoke ไม่ใช่หลักฐานว่า Mutation จริงผ่านครบ การทดสอบ Mutation ต้องใช้บัญชีทดสอบและผ่านการอนุมัติความเสี่ยง ห้ามใช้บัญชีหลัก
 
-## 11. Rollback
+## 13. Rollback
 
 ก่อน Deploy:
 
-- บันทึก Commit SHA ที่ใช้งานอยู่
-- ตรวจว่า Backup ล่าสุดเปิดอ่านได้
+- บันทึก Commit SHA
+- ตรวจ Backup ล่าสุดเปิดอ่านได้
 - เก็บ Environment เดิมอย่างปลอดภัย
-- เก็บ Webhook URL เดิมโดยไม่พิมพ์ลง Ticket/Log
-- ยืนยันว่ากิ่ง Release ยังไม่ถูกลบ
+- ยืนยัน Release branch ยังอยู่
+- สำหรับ Split mode บันทึก SHA ของ Control และ Workerให้ตรงกัน
 
 เมื่อพบปัญหา:
 
 1. หยุด Deployment ใหม่
-2. Rollback ไป Commit ก่อนหน้า
-3. Restore Database เฉพาะเมื่อยืนยันว่า Schema/Data เสียหาย
-4. เปลี่ยน Secret และ Webhook URL ทันทีหากสงสัยว่ารั่ว
-5. ตรวจ Render log และ Incident ID แล้วบันทึก Root cause
+2. หยุดทั้ง Control และ Workerก่อนเปลี่ยน Version
+3. Rollback ทุก Process ไป SHA เดียวกัน
+4. Restore Database เฉพาะเมื่อยืนยันว่า Data/Schema เสีย
+5. หมุน Secret/Webhook หากสงสัยว่ารั่ว
 6. เพิ่ม Regression test ก่อน Deploy ใหม่
 
-## 12. เกณฑ์อนุมัติ
+## 14. เกณฑ์อนุมัติ
 
 อนุมัติ Production ได้เมื่อ:
 
 - CI ของ HEAD ล่าสุดผ่านทั้งหมด
-- Snyk, Codacy, SonarCloud และ CodeRabbit ผ่านหรือ Warning ถูกวิเคราะห์และยอมรับอย่างมีเหตุผล
-- ไม่มี Review thread ค้าง
-- Persistent storage ผ่าน Controlled restart/redeploy
-- Emergency Webhook ผ่าน Test แบบไม่ใช้ Secret จริง
+- Snyk, Codacy, SonarCloud และ CodeRabbit ผ่านหรือ Warning ถูกวิเคราะห์
+- ไม่มี Review thread ที่ยังใช้ได้ค้าง
+- Persistent storage ผ่าน Controlled restart
 - Permission, Runner limit และ Stop lifecycle ผ่าน
-- Backup threshold, bounded retry และ Recovery retry ผ่าน
+- Split mode ผ่านเฉพาะเมื่อมี Shared durable store จริง
+- Backup/Incident/Recovery ผ่าน
 - Rollback path ถูกยืนยัน
-- ผู้ดูแลยอมรับความเสี่ยงด้านบัญชีและข้อกำหนดแพลตฟอร์มอย่างชัดเจน
+- ผู้ดูแลยอมรับความเสี่ยงด้านบัญชีและข้อกำหนดแพลตฟอร์ม
 
-## 13. Repository data safety
+## 15. Repository data safety
 
-- `git ls-files` ต้องไม่พบ `.db`, `.sqlite`, WAL/SHM หรือไฟล์ใน Runtime `data/backups`
-- ตรวจ Git history และ Secret scanning ก่อน Merge หากฐานข้อมูลเคยถูก Commit
-- หากพบข้อมูลรับรองหรือ Webhook URL จริง ให้หมุน Secret/Token/Webhook ก่อน Deploy
-- ตั้ง Production Replica เป็น 1 หรือยืนยันว่าทุก Process ใช้ Shared `DATABASE_PATH` เดียวกันและ Lease ทำงาน
+- `git ls-files` ไม่พบ `.db`, `.sqlite`, WAL/SHM หรือ Runtime backups
+- ตรวจ Git history และ Secret scanning ก่อน Merge
+- หากพบ Credential จริงให้หมุนก่อน Deploy
+- Production Replica เป็น 1 ต่อ Role
+- Control/Worker ต้องใช้ Shared `DATABASE_PATH`; ห้ามใช้ Database คนละไฟล์แล้วถือว่าเป็น Split topology
