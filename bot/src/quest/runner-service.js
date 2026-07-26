@@ -1,5 +1,12 @@
 import * as legacyRunner from '../discord-runner.js';
-import { getScheduledRunner } from '../scheduled-runner-store.js';
+import { config } from '../config.js';
+import { reportCriticalError } from '../error-reporter.js';
+import {
+  decryptRunnerToken,
+  getScheduledRunner,
+  listScheduledRunners,
+  updateScheduledRunner,
+} from '../scheduled-runner-store.js';
 import { authorizationFingerprint } from './rate-limit-coordinator.js';
 import { subscribeScheduleHints } from './schedule-hint-bus.js';
 import {
@@ -189,29 +196,60 @@ export async function startRunner(args) {
 
 export async function restoreScheduledRunners(client) {
   markInterruptedRunnerStates();
-  const result = await legacyRunner.restoreScheduledRunners(client);
-  for (const job of legacyRunner.listJobs().filter((item) => item.mode === 'scheduled')) {
-    beginRunnerState({
-      jobKey: job.key,
-      ownerId: job.ownerId,
-      accountId: job.accountId,
-      username: job.username,
-      mode: job.mode,
-      scheduleId: job.scheduleId,
-      state: RUNNER_STATE.RECOVERING,
-      nextActionAt: job.nextCheckAt,
-      metadata: { source: 'restore' },
-    });
-    transitionRunnerState(job.key, RUNNER_STATE.RUNNING, {
-      nextActionAt: job.nextCheckAt,
-      metadata: { source: 'restore-complete' },
-    });
-    observeCompletion(job.key, job.mode, job.scheduleId);
+  const rows = listScheduledRunners();
+  if (!rows.length) {
+    startRunnerStateObserver();
+    pruneRunnerStates();
+    return { restored: 0, failed: 0 };
   }
+
+  let restored = 0;
+  let failed = 0;
+  const restoredByOwner = new Map();
+  const restoredAccounts = new Set();
+
+  for (const row of rows) {
+    const ownerCount = restoredByOwner.get(row.owner_id) ?? 0;
+    if (ownerCount >= 10) {
+      failed++;
+      updateScheduledRunner(row.id, { lastError: 'Restore skipped: owner runner limit exceeded' });
+      continue;
+    }
+    if (restoredAccounts.has(row.account_id)) {
+      failed++;
+      updateScheduledRunner(row.id, { lastError: 'Restore skipped: Discord account already restored' });
+      continue;
+    }
+
+    try {
+      const token = decryptRunnerToken(row, config.runnerTokenSecret);
+      await startRunner({
+        jobKey: `scheduled:${row.id}`,
+        ownerId: row.owner_id,
+        userToken: token,
+        channelId: row.channel_id,
+        client,
+        mode: 'scheduled',
+        scheduleId: row.id,
+        accountId: row.account_id,
+        username: row.username,
+        initialNextCheckAt: row.next_check_at,
+      });
+      restored++;
+      restoredByOwner.set(row.owner_id, ownerCount + 1);
+      restoredAccounts.add(row.account_id);
+    } catch (error) {
+      failed++;
+      updateScheduledRunner(row.id, { lastError: `Restore failed: ${error.message}` });
+      await reportCriticalError(`Restore Scheduled Runner #${row.id}`, error);
+    }
+  }
+
   syncAllRunnerStates();
   startRunnerStateObserver();
   pruneRunnerStates();
-  return result;
+  console.log(`♻️ Scheduled Runners restored: ${restored}, failed: ${failed}`);
+  return { restored, failed };
 }
 
 export async function shutdownRunners(timeoutMs = null) {
