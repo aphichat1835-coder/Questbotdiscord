@@ -20,7 +20,12 @@ function questCandidates(quest, now) {
   if (quest.completed && !quest.claimed) {
     items.push(candidate(now, `claim:${quest.id}`, 100));
   }
-  if (!quest.completed && expiresAt != null && expiresAt - now <= DEADLINE_URGENCY_MS) {
+  if (
+    !quest.completed
+    && expiresAt != null
+    && expiresAt > now
+    && expiresAt - now <= DEADLINE_URGENCY_MS
+  ) {
     items.push(candidate(now, `deadline:${quest.id}`, 95));
   }
   if (!quest.completed && startsAt != null && startsAt > now) {
