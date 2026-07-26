@@ -55,3 +55,20 @@ test('Quest near expiry is promoted ahead of ordinary retry work', () => {
   assert.equal(result.reason, 'deadline:urgent');
   assert.equal(result.priority, 95);
 });
+
+test('expired incomplete Quest does not create a fresh deadline hint', () => {
+  const result = chooseNextQuestAction({
+    now,
+    quests: [{
+      id: 'expired',
+      completed: false,
+      claimed: false,
+      enrolled: true,
+      expiresAt: '2029-12-31T23:59:00.000Z',
+    }],
+    fallbackAt: '2030-01-01T08:00:00.000Z',
+  });
+
+  assert.equal(result.reason, 'baseline');
+  assert.equal(result.nextActionAt, '2030-01-01T08:00:00.000Z');
+});
