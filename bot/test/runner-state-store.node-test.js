@@ -143,12 +143,36 @@ test('worker recovery touches scheduled states only and leaves control one-shot 
 
   const changed = markInterruptedRunnerStates(
     new Date('2030-01-01T00:00:00.000Z'),
-    { includeOneShot: false },
+    { includeOneShot: false, includeScheduled: true },
   );
 
   assert.equal(changed, 1);
   assert.equal(getRunnerState('scheduled:worker').state, RUNNER_STATE.RECOVERING);
   assert.equal(getRunnerState('oneshot:control').state, RUNNER_STATE.RUNNING_PROGRESS);
+});
+
+test('control recovery fails interrupted one-shot work without changing worker scheduled state', () => {
+  beginRunnerState({
+    jobKey: 'scheduled:delegated',
+    ownerId: 'owner-1',
+    mode: 'scheduled',
+    state: RUNNER_STATE.WAITING_SCHEDULE,
+  });
+  beginRunnerState({
+    jobKey: 'oneshot:interrupted',
+    ownerId: 'owner-1',
+    mode: 'oneshot',
+    state: RUNNER_STATE.RUNNING_PROGRESS,
+  });
+
+  const changed = markInterruptedRunnerStates(
+    new Date('2030-01-01T00:00:00.000Z'),
+    { includeOneShot: true, includeScheduled: false },
+  );
+
+  assert.equal(changed, 1);
+  assert.equal(getRunnerState('scheduled:delegated').state, RUNNER_STATE.WAITING_SCHEDULE);
+  assert.equal(getRunnerState('oneshot:interrupted').state, RUNNER_STATE.FAILED);
 });
 
 test('terminal states created directly include a completion timestamp', () => {
