@@ -26,8 +26,9 @@ function canUsePersistentDataRoot(fsApi) {
 }
 
 export function isPersistentDatabasePath(databasePath) {
-  return databasePath !== ':memory:'
-    && path.resolve(databasePath).startsWith('/var/data/');
+  if (databasePath === ':memory:' || !path.isAbsolute(databasePath)) return false;
+  const normalized = path.resolve(databasePath);
+  return normalized === '/var/data' || normalized.startsWith('/var/data/');
 }
 
 function profileForPath(databasePath, hosted) {
