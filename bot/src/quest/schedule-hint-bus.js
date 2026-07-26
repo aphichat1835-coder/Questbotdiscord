@@ -1,6 +1,14 @@
 const listeners = new Map();
 const latestHints = new Map();
 
+function notifyListener(listener, hint) {
+  try {
+    listener({ ...hint });
+  } catch (error) {
+    console.warn(`[QuestScheduler] schedule hint listener failed: ${error?.message ?? 'unknown error'}`);
+  }
+}
+
 export function publishScheduleHint(accountKey, hint) {
   if (!accountKey || !hint?.nextActionAt) return false;
   const previous = latestHints.get(accountKey);
@@ -9,7 +17,7 @@ export function publishScheduleHint(accountKey, hint) {
   }
   latestHints.set(accountKey, { ...hint });
   for (const listener of listeners.get(accountKey) ?? []) {
-    try { listener({ ...hint }); } catch {}
+    notifyListener(listener, hint);
   }
   return true;
 }
@@ -18,7 +26,7 @@ export function subscribeScheduleHints(accountKey, listener) {
   if (!listeners.has(accountKey)) listeners.set(accountKey, new Set());
   listeners.get(accountKey).add(listener);
   const latest = latestHints.get(accountKey);
-  if (latest) queueMicrotask(() => listener({ ...latest }));
+  if (latest) queueMicrotask(() => notifyListener(listener, latest));
   return () => {
     const accountListeners = listeners.get(accountKey);
     accountListeners?.delete(listener);
