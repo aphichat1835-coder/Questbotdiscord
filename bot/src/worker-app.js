@@ -46,6 +46,7 @@ export function createWorkerApp({ exit = process.exit } = {}) {
     if (shutdownPromise) return shutdownPromise;
 
     shutdownPromise = (async () => {
+      outputClient.markNotReady();
       if (runtimeLeaseTimer) {
         clearInterval(runtimeLeaseTimer);
         runtimeLeaseTimer = null;
@@ -87,6 +88,7 @@ export function createWorkerApp({ exit = process.exit } = {}) {
     if (fatalShutdownPromise) return fatalShutdownPromise;
 
     fatalShutdownPromise = (async () => {
+      outputClient.markNotReady();
       const report = reportIncident({
         code,
         error,
@@ -150,13 +152,15 @@ export function createWorkerApp({ exit = process.exit } = {}) {
     runtimeLeaseTimer.unref?.();
 
     try {
-      await startDashboard(null);
+      await startDashboard(outputClient);
       await restoreScheduledRunners(outputClient);
       await startScheduledWorkerSupervisor(outputClient);
+      outputClient.markReady();
       console.log(
         `✅ Scheduled worker ready · poll ${config.workerPollIntervalMs}ms · API v10`,
       );
     } catch (error) {
+      outputClient.markNotReady();
       return fatalShutdown(
         error?.incidentCode || INCIDENT.CLIENT_STARTUP_FAILED,
         error,
