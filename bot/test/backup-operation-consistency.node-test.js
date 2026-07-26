@@ -1,13 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createFakeDiscordWebhookUrl } from '../test-support/fake-webhook.js';
 
-process.env.DISCORD_BOT_TOKEN ??= 'backup-operation-test-bot-token';
-process.env.DISCORD_CLIENT_ID ??= '12345678901234567';
-process.env.DISCORD_GUILD_ID ??= '22345678901234567';
-process.env.OWNER_ID ??= '32345678901234567';
-process.env.RUNNER_TOKEN_SECRET ??= 'backup-operation-test-secret-32-characters';
-process.env.LOG_WEBHOOK_URL ??= createFakeDiscordWebhookUrl('backup-operation');
 process.env.DATABASE_PATH = ':memory:';
 process.env.QUESTBOT_TEST_MODE = 'true';
 
@@ -16,26 +9,11 @@ const {
   createBackupOperations,
 } = await import('../src/db.js');
 
-const PROFILE_PATHS = Object.freeze([
-  Object.freeze([
-    './data/backups/questbot-slot-1.db',
-    './data/backups/questbot-slot-2.db',
-    './data/backups/questbot-slot-3.db',
-    './data/backups/questbot-slot-4.db',
-    './data/backups/questbot-slot-5.db',
-    './data/backups/questbot-slot-6.db',
-    './data/backups/questbot-slot-7.db',
-  ]),
-  Object.freeze([
-    '/var/data/backups/questbot-slot-1.db',
-    '/var/data/backups/questbot-slot-2.db',
-    '/var/data/backups/questbot-slot-3.db',
-    '/var/data/backups/questbot-slot-4.db',
-    '/var/data/backups/questbot-slot-5.db',
-    '/var/data/backups/questbot-slot-6.db',
-    '/var/data/backups/questbot-slot-7.db',
-  ]),
-]);
+const PROFILE_PATHS = Object.freeze(
+  ['./data/backups', '/var/data/backups'].map((root) => Object.freeze(
+    Array.from({ length: 7 }, (_, index) => `${root}/questbot-slot-${index + 1}.db`),
+  )),
+);
 
 test.after(() => closeDatabase());
 
