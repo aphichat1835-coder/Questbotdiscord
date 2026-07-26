@@ -1,0 +1,125 @@
+import * as legacyRunner from '../discord-runner.js';
+import { getScheduledRunner } from '../scheduled-runner-store.js';
+import { authorizationFingerprint } from './rate-limit-coordinator.js';
+import { subscribeScheduleHints } from './schedule-hint-bus.js';
+import {
+  getRunnerState,
+  RUNNER_STATE,
+  transitionRunnerState,
+} from './runner-state-store.js';
+
+const smartWakeups = new Map();
+const restartingJobs = new Set();
+let restartRunner = null;
+
+function hintState(reason) {
+  if (reason.startsWith('claim:')) return RUNNER_STATE.CLAIMING;
+  if (reason.startsWith('enrollment:')) return RUNNER_STATE.WAITING_ENROLLMENT;
+  if (reason === 'retry') return RUNNER_STATE.WAITING_RETRY;
+  if (reason === 'verification') return RUNNER_STATE.VERIFYING_COMPLETION;
+  return RUNNER_STATE.WAITING_SCHEDULE;
+}
+
+function runnerIsSleeping(job) {
+  const status = String(job?.summary?.().status ?? '');
+  return /NEXT CHECK|AUTO DAILY ACTIVE/.test(status);
+}
+
+function recordWakeFailure(jobKey, error) {
+  const current = getRunnerState(jobKey);
+  if (!current) return;
+  transitionRunnerState(jobKey, RUNNER_STATE.FAILED, {
+    lastError: error?.message ?? String(error),
+    metadata: { stage: 'smart-wakeup' },
+  });
+}
+
+async function restartSleepingRunner(args) {
+  if (typeof restartRunner !== 'function') {
+    throw new Error('Smart wake restart handler is not configured');
+  }
+  const active = legacyRunner.getJob(args.jobKey);
+  if (!active || !runnerIsSleeping(active)) return false;
+  if (!getScheduledRunner(args.scheduleId)) {
+    clearSmartWake(args.jobKey);
+    return false;
+  }
+
+  restartingJobs.add(args.jobKey);
+  transitionRunnerState(args.jobKey, RUNNER_STATE.RECOVERING, {
+    nextActionAt: new Date().toISOString(),
+    metadata: { reason: 'smart-wakeup' },
+  });
+  const completion = active.done;
+  legacyRunner.stopJob(args.ownerId, args.jobKey, { removeSchedule: false });
+  await Promise.resolve(completion).catch(() => undefined);
+
+  try {
+    if (!getScheduledRunner(args.scheduleId)) return false;
+    await restartRunner({ ...args, initialNextCheckAt: null });
+    return true;
+  } finally {
+    restartingJobs.delete(args.jobKey);
+  }
+}
+
+function installWakeTimer(args, hint, existing) {
+  const at = Date.parse(hint.nextActionAt);
+  const delay = Math.max(0, at - Date.now());
+  const timer = setTimeout(() => {
+    const entry = smartWakeups.get(args.jobKey);
+    if (entry) entry.timer = null;
+    void restartSleepingRunner(args).catch((error) => recordWakeFailure(args.jobKey, error));
+  }, delay);
+  timer.unref?.();
+  smartWakeups.set(args.jobKey, { ...existing, timer, args, hint });
+}
+
+function scheduleSmartWake(args, hint) {
+  if (args.mode !== 'scheduled' || hint.reason === 'baseline') return;
+  const at = Date.parse(hint.nextActionAt);
+  if (!Number.isFinite(at)) return;
+
+  const active = legacyRunner.getJob(args.jobKey);
+  const currentNextAt = Date.parse(active?.summary?.().nextCheckAt);
+  if (Number.isFinite(currentNextAt) && currentNextAt <= at) return;
+
+  const existing = smartWakeups.get(args.jobKey);
+  if (existing?.timer) clearTimeout(existing.timer);
+  transitionRunnerState(args.jobKey, hintState(hint.reason), {
+    nextActionAt: hint.nextActionAt,
+    metadata: { reason: hint.reason, priority: hint.priority },
+  });
+  installWakeTimer(args, hint, existing);
+}
+
+export function configureSmartWakeController(handler) {
+  restartRunner = handler;
+}
+
+export function registerSmartWake(args) {
+  if (args.mode !== 'scheduled') return false;
+  const existing = smartWakeups.get(args.jobKey);
+  existing?.unsubscribe?.();
+  const account = authorizationFingerprint(args.userToken);
+  const unsubscribe = subscribeScheduleHints(account, (hint) => scheduleSmartWake(args, hint));
+  smartWakeups.set(args.jobKey, { ...existing, args, unsubscribe });
+  return true;
+}
+
+export function clearSmartWake(jobKey) {
+  const entry = smartWakeups.get(jobKey);
+  if (!entry) return false;
+  if (entry.timer) clearTimeout(entry.timer);
+  entry.unsubscribe?.();
+  smartWakeups.delete(jobKey);
+  return true;
+}
+
+export function isSmartWakeRestarting(jobKey) {
+  return restartingJobs.has(jobKey);
+}
+
+export function clearAllSmartWakes() {
+  for (const jobKey of smartWakeups.keys()) clearSmartWake(jobKey);
+}
