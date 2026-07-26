@@ -63,6 +63,23 @@ export function releaseProcessRoleLease(role, holder) {
   ).run(processLeaseName(role), holder).changes > 0;
 }
 
+export function isProcessRoleActive(role, now = Date.now()) {
+  return Boolean(db.prepare(`
+    SELECT 1 FROM runtime_leases
+    WHERE name = ? AND expires_at > ?
+  `).get(processLeaseName(role), now));
+}
+
+export function listActiveProcessRoles(now = Date.now()) {
+  const rows = db.prepare(`
+    SELECT name FROM runtime_leases
+    WHERE name IN (?, ?, ?) AND expires_at > ?
+    ORDER BY name
+  `).all(LEASE_NAMES.all, LEASE_NAMES.control, LEASE_NAMES.worker, now);
+  const roleByLease = new Map(Object.entries(LEASE_NAMES).map(([role, name]) => [name, role]));
+  return rows.map((row) => roleByLease.get(row.name)).filter(Boolean);
+}
+
 export function clearProcessRoleLeasesForTests() {
   db.prepare(`
     DELETE FROM runtime_leases
