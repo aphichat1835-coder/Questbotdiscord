@@ -8,7 +8,9 @@ import {
 } from '../src/quest/schedule-hint-bus.js';
 import {
   clearSmartWake,
+  MAX_SMART_WAKE_TIMER_MS,
   registerSmartWake,
+  smartWakeTimerDelay,
 } from '../src/quest/smart-wake-controller.js';
 import {
   beginRunnerState,
@@ -89,4 +91,18 @@ test('baseline hints do not replace the runner fixed schedule', () => {
   });
 
   assert.equal(getRunnerState(JOB_KEY).state, RUNNER_STATE.RUNNING);
+});
+
+test('far-future smart wake uses bounded timer chunks instead of overflowing setTimeout', () => {
+  const now = Date.parse('2030-01-01T00:00:00.000Z');
+  const farFuture = '2030-03-01T00:00:00.000Z';
+
+  assert.equal(smartWakeTimerDelay(farFuture, now), MAX_SMART_WAKE_TIMER_MS);
+  assert.equal(MAX_SMART_WAKE_TIMER_MS, 24 * 60 * 60 * 1000);
+});
+
+test('due and invalid smart wake timestamps are normalized safely', () => {
+  const now = Date.parse('2030-01-01T00:00:00.000Z');
+  assert.equal(smartWakeTimerDelay('2029-12-31T23:59:59.000Z', now), 0);
+  assert.equal(smartWakeTimerDelay('not-a-date', now), null);
 });
