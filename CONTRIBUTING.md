@@ -114,4 +114,4 @@ Read-only Smoke ไม่ยืนยัน Enroll/Progress/Heartbeat/Claim จ�
 git ls-files | grep -E '(^|/)(data|backups)/|\.(db|sqlite)(-(wal|shm|journal))?$'
 ```
 
-คำสั่งต้องไม่แสดงผล และ Test ใหม่ต้องอยู่ใต้ `bot/test/` เพื่อให้ `node --test` ค้นหาแบบ Recursive
+คำสั่งตรวจสอบอาจแสดงชื่อไฟล์หรือผล Validation ที่ไม่อ่อนไหวได้ แต่ห้ามแสดง Secret, Token, Ciphertext, Webhook URL หรือ Runtime path ที่เป็นข้อมูลภายใน และ Test ใหม่ต้องอยู่ใต้ `bot/test/` เพื่อให้ `node --test` ค้นหาแบบ Recursive
