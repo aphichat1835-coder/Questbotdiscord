@@ -13,13 +13,19 @@ const appModuleUrl = new URL('../src/app.js', import.meta.url).href;
 test('entrypoint installs bootstrap handlers before importing runtime modules', async () => {
   const index = await readFile(new URL('../src/index.js', import.meta.url), 'utf8');
   const installIndex = index.indexOf('installBootstrapProcessHandlers()');
-  const runtimeImportIndex = index.indexOf("await import('./app.js')");
+  const configImportIndex = index.indexOf("await import('./config.js')");
+  const roleImportIndex = index.indexOf('await import(applicationModule)');
 
   assert.ok(installIndex >= 0, 'bootstrap handler installation is missing');
-  assert.ok(runtimeImportIndex >= 0, 'runtime dynamic import is missing');
-  assert.ok(installIndex < runtimeImportIndex, 'bootstrap handlers must be installed before runtime import');
+  assert.ok(configImportIndex >= 0, 'runtime config import is missing');
+  assert.ok(roleImportIndex >= 0, 'role-aware runtime import is missing');
+  assert.ok(installIndex < configImportIndex, 'bootstrap handlers must be installed before config import');
+  assert.ok(configImportIndex < roleImportIndex, 'process role must be resolved before importing its runtime');
   assert.doesNotMatch(index, /from '\.\/config\.js'/);
   assert.doesNotMatch(index, /from '\.\/db\.js'/);
+  assert.match(index, /config\.processRole === 'worker'/);
+  assert.match(index, /'\.\/worker-app\.js'/);
+  assert.match(index, /'\.\/app\.js'/);
 });
 
 test('explicit bootstrap failure exits even when another handle keeps the event loop referenced', () => {
