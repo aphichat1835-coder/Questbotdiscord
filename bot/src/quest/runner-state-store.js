@@ -50,6 +50,11 @@ function parseMetadata(row) {
   return { ...row, metadata };
 }
 
+function optionOrCurrent(options, optionName, current, columnName, fallback = null) {
+  if (Object.hasOwn(options, optionName)) return options[optionName];
+  return current?.[columnName] ?? fallback;
+}
+
 db.exec(`
   CREATE TABLE IF NOT EXISTS runner_states (
     job_key          TEXT PRIMARY KEY,
@@ -136,40 +141,30 @@ export function beginRunnerState({
   return getRunnerState(jobKey);
 }
 
-export function transitionRunnerState(jobKey, state, {
-  ownerId = null,
-  accountId = null,
-  username = null,
-  mode = null,
-  scheduleId = null,
-  questId = null,
-  questName = null,
-  progress = null,
-  nextActionAt = null,
-  retryCount = null,
-  lastError = null,
-  metadata = null,
-} = {}) {
+export function transitionRunnerState(jobKey, state, options = {}) {
   assertState(state);
   const current = getRunnerState(jobKey);
+  const ownerId = optionOrCurrent(options, 'ownerId', current, 'owner_id');
+  const mode = optionOrCurrent(options, 'mode', current, 'mode');
   if (!current && (!ownerId || !mode)) {
     throw new Error(`Runner state ${jobKey} does not exist and cannot be created implicitly`);
   }
+
   upsertRunnerState.run({
     jobKey,
-    ownerId: ownerId ?? current?.owner_id,
-    accountId: accountId ?? current?.account_id ?? null,
-    username: username ?? current?.username ?? null,
-    mode: mode ?? current?.mode,
-    scheduleId: scheduleId ?? current?.schedule_id ?? null,
+    ownerId,
+    accountId: optionOrCurrent(options, 'accountId', current, 'account_id'),
+    username: optionOrCurrent(options, 'username', current, 'username'),
+    mode,
+    scheduleId: optionOrCurrent(options, 'scheduleId', current, 'schedule_id'),
     state,
-    questId,
-    questName,
-    progress,
-    nextActionAt,
-    retryCount: retryCount ?? current?.retry_count ?? 0,
-    lastError,
-    metadataJson: json(metadata),
+    questId: optionOrCurrent(options, 'questId', current, 'quest_id'),
+    questName: optionOrCurrent(options, 'questName', current, 'quest_name'),
+    progress: optionOrCurrent(options, 'progress', current, 'progress'),
+    nextActionAt: optionOrCurrent(options, 'nextActionAt', current, 'next_action_at'),
+    retryCount: optionOrCurrent(options, 'retryCount', current, 'retry_count', 0),
+    lastError: optionOrCurrent(options, 'lastError', current, 'last_error'),
+    metadataJson: json(optionOrCurrent(options, 'metadata', current, 'metadata')),
     completedAt: TERMINAL_STATES.has(state) ? new Date().toISOString() : null,
   });
   return getRunnerState(jobKey);
