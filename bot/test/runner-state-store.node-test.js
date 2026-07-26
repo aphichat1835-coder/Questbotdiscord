@@ -27,6 +27,7 @@ test('runner state persists lifecycle, quest and next action data', () => {
     questName: 'Quest One',
     progress: 50,
     nextActionAt: '2030-01-01T00:00:00.000Z',
+    lastError: 'temporary error',
     metadata: { source: 'test' },
   });
 
@@ -36,6 +37,64 @@ test('runner state persists lifecycle, quest and next action data', () => {
   assert.equal(state.quest_name, 'Quest One');
   assert.equal(state.progress, 50);
   assert.deepEqual(state.metadata, { source: 'test' });
+});
+
+test('partial transitions preserve omitted checkpoint and diagnostic fields', () => {
+  beginRunnerState({
+    jobKey: 'scheduled:partial',
+    ownerId: 'owner-1',
+    accountId: 'account-1',
+    username: 'runner',
+    mode: 'scheduled',
+    scheduleId: 2,
+  });
+  transitionRunnerState('scheduled:partial', RUNNER_STATE.RUNNING_PROGRESS, {
+    questId: 'quest-1',
+    questName: 'Quest One',
+    progress: 75,
+    nextActionAt: '2030-01-01T00:05:00.000Z',
+    retryCount: 2,
+    lastError: 'network ambiguity',
+    metadata: { reason: 'verification' },
+  });
+
+  const transitioned = transitionRunnerState('scheduled:partial', RUNNER_STATE.VERIFYING_COMPLETION);
+  assert.equal(transitioned.quest_id, 'quest-1');
+  assert.equal(transitioned.quest_name, 'Quest One');
+  assert.equal(transitioned.progress, 75);
+  assert.equal(transitioned.next_action_at, '2030-01-01T00:05:00.000Z');
+  assert.equal(transitioned.retry_count, 2);
+  assert.equal(transitioned.last_error, 'network ambiguity');
+  assert.deepEqual(transitioned.metadata, { reason: 'verification' });
+});
+
+test('explicit null values still clear optional checkpoint fields', () => {
+  beginRunnerState({ jobKey: 'clearable', ownerId: 'owner-1', mode: 'oneshot' });
+  transitionRunnerState('clearable', RUNNER_STATE.RUNNING_PROGRESS, {
+    questId: 'quest-1',
+    progress: 20,
+    lastError: 'old error',
+    metadata: { source: 'old' },
+  });
+  const cleared = transitionRunnerState('clearable', RUNNER_STATE.RUNNING, {
+    questId: null,
+    progress: null,
+    lastError: null,
+    metadata: null,
+  });
+  assert.equal(cleared.quest_id, null);
+  assert.equal(cleared.progress, null);
+  assert.equal(cleared.last_error, null);
+  assert.equal(cleared.metadata, null);
+});
+
+test('direct transition creation requires owner and mode but has safe defaults', () => {
+  const state = transitionRunnerState('direct-create', RUNNER_STATE.QUEUED, {
+    ownerId: 'owner-1',
+    mode: 'oneshot',
+  });
+  assert.equal(state.retry_count, 0);
+  assert.equal(state.quest_id, null);
 });
 
 test('process restart recovers scheduled work and fails non-restorable one-shot work', () => {
