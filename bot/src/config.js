@@ -16,6 +16,14 @@ function readOptional(name, fallback = '') {
   return process.env[name]?.trim() || fallback;
 }
 
+function readChoice(name, allowed, fallback) {
+  const value = readOptional(name, fallback).toLowerCase();
+  if (!allowed.includes(value)) {
+    configurationError(`${name} must be one of: ${allowed.join(', ')}`);
+  }
+  return value;
+}
+
 function validateSnowflake(name, value, { optional = false } = {}) {
   if (optional && !value) return value;
   if (!/^\d{17,20}$/.test(value)) {
@@ -88,6 +96,7 @@ const discordTimezone = validateTimeZone(
   'DISCORD_TIMEZONE',
   readOptional('DISCORD_TIMEZONE', timezone),
 );
+const processRole = readChoice('QUEST_PROCESS_ROLE', ['all', 'control', 'worker'], 'all');
 const resolvedStorageProfile = resolveStorageProfile({ env: process.env });
 const requestedBackupEnabled = readBoolean(
   'DATABASE_BACKUP_ENABLED',
@@ -126,6 +135,8 @@ export const config = Object.freeze({
   clientId,
   guildId,
   ownerId,
+  processRole,
+  workerPollIntervalMs: readInteger('QUEST_WORKER_POLL_MS', 5000, { min: 1000, max: 60_000 }),
   timezone,
   discordTimezone,
   discordLocale,
