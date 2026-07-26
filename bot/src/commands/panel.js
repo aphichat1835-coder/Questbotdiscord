@@ -5,7 +5,7 @@ import {
   EmbedBuilder,
   SlashCommandBuilder,
 } from 'discord.js';
-import { getUserJobs } from '../discord-runner.js';
+import { getUserJobs } from '../quest/runner-service.js';
 import { stopRunnerAndWaitDetailed } from '../runner-control.js';
 import { isManager } from '../permissions.js';
 import { showRunModal } from './run.js';
