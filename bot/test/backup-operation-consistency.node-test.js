@@ -10,7 +10,14 @@ function operationSection(source, startMarker, endMarker) {
 }
 
 function operationBlocks(section) {
-  return [...section.matchAll(/Object\.freeze\(\{([\s\S]*?)\}\),/g)].map((match) => match[1]);
+  return section
+    .split(/\n  Object\.freeze\(\{/)
+    .slice(1)
+    .map((candidate) => {
+      const end = candidate.indexOf('\n  }),');
+      assert.ok(end >= 0, 'backup operation block is not closed correctly');
+      return candidate.slice(0, end);
+    });
 }
 
 function assertProfileBlocks(source, {
