@@ -6,12 +6,6 @@ import { isPersistentDatabasePath } from '../src/storage-profile.js';
 import { executeDiscordWebhook } from '../src/webhook-delivery.js';
 import { createFakeDiscordWebhookUrl } from '../test-support/fake-webhook.js';
 
-process.env.DISCORD_BOT_TOKEN ??= 'review-regression-test-bot-token';
-process.env.DISCORD_CLIENT_ID ??= '12345678901234567';
-process.env.DISCORD_GUILD_ID ??= '22345678901234567';
-process.env.OWNER_ID ??= '32345678901234567';
-process.env.RUNNER_TOKEN_SECRET ??= 'review-regression-test-secret-32-characters';
-process.env.LOG_WEBHOOK_URL ??= createFakeDiscordWebhookUrl('review-regressions');
 process.env.QUESTBOT_TEST_MODE = 'true';
 process.env.ALLOW_TEST_WEBHOOK = 'true';
 
@@ -31,6 +25,16 @@ function deferred() {
   let resolve;
   const promise = new Promise((resolver) => { resolve = resolver; });
   return { promise, resolve };
+}
+
+function healthIncident(scope, now, message = 'health failure', options = {}) {
+  return reportIncident({
+    code: INCIDENT.HEALTH_SERVER_BIND_FAILED,
+    error: new Error(message),
+    scope,
+    now,
+    ...options,
+  });
 }
 
 test.afterEach(() => {
@@ -82,22 +86,23 @@ test('a new failure during recovery_pending reuses the original incident identit
     return new Response(null, { status: request === 2 ? 400 : 204 });
   };
   const base = Date.now();
+  const scope = 'backup:primary';
 
   const opened = await reportIncident({
     code: INCIDENT.BACKUP_PROTECTION_LOST,
     error: new Error('backup unavailable'),
-    scope: 'backup:primary',
+    scope,
     now: base,
   });
   const recovery = await reportRecovery({
     code: INCIDENT.BACKUP_PROTECTION_LOST,
-    scope: 'backup:primary',
+    scope,
     now: base + 1_000,
   });
   const reopened = await reportIncident({
     code: INCIDENT.BACKUP_PROTECTION_LOST,
     error: new Error('backup failed again'),
-    scope: 'backup:primary',
+    scope,
     now: base + 2_000,
   });
 
@@ -112,18 +117,14 @@ test('a new failure during recovery_pending reuses the original incident identit
 test('duplicate recovery calls do not inflate failure occurrence or suppression counters', async () => {
   globalThis.fetch = async () => new Response(null, { status: 204 });
   const base = Date.now();
-  const opened = await reportIncident({
-    code: INCIDENT.HEALTH_SERVER_BIND_FAILED,
-    error: new Error('EADDRINUSE'),
-    scope: 'health:10000',
-    now: base,
-  });
+  const scope = 'health:10000';
+  const opened = await healthIncident(scope, base, 'EADDRINUSE');
 
   const pendingResponse = deferred();
   globalThis.fetch = async () => pendingResponse.promise;
   const recoveryPromise = reportRecovery({
     code: INCIDENT.HEALTH_SERVER_BIND_FAILED,
-    scope: 'health:10000',
+    scope,
     now: base + 1_000,
   });
   await Promise.resolve();
@@ -131,7 +132,7 @@ test('duplicate recovery calls do not inflate failure occurrence or suppression 
   const before = getIncidentReporterStatus();
   const duplicate = await reportRecovery({
     code: INCIDENT.HEALTH_SERVER_BIND_FAILED,
-    scope: 'health:10000',
+    scope,
     now: base + 1_001,
   });
   const during = getIncidentReporterStatus();
@@ -148,26 +149,15 @@ test('duplicate recovery calls do not inflate failure occurrence or suppression 
 test('unrecovered open incidents expire after the absolute maximum age', async () => {
   globalThis.fetch = async () => new Response(null, { status: 204 });
   const base = Date.now();
-  const first = await reportIncident({
-    code: INCIDENT.HEALTH_SERVER_BIND_FAILED,
-    error: new Error('first failure'),
-    scope: 'health:old',
-    now: base,
-  });
-
+  const first = await healthIncident('health:old', base, 'first failure');
   const afterMaximumAge = base + (31 * 24 * 60 * 60_000);
-  await reportIncident({
-    code: INCIDENT.HEALTH_SERVER_BIND_FAILED,
-    error: new Error('prune trigger'),
-    scope: 'health:new',
-    now: afterMaximumAge,
-  });
-  const replacement = await reportIncident({
-    code: INCIDENT.HEALTH_SERVER_BIND_FAILED,
-    error: new Error('old scope failed again'),
-    scope: 'health:old',
-    now: afterMaximumAge + 1,
-  });
+
+  await healthIncident('health:new', afterMaximumAge, 'prune trigger');
+  const replacement = await healthIncident(
+    'health:old',
+    afterMaximumAge + 1,
+    'old scope failed again',
+  );
 
   assert.notEqual(replacement.incidentId, first.incidentId);
   assert.equal(replacement.occurrences, 1);
@@ -178,13 +168,12 @@ test('settled incident state remains capped when caller-controlled scopes keep c
   const base = Date.now();
 
   for (let index = 0; index < 270; index++) {
-    const result = await reportIncident({
-      code: INCIDENT.HEALTH_SERVER_BIND_FAILED,
-      error: new Error(`failure ${index}`),
-      scope: `caller-scope-${index}`,
-      now: base + index,
-      log: false,
-    });
+    const result = await healthIncident(
+      `caller-scope-${index}`,
+      base + index,
+      `failure ${index}`,
+      { log: false },
+    );
     assert.equal(result.state, 'delivered');
   }
 
