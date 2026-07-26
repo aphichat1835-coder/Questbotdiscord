@@ -12,12 +12,13 @@ import {
   installDiscordApiRuntime,
   uninstallDiscordApiRuntime,
 } from './quest/discord-api-runtime.js';
+import { closeDatabase } from './db.js';
 import {
-  acquireRuntimeLease,
-  closeDatabase,
-  releaseRuntimeLease,
-  renewRuntimeLease,
-} from './db.js';
+  acquireProcessRoleLease,
+  processLeaseName,
+  releaseProcessRoleLease,
+  renewProcessRoleLease,
+} from './process-topology.js';
 import {
   redactSensitive,
   reportError,
@@ -77,7 +78,8 @@ export function createApp({ exit = process.exit } = {}) {
   const commands = [ping, help, apiStatus, run, stop, panel];
   for (const command of commands) client.commands.set(command.data.name, command);
 
-  const runtimeLeaseName = 'bot-runtime';
+  const processRole = config.processRole === 'control' ? 'control' : 'all';
+  const runtimeLeaseName = processLeaseName(processRole);
   const runtimeLeaseHolder = `${process.pid}:${randomUUID()}`;
   const seenInteractions = new Set();
   let runtimeLeaseTimer = null;
@@ -137,7 +139,7 @@ export function createApp({ exit = process.exit } = {}) {
   }
 
   async function onClientReady() {
-    console.log(`✅ บอทพร้อมแล้ว — logged in as ${client.user.tag}`);
+    console.log(`✅ บอทพร้อมแล้ว — logged in as ${client.user.tag} · role ${processRole}`);
     await startDashboard(client);
     startWorker();
     await restoreScheduledRunners(client);
@@ -180,7 +182,7 @@ export function createApp({ exit = process.exit } = {}) {
 
       try {
         if (runtimeLeaseAcquired) {
-          releaseRuntimeLease(runtimeLeaseName, runtimeLeaseHolder);
+          releaseProcessRoleLease(processRole, runtimeLeaseHolder);
           runtimeLeaseAcquired = false;
         }
         closeDatabase();
@@ -206,7 +208,7 @@ export function createApp({ exit = process.exit } = {}) {
       const report = reportIncident({
         code,
         error,
-        context,
+        context: { ...context, processRole },
         scope: 'runtime',
         source: code,
       }).catch(() => ({ state: 'report_failed' }));
@@ -247,19 +249,19 @@ export function createApp({ exit = process.exit } = {}) {
 
   async function start() {
     installDiscordApiRuntime();
-    if (!acquireRuntimeLease(runtimeLeaseName, runtimeLeaseHolder)) {
+    if (!acquireProcessRoleLease(processRole, runtimeLeaseHolder)) {
       return fatalShutdown(
         INCIDENT.RUNTIME_LEASE_CONFLICT,
-        new Error('Another Quest Bot process already holds the shared database runtime lease'),
+        new Error('Quest Bot process role conflicts with the active runtime topology'),
         { leaseName: runtimeLeaseName, holder: runtimeLeaseHolder },
       );
     }
     runtimeLeaseAcquired = true;
     runtimeLeaseTimer = setInterval(() => {
-      if (!renewRuntimeLease(runtimeLeaseName, runtimeLeaseHolder)) {
+      if (!renewProcessRoleLease(processRole, runtimeLeaseHolder)) {
         void fatalShutdown(
           INCIDENT.RUNTIME_LEASE_LOST,
-          new Error('Lost the shared database runtime lease'),
+          new Error('Lost the Quest Bot process role lease'),
           { leaseName: runtimeLeaseName, holder: runtimeLeaseHolder },
         );
       }
