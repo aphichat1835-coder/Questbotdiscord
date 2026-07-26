@@ -101,6 +101,7 @@ export class DiscordRateLimitCoordinator {
       completed: 0,
       rateLimited: 0,
       globalRateLimits: 0,
+      scheduleHintErrors: 0,
       lastRateLimitAt: null,
       lastScheduleHintAt: null,
     };
@@ -142,7 +143,11 @@ export class DiscordRateLimitCoordinator {
   }
 
   scheduleWakeup() {
-    if (this.wakeupTimer || !this.queue.length) return;
+    if (this.wakeupTimer) {
+      clearTimeout(this.wakeupTimer);
+      this.wakeupTimer = null;
+    }
+    if (!this.queue.length) return;
     const now = this.now();
     const waits = this.queue
       .filter((task) => !this.activeAccounts.has(task.account))
@@ -179,6 +184,16 @@ export class DiscordRateLimitCoordinator {
     }
   }
 
+  publishSchedule(task, response) {
+    void publishQuestSchedule(task, response)
+      .then((published) => {
+        if (published) this.stats.lastScheduleHintAt = new Date(this.now()).toISOString();
+      })
+      .catch(() => {
+        this.stats.scheduleHintErrors++;
+      });
+  }
+
   run(task) {
     this.activeCount++;
     this.activeAccounts.add(task.account);
@@ -189,9 +204,7 @@ export class DiscordRateLimitCoordinator {
       .then(() => task.execute())
       .then((response) => {
         this.updateRateLimitState(task, response);
-        void publishQuestSchedule(task, response).then((published) => {
-          if (published) this.stats.lastScheduleHintAt = new Date(this.now()).toISOString();
-        });
+        this.publishSchedule(task, response);
         task.resolve(response);
       }, task.reject)
       .finally(() => {
