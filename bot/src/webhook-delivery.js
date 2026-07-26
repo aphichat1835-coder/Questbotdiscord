@@ -96,6 +96,7 @@ export async function executeDiscordWebhook({
       continue;
     }
 
+    await drainResponse(response);
     return {
       state: RETRYABLE_STATUSES.has(response.status) ? 'delivery_unknown' : 'permanent_failure',
       attempts: attempt,
