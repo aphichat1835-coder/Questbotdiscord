@@ -7,6 +7,7 @@ import { reconcileScheduledWorker } from '../src/quest/scheduled-worker-supervis
 import {
   beginRunnerState,
   clearRunnerStatesForTests,
+  getRunnerState,
   RUNNER_STATE,
 } from '../src/quest/runner-state-store.js';
 
@@ -99,4 +100,57 @@ test('failed rows use a bounded retry delay before the supervisor restarts them'
   });
   assert.equal(second.restore.restored, 1);
   assert.equal(starts.length, 1);
+});
+
+test('detached STOPPING state becomes STOPPED after the worker confirms no row or job remains', async () => {
+  beginRunnerState({
+    jobKey: 'scheduled:4',
+    ownerId: OWNER_ID,
+    accountId: 'account-4',
+    mode: 'scheduled',
+    scheduleId: 4,
+    state: RUNNER_STATE.STOPPING,
+    metadata: { stopSource: 'control' },
+  });
+
+  const result = await reconcileScheduledWorker({}, {
+    rows: [],
+    jobs: [],
+    startRunner: async () => assert.fail('deleted row must not restart'),
+  });
+
+  assert.equal(result.finalizedStops, 1);
+  const state = getRunnerState('scheduled:4');
+  assert.equal(state.state, RUNNER_STATE.STOPPED);
+  assert.equal(state.last_error, null);
+  assert.equal(state.metadata.stopConfirmedBy, 'worker-supervisor');
+  assert.ok(state.completed_at);
+});
+
+test('STOPPING state stays active while the worker job is still cleaning up', async () => {
+  beginRunnerState({
+    jobKey: 'scheduled:5',
+    ownerId: OWNER_ID,
+    accountId: 'account-5',
+    mode: 'scheduled',
+    scheduleId: 5,
+    state: RUNNER_STATE.STOPPING,
+  });
+
+  const result = await reconcileScheduledWorker({}, {
+    rows: [],
+    jobs: [{
+      key: 'scheduled:5',
+      ownerId: OWNER_ID,
+      accountId: 'account-5',
+      mode: 'scheduled',
+      scheduleId: 5,
+    }],
+    stop: () => true,
+    startRunner: async () => assert.fail('deleted row must not restart'),
+  });
+
+  assert.equal(result.stopRequested, 1);
+  assert.equal(result.finalizedStops, 0);
+  assert.equal(getRunnerState('scheduled:5').state, RUNNER_STATE.STOPPING);
 });
