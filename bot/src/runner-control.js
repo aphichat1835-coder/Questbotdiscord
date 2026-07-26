@@ -4,8 +4,15 @@ import {
   stopJob as stopJobImmediately,
   stopScheduledJob as stopScheduledJobImmediately,
 } from './quest/runner-service.js';
+import { getRunnerState, RUNNER_STATE } from './quest/runner-state-store.js';
 
 const DEFAULT_STOP_TIMEOUT_MS = 15_000;
+const DURABLE_STOP_POLL_MS = 250;
+const TERMINAL_DURABLE_STATES = new Set([
+  RUNNER_STATE.STOPPED,
+  RUNNER_STATE.COMPLETED,
+  RUNNER_STATE.FAILED,
+]);
 const stoppingAccounts = new Set();
 const stoppingJobs = new Map();
 
@@ -31,6 +38,21 @@ async function waitForCompletion(completion, timeoutMs) {
   } finally {
     clearTimeout(timeout);
   }
+}
+
+async function waitForDurableStop(jobKey, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const state = getRunnerState(jobKey);
+    if (!state || TERMINAL_DURABLE_STATES.has(state.state)) return true;
+    const remaining = deadline - Date.now();
+    await new Promise((resolve) => setTimeout(
+      resolve,
+      Math.max(1, Math.min(DURABLE_STOP_POLL_MS, remaining)),
+    ));
+  }
+  const state = getRunnerState(jobKey);
+  return !state || TERMINAL_DURABLE_STATES.has(state.state);
 }
 
 function trackStoppingJob(jobKey, key, done) {
@@ -98,7 +120,8 @@ export async function stopScheduledJobAndWaitDetailed(ownerId, scheduleId, {
   const job = getJob(jobKey);
   if (!job) {
     const removed = stopScheduledJobImmediately(ownerId, scheduleId);
-    return result(removed, removed);
+    if (!removed) return result(false, false);
+    return result(true, await waitForDurableStop(jobKey, timeoutMs));
   }
   return stopJobAndWait(ownerId, jobKey, { removeSchedule: true, timeoutMs });
 }
