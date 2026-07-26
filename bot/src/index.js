@@ -7,8 +7,15 @@ import { INCIDENT } from './incident-catalog.js';
 const removeBootstrapHandlers = installBootstrapProcessHandlers();
 
 try {
-  const { createApp } = await import('./app.js');
-  const app = createApp();
+  const { config } = await import('./config.js');
+  const applicationModule = config.processRole === 'worker'
+    ? './worker-app.js'
+    : './app.js';
+  const applicationExport = config.processRole === 'worker'
+    ? 'createWorkerApp'
+    : 'createApp';
+  const application = await import(applicationModule);
+  const app = application[applicationExport]();
   app.installProcessHandlers();
   removeBootstrapHandlers();
   await app.start();
