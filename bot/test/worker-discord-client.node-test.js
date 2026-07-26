@@ -3,12 +3,25 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createWorkerDiscordClient } from '../src/quest/worker-discord-client.js';
 
+test('worker status client exposes an explicit readiness lifecycle', () => {
+  const client = createWorkerDiscordClient({
+    botToken: 'bot-token-fixture',
+    fetchFn: async () => new Response('{}', { status: 200 }),
+  });
+
+  assert.equal(client.isReady(), false);
+  assert.equal(client.ws.ping, -1);
+  client.markReady();
+  assert.equal(client.isReady(), true);
+  client.markNotReady();
+  assert.equal(client.isReady(), false);
+});
+
 test('worker status client sends and edits messages through Discord API v10', async () => {
   const calls = [];
   const fetchFn = async (url, options) => {
     calls.push({ url, options });
-    const id = calls.length === 1 ? 'message-1' : 'message-1';
-    return new Response(JSON.stringify({ id }), {
+    return new Response(JSON.stringify({ id: 'message-1' }), {
       status: 200,
       headers: { 'content-type': 'application/json' },
     });
