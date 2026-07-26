@@ -3,7 +3,11 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { config } from '../src/config.js';
 import { encryptRunnerToken } from '../src/runner-token-crypto.js';
-import { reconcileScheduledWorker } from '../src/quest/scheduled-worker-supervisor.js';
+import {
+  reconcileScheduledWorker,
+  startScheduledWorkerSupervisor,
+  stopScheduledWorkerSupervisor,
+} from '../src/quest/scheduled-worker-supervisor.js';
 import {
   beginRunnerState,
   clearRunnerStatesForTests,
@@ -35,8 +39,13 @@ function scheduledRow(id, accountId = `account-${id}`) {
   };
 }
 
-test.beforeEach(clearRunnerStatesForTests);
-test.afterEach(clearRunnerStatesForTests);
+async function cleanup() {
+  await stopScheduledWorkerSupervisor();
+  clearRunnerStatesForTests();
+}
+
+test.beforeEach(cleanup);
+test.afterEach(cleanup);
 
 test('supervisor stops deleted rows and starts newly persisted rows', async () => {
   const rows = [scheduledRow(1)];
@@ -61,6 +70,7 @@ test('supervisor stops deleted rows and starts newly persisted rows', async () =
   });
 
   assert.equal(result.stopRequested, 1);
+  assert.equal(result.stopFailures, 0);
   assert.deepEqual(stops, [{
     ownerId: OWNER_ID,
     jobKey: 'scheduled:2',
@@ -69,6 +79,48 @@ test('supervisor stops deleted rows and starts newly persisted rows', async () =
   assert.equal(result.restore.restored, 1);
   assert.equal(starts[0].jobKey, 'scheduled:1');
   assert.equal(starts[0].userToken, 'token-1');
+});
+
+test('one stop failure does not block later stops, restore or finalization', async () => {
+  const rows = [scheduledRow(10)];
+  const jobs = [
+    {
+      key: 'scheduled:11',
+      ownerId: OWNER_ID,
+      accountId: 'account-11',
+      mode: 'scheduled',
+      scheduleId: 11,
+    },
+    {
+      key: 'scheduled:12',
+      ownerId: OWNER_ID,
+      accountId: 'account-12',
+      mode: 'scheduled',
+      scheduleId: 12,
+    },
+  ];
+  const starts = [];
+  const stopCalls = [];
+  const reports = [];
+
+  const result = await reconcileScheduledWorker({}, {
+    rows,
+    jobs,
+    stop: (_ownerId, jobKey) => {
+      stopCalls.push(jobKey);
+      if (jobKey === 'scheduled:11') throw new Error('stop failed');
+      return true;
+    },
+    reportStopError: async (label, error) => reports.push([label, error.message]),
+    startRunner: async (args) => starts.push(args),
+  });
+
+  assert.deepEqual(stopCalls, ['scheduled:11', 'scheduled:12']);
+  assert.equal(result.stopFailures, 1);
+  assert.equal(result.stopRequested, 1);
+  assert.equal(result.restore.restored, 1);
+  assert.equal(starts[0].jobKey, 'scheduled:10');
+  assert.deepEqual(reports, [['Scheduled worker stop scheduled:11', 'stop failed']]);
 });
 
 test('failed rows use a bounded retry delay before the supervisor restarts them', async () => {
@@ -153,4 +205,20 @@ test('STOPPING state stays active while the worker job is still cleaning up', as
   assert.equal(result.stopRequested, 1);
   assert.equal(result.finalizedStops, 0);
   assert.equal(getRunnerState('scheduled:5').state, RUNNER_STATE.STOPPING);
+});
+
+test('supervisor registers its timer before a failing initial reconcile and rejects a duplicate starter', async () => {
+  let releaseInitial;
+  const initialGate = new Promise((resolve) => { releaseInitial = resolve; });
+  const firstStart = startScheduledWorkerSupervisor({}, {
+    initialReconcile: async () => {
+      await initialGate;
+      throw new Error('initial reconcile failed');
+    },
+  });
+
+  const duplicate = await startScheduledWorkerSupervisor({});
+  assert.equal(duplicate, false);
+  releaseInitial();
+  assert.equal(await firstStart, true);
 });
