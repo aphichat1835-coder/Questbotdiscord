@@ -13,7 +13,7 @@ function operationSection(source, startMarker, endMarker) {
 
 function operationBlocks(section) {
   return section
-    .split(/\n  Object\.freeze\(\{/)
+    .split(/\n {2}Object\.freeze\(\{/)
     .slice(1)
     .map((candidate) => {
       const end = candidate.indexOf('\n  }),');
@@ -33,7 +33,8 @@ function assertProfileBlocks(source, {
 
   blocks.forEach((block, index) => {
     const target = `${root}/questbot-slot-${index + 1}.db`;
-    assert.match(block, new RegExp(`path:\\s*${slotArrayName}\\[${index}\\]`));
+    const declaredPath = `path: ${slotArrayName}[${index}]`;
+    assert.ok(block.includes(declaredPath), `missing declared slot path: ${declaredPath}`);
     assert.equal(
       block.split(target).length - 1,
       3,
@@ -60,7 +61,7 @@ test('every fixed backup slot block keeps copy, cleanup and timestamp operations
 });
 
 test('runtime backup profile validation rejects an operation that targets a different slot', () => {
-  const script = String.raw`
+  const script = `
     const originalToString = Function.prototype.toString;
     Function.prototype.toString = function patchedToString() {
       const source = originalToString.call(this);
