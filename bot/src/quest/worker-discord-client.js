@@ -27,13 +27,15 @@ async function readDiscordResponse(response) {
 }
 
 export function createWorkerDiscordClient({
-  fetchFn = globalThis.fetch,
+  fetchFn = null,
   botToken = config.token,
 } = {}) {
   let ready = false;
 
   async function request(path, options = {}) {
-    const response = await fetchFn(`${DISCORD_API_BASE}${path}`, {
+    const transport = fetchFn ?? globalThis.fetch;
+    if (typeof transport !== 'function') throw new TypeError('Global fetch is unavailable');
+    const response = await transport(`${DISCORD_API_BASE}${path}`, {
       ...options,
       headers: {
         Authorization: `Bot ${botToken}`,
