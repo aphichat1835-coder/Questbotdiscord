@@ -128,13 +128,15 @@ async function runReconcile(client) {
   return reconcilePromise;
 }
 
-export async function startScheduledWorkerSupervisor(client) {
+export async function startScheduledWorkerSupervisor(client, {
+  initialReconcile = runReconcile,
+} = {}) {
   if (supervisorTimer) return false;
   supervisorTimer = setInterval(() => {
     void runReconcile(client).catch(() => undefined);
   }, config.workerPollIntervalMs);
   supervisorTimer.unref?.();
-  await runReconcile(client).catch(() => undefined);
+  await initialReconcile(client).catch(() => undefined);
   return true;
 }
 
