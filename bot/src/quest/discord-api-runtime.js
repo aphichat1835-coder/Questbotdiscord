@@ -26,6 +26,14 @@ function rewriteDiscordApiUrl(input) {
   return { input: rewritten, url: rewritten, coordinated: true };
 }
 
+function schedulingOptions(input, options) {
+  return {
+    ...options,
+    method: options.method ?? (input instanceof Request ? input.method : undefined),
+    headers: options.headers ?? (input instanceof Request ? input.headers : undefined),
+  };
+}
+
 export function installDiscordApiRuntime({ fetchFn = globalThis.fetch } = {}) {
   if (installed) return false;
   if (typeof fetchFn !== 'function') throw new TypeError('Global fetch is unavailable');
@@ -35,10 +43,9 @@ export function installDiscordApiRuntime({ fetchFn = globalThis.fetch } = {}) {
   globalThis.fetch = (input, options = {}) => {
     const rewritten = rewriteDiscordApiUrl(input);
     if (!rewritten.coordinated) return transportFetch(input, options);
-    const headers = options.headers ?? (input instanceof Request ? input.headers : undefined);
     return discordRateLimitCoordinator.schedule(
       rewritten.url,
-      { ...options, headers },
+      schedulingOptions(input, options),
       () => transportFetch(rewritten.input, options),
     );
   };
