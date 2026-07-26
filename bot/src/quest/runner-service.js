@@ -1,4 +1,6 @@
+import { config } from '../config.js';
 import * as legacyRunner from '../discord-runner.js';
+import { listScheduledRunners } from '../scheduled-runner-store.js';
 import { observeRunnerCompletion } from './runner-completion-observer.js';
 import { restoreScheduledRunnerRows } from './scheduled-restore.js';
 import {
@@ -21,7 +23,7 @@ import {
   syncAllRunnerStates,
 } from './runner-state-observer.js';
 
-function beginDurableStart(args) {
+function beginDurableStart(args, source = 'runner-service') {
   beginRunnerState({
     jobKey: args.jobKey,
     ownerId: args.ownerId,
@@ -31,7 +33,7 @@ function beginDurableStart(args) {
     scheduleId: args.scheduleId ?? null,
     state: RUNNER_STATE.QUEUED,
     nextActionAt: args.initialNextCheckAt ?? null,
-    metadata: { source: 'runner-service' },
+    metadata: { source },
   });
   transitionRunnerState(args.jobKey, RUNNER_STATE.AUTHENTICATING);
 }
@@ -41,6 +43,7 @@ function markStarted(args) {
     accountId: args.accountId ?? null,
     username: args.username ?? null,
     nextActionAt: args.initialNextCheckAt ?? null,
+    lastError: null,
   });
   registerSmartWake(args);
   observeRunnerCompletion(args.jobKey, args.mode ?? 'oneshot', args.scheduleId ?? null);
@@ -55,8 +58,12 @@ function markStartFailure(args, error) {
   clearSmartWake(args.jobKey);
 }
 
-export async function startRunner(args) {
-  beginDurableStart(args);
+function shouldDelegateToWorker(args) {
+  return config.processRole === 'control' && args.mode === 'scheduled';
+}
+
+export async function startLocalRunner(args) {
+  beginDurableStart(args, config.processRole === 'worker' ? 'worker' : 'runner-service');
   try {
     const result = await legacyRunner.startRunner(args);
     markStarted(args);
@@ -67,11 +74,40 @@ export async function startRunner(args) {
   }
 }
 
-configureSmartWakeController(startRunner);
+export async function startRunner(args) {
+  if (!shouldDelegateToWorker(args)) return startLocalRunner(args);
+
+  beginDurableStart(args, 'control-plane');
+  const nextActionAt = new Date().toISOString();
+  transitionRunnerState(args.jobKey, RUNNER_STATE.WAITING_SCHEDULE, {
+    nextActionAt,
+    lastError: null,
+    metadata: {
+      source: 'control-plane',
+      delegated: true,
+      reason: 'worker-queue',
+    },
+  });
+  return { queued: true, nextActionAt };
+}
+
+configureSmartWakeController(startLocalRunner);
 
 export async function restoreScheduledRunners(client) {
-  markInterruptedRunnerStates();
-  const result = await restoreScheduledRunnerRows(client, startRunner);
+  if (config.processRole === 'control') {
+    pruneRunnerStates();
+    startRunnerStateObserver();
+    return {
+      restored: 0,
+      failed: 0,
+      delegated: listScheduledRunners().length,
+    };
+  }
+
+  markInterruptedRunnerStates(new Date(), {
+    includeOneShot: config.processRole !== 'worker',
+  });
+  const result = await restoreScheduledRunnerRows(client, startLocalRunner);
   syncAllRunnerStates();
   startRunnerStateObserver();
   pruneRunnerStates();
