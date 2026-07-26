@@ -31,6 +31,10 @@ const PERSISTENT_BACKUP_SLOT_PATHS = Object.freeze([
   '/var/data/backups/questbot-slot-6.db',
   '/var/data/backups/questbot-slot-7.db',
 ]);
+const FIXED_BACKUP_SLOT_PATHS = new Set([
+  ...LOCAL_BACKUP_SLOT_PATHS,
+  ...PERSISTENT_BACKUP_SLOT_PATHS,
+]);
 const LOCAL_LEGACY_MIGRATION_BACKUP_PATH = './data/backups/pre-tracker-removal.db';
 const PERSISTENT_LEGACY_MIGRATION_BACKUP_PATH = '/var/data/backups/pre-tracker-removal.db';
 
@@ -81,95 +85,44 @@ function openDatabase() {
 
 export const db = openDatabase();
 
-const LOCAL_BACKUP_OPERATIONS = Object.freeze([
-  Object.freeze({
-    path: LOCAL_BACKUP_SLOT_PATHS[0],
-    backup: () => db.backup('./data/backups/questbot-slot-1.db'),
-    remove: () => fs.promises.rm('./data/backups/questbot-slot-1.db', { force: true }),
-    modifiedAt: () => fs.statSync('./data/backups/questbot-slot-1.db').mtimeMs,
-  }),
-  Object.freeze({
-    path: LOCAL_BACKUP_SLOT_PATHS[1],
-    backup: () => db.backup('./data/backups/questbot-slot-2.db'),
-    remove: () => fs.promises.rm('./data/backups/questbot-slot-2.db', { force: true }),
-    modifiedAt: () => fs.statSync('./data/backups/questbot-slot-2.db').mtimeMs,
-  }),
-  Object.freeze({
-    path: LOCAL_BACKUP_SLOT_PATHS[2],
-    backup: () => db.backup('./data/backups/questbot-slot-3.db'),
-    remove: () => fs.promises.rm('./data/backups/questbot-slot-3.db', { force: true }),
-    modifiedAt: () => fs.statSync('./data/backups/questbot-slot-3.db').mtimeMs,
-  }),
-  Object.freeze({
-    path: LOCAL_BACKUP_SLOT_PATHS[3],
-    backup: () => db.backup('./data/backups/questbot-slot-4.db'),
-    remove: () => fs.promises.rm('./data/backups/questbot-slot-4.db', { force: true }),
-    modifiedAt: () => fs.statSync('./data/backups/questbot-slot-4.db').mtimeMs,
-  }),
-  Object.freeze({
-    path: LOCAL_BACKUP_SLOT_PATHS[4],
-    backup: () => db.backup('./data/backups/questbot-slot-5.db'),
-    remove: () => fs.promises.rm('./data/backups/questbot-slot-5.db', { force: true }),
-    modifiedAt: () => fs.statSync('./data/backups/questbot-slot-5.db').mtimeMs,
-  }),
-  Object.freeze({
-    path: LOCAL_BACKUP_SLOT_PATHS[5],
-    backup: () => db.backup('./data/backups/questbot-slot-6.db'),
-    remove: () => fs.promises.rm('./data/backups/questbot-slot-6.db', { force: true }),
-    modifiedAt: () => fs.statSync('./data/backups/questbot-slot-6.db').mtimeMs,
-  }),
-  Object.freeze({
-    path: LOCAL_BACKUP_SLOT_PATHS[6],
-    backup: () => db.backup('./data/backups/questbot-slot-7.db'),
-    remove: () => fs.promises.rm('./data/backups/questbot-slot-7.db', { force: true }),
-    modifiedAt: () => fs.statSync('./data/backups/questbot-slot-7.db').mtimeMs,
-  }),
-]);
+function requireFixedBackupPath(candidate) {
+  if (!FIXED_BACKUP_SLOT_PATHS.has(candidate)) {
+    throw new Error(`Unsupported database backup slot path: ${candidate}`);
+  }
+  return candidate;
+}
 
-const PERSISTENT_BACKUP_OPERATIONS = Object.freeze([
-  Object.freeze({
-    path: PERSISTENT_BACKUP_SLOT_PATHS[0],
-    backup: () => db.backup('/var/data/backups/questbot-slot-1.db'),
-    remove: () => fs.promises.rm('/var/data/backups/questbot-slot-1.db', { force: true }),
-    modifiedAt: () => fs.statSync('/var/data/backups/questbot-slot-1.db').mtimeMs,
-  }),
-  Object.freeze({
-    path: PERSISTENT_BACKUP_SLOT_PATHS[1],
-    backup: () => db.backup('/var/data/backups/questbot-slot-2.db'),
-    remove: () => fs.promises.rm('/var/data/backups/questbot-slot-2.db', { force: true }),
-    modifiedAt: () => fs.statSync('/var/data/backups/questbot-slot-2.db').mtimeMs,
-  }),
-  Object.freeze({
-    path: PERSISTENT_BACKUP_SLOT_PATHS[2],
-    backup: () => db.backup('/var/data/backups/questbot-slot-3.db'),
-    remove: () => fs.promises.rm('/var/data/backups/questbot-slot-3.db', { force: true }),
-    modifiedAt: () => fs.statSync('/var/data/backups/questbot-slot-3.db').mtimeMs,
-  }),
-  Object.freeze({
-    path: PERSISTENT_BACKUP_SLOT_PATHS[3],
-    backup: () => db.backup('/var/data/backups/questbot-slot-4.db'),
-    remove: () => fs.promises.rm('/var/data/backups/questbot-slot-4.db', { force: true }),
-    modifiedAt: () => fs.statSync('/var/data/backups/questbot-slot-4.db').mtimeMs,
-  }),
-  Object.freeze({
-    path: PERSISTENT_BACKUP_SLOT_PATHS[4],
-    backup: () => db.backup('/var/data/backups/questbot-slot-5.db'),
-    remove: () => fs.promises.rm('/var/data/backups/questbot-slot-5.db', { force: true }),
-    modifiedAt: () => fs.statSync('/var/data/backups/questbot-slot-5.db').mtimeMs,
-  }),
-  Object.freeze({
-    path: PERSISTENT_BACKUP_SLOT_PATHS[5],
-    backup: () => db.backup('/var/data/backups/questbot-slot-6.db'),
-    remove: () => fs.promises.rm('/var/data/backups/questbot-slot-6.db', { force: true }),
-    modifiedAt: () => fs.statSync('/var/data/backups/questbot-slot-6.db').mtimeMs,
-  }),
-  Object.freeze({
-    path: PERSISTENT_BACKUP_SLOT_PATHS[6],
-    backup: () => db.backup('/var/data/backups/questbot-slot-7.db'),
-    remove: () => fs.promises.rm('/var/data/backups/questbot-slot-7.db', { force: true }),
-    modifiedAt: () => fs.statSync('/var/data/backups/questbot-slot-7.db').mtimeMs,
-  }),
-]);
+function defaultBackup(target) {
+  return db.backup(requireFixedBackupPath(target));
+}
+
+function defaultRemove(target) {
+  return fs.promises.rm(requireFixedBackupPath(target), { force: true });
+}
+
+function defaultModifiedAt(target) {
+  return fs.statSync(requireFixedBackupPath(target)).mtimeMs;
+}
+
+export function createBackupOperations(slotPaths, {
+  backup = defaultBackup,
+  remove = defaultRemove,
+  modifiedAt = defaultModifiedAt,
+} = {}) {
+  if (!Array.isArray(slotPaths)) throw new TypeError('Backup slot paths must be an array');
+  return Object.freeze(slotPaths.map((candidate) => {
+    const target = requireFixedBackupPath(candidate);
+    return Object.freeze({
+      path: target,
+      backup: () => backup(target),
+      remove: () => remove(target),
+      modifiedAt: () => modifiedAt(target),
+    });
+  }));
+}
+
+const LOCAL_BACKUP_OPERATIONS = createBackupOperations(LOCAL_BACKUP_SLOT_PATHS);
+const PERSISTENT_BACKUP_OPERATIONS = createBackupOperations(PERSISTENT_BACKUP_SLOT_PATHS);
 
 const LOCAL_BACKUP_PROFILE = Object.freeze({
   directory: LOCAL_BACKUP_ROOT,
@@ -192,7 +145,10 @@ const PERSISTENT_BACKUP_PROFILE = Object.freeze({
 });
 
 function validateBackupProfile(profile) {
-  if (profile.slotPaths.length !== DATABASE_BACKUP_SLOT_COUNT) {
+  if (
+    profile.slotPaths.length !== DATABASE_BACKUP_SLOT_COUNT
+    || profile.operations.length !== DATABASE_BACKUP_SLOT_COUNT
+  ) {
     throw new Error(`Backup profile ${profile.directory} has an invalid slot count`);
   }
   for (const [index, operation] of profile.operations.entries()) {
