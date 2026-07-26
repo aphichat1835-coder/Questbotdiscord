@@ -1,3 +1,4 @@
+import { config } from './config.js';
 import {
   getJob,
   getUserJobs,
@@ -6,7 +7,7 @@ import {
 } from './quest/runner-service.js';
 import { getRunnerState, RUNNER_STATE } from './quest/runner-state-store.js';
 
-const DEFAULT_STOP_TIMEOUT_MS = 15_000;
+const LOCAL_STOP_TIMEOUT_MS = 15_000;
 const DURABLE_STOP_POLL_MS = 250;
 const TERMINAL_DURABLE_STATES = new Set([
   RUNNER_STATE.STOPPED,
@@ -15,6 +16,13 @@ const TERMINAL_DURABLE_STATES = new Set([
 ]);
 const stoppingAccounts = new Set();
 const stoppingJobs = new Map();
+
+export function durableStopTimeoutMs(workerPollIntervalMs = config.workerPollIntervalMs) {
+  const cadence = Number.isFinite(workerPollIntervalMs) && workerPollIntervalMs > 0
+    ? workerPollIntervalMs
+    : config.workerPollIntervalMs;
+  return Math.max(LOCAL_STOP_TIMEOUT_MS, cadence * 2 + 5_000);
+}
 
 function accountKey(ownerId, accountId) {
   return accountId ? `${ownerId}:${accountId}` : null;
@@ -90,7 +98,7 @@ export function listStoppingAccounts(ownerId) {
 
 export async function stopJobAndWait(ownerId, jobKey, {
   removeSchedule = true,
-  timeoutMs = DEFAULT_STOP_TIMEOUT_MS,
+  timeoutMs = LOCAL_STOP_TIMEOUT_MS,
 } = {}) {
   const existingCompletion = stoppingJobs.get(jobKey);
   if (existingCompletion) {
@@ -114,7 +122,7 @@ export async function stopJobAndWait(ownerId, jobKey, {
 }
 
 export async function stopScheduledJobAndWaitDetailed(ownerId, scheduleId, {
-  timeoutMs = DEFAULT_STOP_TIMEOUT_MS,
+  timeoutMs = durableStopTimeoutMs(),
 } = {}) {
   const jobKey = `scheduled:${scheduleId}`;
   const job = getJob(jobKey);
@@ -133,7 +141,7 @@ export async function stopScheduledJobAndWait(ownerId, scheduleId, options = {})
 export async function stopAllForUserAndWaitDetailed(ownerId, {
   mode = null,
   removeSchedule = true,
-  timeoutMs = DEFAULT_STOP_TIMEOUT_MS,
+  timeoutMs = LOCAL_STOP_TIMEOUT_MS,
 } = {}) {
   const jobs = getUserJobs(ownerId, { mode, includeStopping: true });
   const results = await Promise.all(jobs.map((job) => stopJobAndWait(ownerId, job.key, {
