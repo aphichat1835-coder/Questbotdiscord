@@ -61,10 +61,18 @@ async function restoreRow({ row, client, startRunner, ownerCount }) {
   return ownerCount + 1;
 }
 
+function ownerCounts(value) {
+  if (value instanceof Map) return new Map(value);
+  return new Map(Object.entries(value ?? {}));
+}
+
 export async function restoreScheduledRunnerRows(client, startRunner, {
   rows = listScheduledRunners(),
+  reconciliationRows = rows,
+  existingAccountIds = [],
+  existingOwnerCounts = new Map(),
 } = {}) {
-  failOrphanedRecoveringStates(rows);
+  failOrphanedRecoveringStates(reconciliationRows);
   if (!rows.length) return { restored: 0, failed: 0 };
 
   if (!config.runnerTokenSecret || config.runnerTokenSecret.length < 16) {
@@ -75,8 +83,8 @@ export async function restoreScheduledRunnerRows(client, startRunner, {
 
   let restored = 0;
   let failed = 0;
-  const restoredByOwner = new Map();
-  const restoredAccounts = new Set();
+  const restoredByOwner = ownerCounts(existingOwnerCounts);
+  const restoredAccounts = new Set(existingAccountIds.filter(Boolean));
 
   for (const row of rows) {
     const ownerCount = restoredByOwner.get(row.owner_id) ?? 0;
