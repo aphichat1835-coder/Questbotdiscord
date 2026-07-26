@@ -61,8 +61,9 @@ async function restoreRow({ row, client, startRunner, ownerCount }) {
   return ownerCount + 1;
 }
 
-export async function restoreScheduledRunnerRows(client, startRunner) {
-  const rows = listScheduledRunners();
+export async function restoreScheduledRunnerRows(client, startRunner, {
+  rows = listScheduledRunners(),
+} = {}) {
   failOrphanedRecoveringStates(rows);
   if (!rows.length) return { restored: 0, failed: 0 };
 
