@@ -7,7 +7,12 @@ import {
   stopJob,
 } from './runner-service.js';
 import { restoreScheduledRunnerRows } from './scheduled-restore.js';
-import { getRunnerState, RUNNER_STATE } from './runner-state-store.js';
+import {
+  getRunnerState,
+  listRunnerStates,
+  RUNNER_STATE,
+  transitionRunnerState,
+} from './runner-state-store.js';
 
 const FAILED_RETRY_DELAY_MS = 5 * 60 * 1000;
 let supervisorTimer = null;
@@ -31,6 +36,28 @@ function isRetryEligible(row, now) {
   if (state?.state !== RUNNER_STATE.FAILED) return true;
   const updatedAt = Date.parse(state.updated_at);
   return !Number.isFinite(updatedAt) || updatedAt + FAILED_RETRY_DELAY_MS <= now;
+}
+
+function finalizeDetachedStoppingStates(rows, activeJobs) {
+  const rowIds = new Set(rows.map((row) => Number(row.id)));
+  const activeIds = new Set(activeJobs.map((job) => Number(job.scheduleId)));
+  let finalized = 0;
+
+  for (const state of listRunnerStates({ activeOnly: true, limit: 500 })) {
+    if (state.mode !== 'scheduled' || state.state !== RUNNER_STATE.STOPPING) continue;
+    const scheduleId = Number(state.schedule_id);
+    if (rowIds.has(scheduleId) || activeIds.has(scheduleId)) continue;
+    transitionRunnerState(state.job_key, RUNNER_STATE.STOPPED, {
+      nextActionAt: null,
+      lastError: null,
+      metadata: {
+        ...(state.metadata ?? {}),
+        stopConfirmedBy: 'worker-supervisor',
+      },
+    });
+    finalized++;
+  }
+  return finalized;
 }
 
 export async function reconcileScheduledWorker(client, {
@@ -60,11 +87,13 @@ export async function reconcileScheduledWorker(client, {
     existingAccountIds: surviving.map((job) => job.accountId),
     existingOwnerCounts: existingOwnerCounts(surviving),
   });
+  const finalizedStops = finalizeDetachedStoppingStates(rows, active);
 
   return {
     scheduledRows: rows.length,
     activeBefore: active.length,
     stopRequested,
+    finalizedStops,
     restore,
   };
 }
