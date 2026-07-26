@@ -4,7 +4,7 @@ import { buildBootstrapIncidentPayload } from '../src/bootstrap-reporter.js';
 import { INCIDENT } from '../src/incident-catalog.js';
 import { redactSensitive } from '../src/error-reporter.js';
 
-const passwordKey = ['database', 'Pass', 'word'].join('');
+const sensitiveAssignmentKey = ['database', 'Pass', 'word'].join('');
 
 test('runtime redaction bounds large input before returning output', () => {
   const redacted = redactSensitive(`apiToken=hidden ${'x'.repeat(500_000)}`);
@@ -16,11 +16,11 @@ test('runtime redaction bounds large input before returning output', () => {
 
 test('quoted secrets with escaped quotes are redacted as one value', () => {
   const redacted = redactSensitive(
-    String.raw`apiToken="prefix\"hidden-tail" ${passwordKey}='left\'hidden-right' safeValue="visible"`,
+    String.raw`apiToken="prefix\"hidden-tail" ${sensitiveAssignmentKey}='left\'hidden-right' safeValue="visible"`,
   );
 
   assert.match(redacted, /apiToken="\[REDACTED\]"/);
-  assert.ok(redacted.includes(`${passwordKey}='[REDACTED]'`));
+  assert.ok(redacted.includes(`${sensitiveAssignmentKey}='[REDACTED]'`));
   assert.match(redacted, /safeValue="visible"/);
   assert.doesNotMatch(redacted, /prefix|hidden-tail|left|hidden-right/);
 });
@@ -28,11 +28,11 @@ test('quoted secrets with escaped quotes are redacted as one value', () => {
 test('bootstrap payload bounds and redacts large error messages', () => {
   const payload = buildBootstrapIncidentPayload({
     code: INCIDENT.CLIENT_STARTUP_FAILED,
-    error: new Error(`${passwordKey}=hidden ${'x'.repeat(500_000)}`),
+    error: new Error(`${sensitiveAssignmentKey}=hidden ${'x'.repeat(500_000)}`),
   });
   const serialized = JSON.stringify(payload);
 
   assert.ok(payload.embeds[0].description.length <= 4096);
-  assert.ok(serialized.includes(`${passwordKey}=[REDACTED]`));
-  assert.ok(!serialized.includes(`${passwordKey}=hidden`));
+  assert.ok(serialized.includes(`${sensitiveAssignmentKey}=[REDACTED]`));
+  assert.ok(!serialized.includes(`${sensitiveAssignmentKey}=hidden`));
 });
