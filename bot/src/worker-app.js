@@ -1,15 +1,16 @@
 import { randomUUID } from 'node:crypto';
 import { config } from './config.js';
 import { startDashboard, stopDashboard } from './dashboard.js';
-import {
-  acquireRuntimeLease,
-  closeDatabase,
-  releaseRuntimeLease,
-  renewRuntimeLease,
-} from './db.js';
+import { closeDatabase } from './db.js';
 import { reportError, reportIncident } from './error-reporter.js';
 import { INCIDENT } from './incident-catalog.js';
 import { reportWithinFatalBudget } from './bootstrap.js';
+import {
+  acquireProcessRoleLease,
+  processLeaseName,
+  releaseProcessRoleLease,
+  renewProcessRoleLease,
+} from './process-topology.js';
 import {
   installDiscordApiRuntime,
   uninstallDiscordApiRuntime,
@@ -25,7 +26,8 @@ import {
 import { createWorkerDiscordClient } from './quest/worker-discord-client.js';
 
 export function createWorkerApp({ exit = process.exit } = {}) {
-  const runtimeLeaseName = 'quest-worker';
+  const processRole = 'worker';
+  const runtimeLeaseName = processLeaseName(processRole);
   const runtimeLeaseHolder = `${process.pid}:${randomUUID()}`;
   const outputClient = createWorkerDiscordClient();
   let runtimeLeaseTimer = null;
@@ -62,7 +64,7 @@ export function createWorkerApp({ exit = process.exit } = {}) {
 
       try {
         if (runtimeLeaseAcquired) {
-          releaseRuntimeLease(runtimeLeaseName, runtimeLeaseHolder);
+          releaseProcessRoleLease(processRole, runtimeLeaseHolder);
           runtimeLeaseAcquired = false;
         }
         closeDatabase();
@@ -88,7 +90,7 @@ export function createWorkerApp({ exit = process.exit } = {}) {
       const report = reportIncident({
         code,
         error,
-        context: { ...context, processRole: 'worker' },
+        context: { ...context, processRole },
         scope: 'worker',
         source: code,
       }).catch(() => ({ state: 'report_failed' }));
@@ -128,16 +130,16 @@ export function createWorkerApp({ exit = process.exit } = {}) {
 
   async function start() {
     installDiscordApiRuntime();
-    if (!acquireRuntimeLease(runtimeLeaseName, runtimeLeaseHolder)) {
+    if (!acquireProcessRoleLease(processRole, runtimeLeaseHolder)) {
       return fatalShutdown(
         INCIDENT.RUNTIME_LEASE_CONFLICT,
-        new Error('Another scheduled worker already holds the runtime lease'),
+        new Error('Scheduled worker conflicts with another worker or all-in-one process'),
         { leaseName: runtimeLeaseName, holder: runtimeLeaseHolder },
       );
     }
     runtimeLeaseAcquired = true;
     runtimeLeaseTimer = setInterval(() => {
-      if (!renewRuntimeLease(runtimeLeaseName, runtimeLeaseHolder)) {
+      if (!renewProcessRoleLease(processRole, runtimeLeaseHolder)) {
         void fatalShutdown(
           INCIDENT.RUNTIME_LEASE_LOST,
           new Error('Scheduled worker lost its runtime lease'),
