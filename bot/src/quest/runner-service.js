@@ -115,6 +115,10 @@ configureSmartWakeController(startLocalRunner);
 
 export async function restoreScheduledRunners(client) {
   if (config.processRole === 'control') {
+    markInterruptedRunnerStates(new Date(), {
+      includeOneShot: true,
+      includeScheduled: false,
+    });
     pruneRunnerStates();
     startRunnerStateObserver();
     return {
@@ -126,6 +130,7 @@ export async function restoreScheduledRunners(client) {
 
   markInterruptedRunnerStates(new Date(), {
     includeOneShot: config.processRole !== 'worker',
+    includeScheduled: true,
   });
   const result = await restoreScheduledRunnerRows(client, startLocalRunner);
   syncAllRunnerStates();
