@@ -197,7 +197,10 @@ export function listRunnerStates({ ownerId = null, activeOnly = false, limit = 1
   `).all(...params).map(parseMetadata);
 }
 
-export function markInterruptedRunnerStates(now = new Date(), { includeOneShot = true } = {}) {
+export function markInterruptedRunnerStates(now = new Date(), {
+  includeOneShot = true,
+  includeScheduled = true,
+} = {}) {
   const nextActionAt = now.toISOString();
   const completedAt = now.toISOString();
   const markScheduled = db.prepare(`
@@ -221,18 +224,22 @@ export function markInterruptedRunnerStates(now = new Date(), { includeOneShot =
       AND state IN (${ACTIVE_STATE_PLACEHOLDERS})
   `);
   const reconcile = db.transaction(() => {
-    const scheduled = markScheduled.run(
-      RUNNER_STATE.RECOVERING,
-      nextActionAt,
-      ...ACTIVE_STATES,
-    ).changes;
-    if (!includeOneShot) return scheduled;
-    const oneShot = failOneShot.run(
-      RUNNER_STATE.FAILED,
-      completedAt,
-      ...ACTIVE_STATES,
-    ).changes;
-    return scheduled + oneShot;
+    let changed = 0;
+    if (includeScheduled) {
+      changed += markScheduled.run(
+        RUNNER_STATE.RECOVERING,
+        nextActionAt,
+        ...ACTIVE_STATES,
+      ).changes;
+    }
+    if (includeOneShot) {
+      changed += failOneShot.run(
+        RUNNER_STATE.FAILED,
+        completedAt,
+        ...ACTIVE_STATES,
+      ).changes;
+    }
+    return changed;
   });
   return reconcile();
 }
