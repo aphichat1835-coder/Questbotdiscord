@@ -51,6 +51,47 @@ test('clearing the final effective hint notifies subscribers with null', () => {
   unsubscribe();
 });
 
+test('queued initial delivery re-reads the newest effective hint', async () => {
+  const account = authorizationFingerprint('hint-latest-token');
+  const oldAt = new Date(Date.now() + 120_000).toISOString();
+  const newAt = new Date(Date.now() + 60_000).toISOString();
+  publishScheduleHint(account, {
+    nextActionAt: oldAt,
+    reason: 'baseline',
+    source: 'baseline',
+    priority: 10,
+  });
+
+  const observed = [];
+  const unsubscribe = subscribeScheduleHints(account, (hint) => observed.push(hint));
+  publishScheduleHint(account, {
+    nextActionAt: newAt,
+    reason: 'verification',
+    source: 'verification',
+    priority: 90,
+  });
+  await Promise.resolve();
+
+  assert.ok(observed.length >= 1);
+  assert.equal(observed.every((hint) => hint?.nextActionAt === newAt), true);
+  assert.equal(observed.some((hint) => hint?.nextActionAt === oldAt), false);
+  unsubscribe();
+});
+
+test('unsubscribed listeners receive no queued initial hint', async () => {
+  const account = authorizationFingerprint('hint-unsubscribe-token');
+  publishScheduleHint(account, {
+    nextActionAt: new Date(Date.now() + 60_000).toISOString(),
+    reason: 'verification',
+    source: 'verification',
+  });
+  const observed = [];
+  const unsubscribe = subscribeScheduleHints(account, (hint) => observed.push(hint));
+  unsubscribe();
+  await Promise.resolve();
+  assert.deepEqual(observed, []);
+});
+
 test('clearing a due hint cancels its stale smart wake timer', async () => {
   const jobKey = 'scheduled:hint-clear-timer';
   const token = 'hint-clear-timer-token';
