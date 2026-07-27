@@ -9,6 +9,7 @@ import {
 import {
   clearAllSmartWakes,
   clearSmartWake,
+  configureSmartWakeController,
   isSmartWakeRestarting,
   MAX_SMART_WAKE_TIMER_MS,
   registerSmartWake,
@@ -52,16 +53,26 @@ function beginScheduled(jobKey, scheduleId) {
   });
 }
 
+async function waitFor(predicate, message = 'condition was not reached') {
+  for (let attempt = 0; attempt < 50; attempt++) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  assert.fail(message);
+}
+
 test.beforeEach(() => {
   clearAllSmartWakes();
   clearScheduleHintsForTests();
   clearRunnerStatesForTests();
+  configureSmartWakeController(null);
 });
 
 test.after(() => {
   clearAllSmartWakes();
   clearScheduleHintsForTests();
   clearRunnerStatesForTests();
+  configureSmartWakeController(null);
 });
 
 test('enrollment hints persist an earlier durable wake-up state', () => {
@@ -181,6 +192,140 @@ test('registering the same job again replaces the previous subscription', () => 
     priority: 98,
   });
   assert.equal(getRunnerState(jobKey).state, RUNNER_STATE.WAITING_RATE_LIMIT);
+});
+
+test('a due wake stops a sleeping job, waits for cleanup and restarts without a stale schedule', async () => {
+  const jobKey = 'scheduled:smart-wake-restart';
+  const token = 'smart-wake-restart-token';
+  const args = scheduledArgs(jobKey, token, 6);
+  beginScheduled(jobKey, 6);
+
+  const stops = [];
+  let restartedWith = null;
+  const active = {
+    done: Promise.resolve(),
+    summary: () => ({
+      status: 'NEXT CHECK: later',
+      nextCheckAt: new Date(Date.now() + 60_000).toISOString(),
+    }),
+  };
+  configureSmartWakeController(async (restartArgs) => {
+    restartedWith = restartArgs;
+  }, {
+    getJob: () => active,
+    stopJob: (...stopArgs) => {
+      stops.push(stopArgs);
+      return true;
+    },
+    getScheduled: () => ({ id: 6 }),
+  });
+
+  registerSmartWake(args);
+  publishScheduleHint(authorizationFingerprint(token), {
+    nextActionAt: new Date(Date.now() - 1).toISOString(),
+    reason: 'recovery',
+    priority: 99,
+  });
+
+  await waitFor(() => restartedWith !== null, 'sleeping runner was not restarted');
+  assert.deepEqual(stops, [['owner-1', jobKey, { removeSchedule: false }]]);
+  assert.equal(restartedWith.jobKey, jobKey);
+  assert.equal(restartedWith.initialNextCheckAt, null);
+  assert.equal(getRunnerState(jobKey).state, RUNNER_STATE.RECOVERING);
+  assert.equal(isSmartWakeRestarting(jobKey), false);
+});
+
+test('a fixed schedule earlier than the hint prevents an unnecessary restart', async () => {
+  const jobKey = 'scheduled:smart-wake-fixed-earlier';
+  const token = 'smart-wake-fixed-earlier-token';
+  beginScheduled(jobKey, 7);
+  let restarted = false;
+  configureSmartWakeController(async () => { restarted = true; }, {
+    getJob: () => ({
+      done: Promise.resolve(),
+      summary: () => ({
+        status: 'NEXT CHECK: soon',
+        nextCheckAt: new Date(Date.now() + 1_000).toISOString(),
+      }),
+    }),
+    stopJob: () => true,
+    getScheduled: () => ({ id: 7 }),
+  });
+
+  registerSmartWake(scheduledArgs(jobKey, token, 7));
+  publishScheduleHint(authorizationFingerprint(token), {
+    nextActionAt: new Date(Date.now() + 60_000).toISOString(),
+    reason: 'verification',
+    priority: 90,
+  });
+  await new Promise((resolve) => setTimeout(resolve, 10));
+
+  assert.equal(restarted, false);
+  assert.equal(getRunnerState(jobKey).state, RUNNER_STATE.RUNNING);
+});
+
+test('a deleted scheduled row cancels the due wake before stopping the job', async () => {
+  const jobKey = 'scheduled:smart-wake-row-deleted';
+  const token = 'smart-wake-row-deleted-token';
+  beginScheduled(jobKey, 8);
+  let stopped = false;
+  let restarted = false;
+  configureSmartWakeController(async () => { restarted = true; }, {
+    getJob: () => ({
+      done: Promise.resolve(),
+      summary: () => ({ status: 'AUTO DAILY ACTIVE', nextCheckAt: null }),
+    }),
+    stopJob: () => {
+      stopped = true;
+      return true;
+    },
+    getScheduled: () => null,
+  });
+
+  registerSmartWake(scheduledArgs(jobKey, token, 8));
+  publishScheduleHint(authorizationFingerprint(token), {
+    nextActionAt: new Date(Date.now() - 1).toISOString(),
+    reason: 'verification',
+    priority: 90,
+  });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  assert.equal(stopped, false);
+  assert.equal(restarted, false);
+  assert.equal(clearSmartWake(jobKey), false);
+});
+
+test('restart failure becomes a durable FAILED state after rejected cleanup is settled', async () => {
+  const jobKey = 'scheduled:smart-wake-restart-failure';
+  const token = 'smart-wake-restart-failure-token';
+  beginScheduled(jobKey, 9);
+  configureSmartWakeController(async () => {
+    throw new Error('restart failed');
+  }, {
+    getJob: () => ({
+      done: Promise.reject(new Error('cleanup failed')),
+      summary: () => ({ status: 'NEXT CHECK: later', nextCheckAt: null }),
+    }),
+    stopJob: () => true,
+    getScheduled: () => ({ id: 9 }),
+  });
+
+  registerSmartWake(scheduledArgs(jobKey, token, 9));
+  publishScheduleHint(authorizationFingerprint(token), {
+    nextActionAt: new Date(Date.now() - 1).toISOString(),
+    reason: 'recovery',
+    priority: 99,
+  });
+
+  await waitFor(
+    () => getRunnerState(jobKey)?.state === RUNNER_STATE.FAILED,
+    'restart failure was not persisted',
+  );
+  const state = getRunnerState(jobKey);
+  assert.equal(state.last_error, 'restart failed');
+  assert.deepEqual(state.metadata, { stage: 'smart-wakeup' });
+  assert.equal(state.state_source, 'smart-wakeup-failure');
+  assert.equal(isSmartWakeRestarting(jobKey), false);
 });
 
 test('far-future smart wake uses bounded timer chunks instead of overflowing setTimeout', () => {
