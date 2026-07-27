@@ -56,3 +56,24 @@ test('all-in-one and one-shot runners do not require worker claims', () => {
     registration.release();
   }
 });
+
+test('a queued mutation fails closed after its runner context is released', () => {
+  const jobKey = 'scheduled:ownership-context-released';
+  const registration = registerRunnerExecution({
+    jobKey,
+    ownerId: 'ownership-owner-c',
+    userToken: 'ownership-token-c',
+    mode: 'scheduled',
+    scheduleId: 910002,
+    workerHolder: 'worker-c',
+  });
+  registration.release();
+
+  assert.throws(
+    () => assertRunnerMutationOwnership(jobKey),
+    (error) => error instanceof RunnerOwnershipLostError
+      && error.code === 'RUNNER_OWNERSHIP_LOST'
+      && error.jobKey === jobKey
+      && error.scheduleId === null,
+  );
+});
