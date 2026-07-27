@@ -77,12 +77,21 @@ test('slow cleanup cannot delay renewal of unrelated active claims', async () =>
   const done = new Promise((resolve) => { finishCleanup = resolve; });
   const renewals = [];
   const stops = [];
+  let heartbeat = null;
+  let heartbeatCleared = false;
 
   const reconciliation = reconcileScheduledWorker({}, {
     rows: [row(9504)],
     jobs: [job(9503), job(9504)],
     holder: 'active-worker-slow-cleanup',
+    claimTtlMs: 3_000,
     now: Date.parse('2030-01-01T00:00:00.000Z'),
+    setInterval: (callback, delay) => {
+      assert.equal(delay, 1_000);
+      heartbeat = callback;
+      return { unref() {} };
+    },
+    clearInterval: () => { heartbeatCleared = true; },
     renewClaim: (scheduleId) => {
       renewals.push(scheduleId);
       return scheduleId === 9504;
@@ -100,10 +109,15 @@ test('slow cleanup cannot delay renewal of unrelated active claims', async () =>
   await new Promise((resolve) => setImmediate(resolve));
   assert.deepEqual(renewals, [9504]);
   assert.deepEqual(stops, ['scheduled:9503']);
+  assert.equal(typeof heartbeat, 'function');
+
+  heartbeat();
+  assert.deepEqual(renewals, [9504, 9504]);
 
   finishCleanup();
   const result = await reconciliation;
-  assert.deepEqual(renewals, [9504, 9504]);
+  assert.deepEqual(renewals, [9504, 9504, 9504]);
+  assert.equal(heartbeatCleared, true);
   assert.equal(result.claimsRenewed, 1);
   assert.equal(result.stopRequested, 1);
   assert.equal(result.claimLost, 0);
