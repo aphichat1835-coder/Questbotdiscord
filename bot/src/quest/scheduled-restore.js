@@ -41,6 +41,7 @@ function failOrphanedScheduledStates(rows) {
   const validScheduleIds = new Set(rows.map((row) => Number(row.id)));
   for (const state of listRunnerStates({ activeOnly: true, limit: 500 })) {
     if (state.mode !== 'scheduled') continue;
+    if (state.state === RUNNER_STATE.STOPPING) continue;
     if (validScheduleIds.has(Number(state.schedule_id))) continue;
     transitionRunnerState(state.job_key, RUNNER_STATE.FAILED, {
       lastError: 'Persisted runner state has no matching scheduled runner row',
