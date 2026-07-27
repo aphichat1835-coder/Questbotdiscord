@@ -11,7 +11,6 @@ import {
 } from '../src/quest/runner-execution-context.js';
 import {
   beginRunnerState,
-  clearRunnerStatesForTests,
   getRunnerState,
   RUNNER_MUTATION_STATUS,
 } from '../src/quest/runner-state-store.js';
@@ -31,28 +30,27 @@ function response(status = 200, headers = {}, body = '{}') {
 test.beforeEach(() => {
   clearScheduleHintsForTests();
   clearRunnerExecutionContextsForTests();
-  clearRunnerStatesForTests();
 });
 
 test('hint sources coexist so a baseline update cannot erase an urgent claim', () => {
   const now = Date.now();
-  publishScheduleHint('account-1', {
+  publishScheduleHint('hardening-account-1', {
     nextActionAt: new Date(now + 10 * 60_000).toISOString(),
     reason: 'claim:quest-1',
     priority: 100,
     source: 'quest-list',
   });
-  publishScheduleHint('account-1', {
+  publishScheduleHint('hardening-account-1', {
     nextActionAt: new Date(now + 60_000).toISOString(),
     reason: 'baseline',
     priority: 10,
     source: 'baseline',
   });
 
-  assert.equal(listScheduleHints('account-1').length, 2);
-  assert.equal(getLatestScheduleHint('account-1').reason, 'claim:quest-1');
-  assert.equal(clearScheduleHint('account-1', 'quest-list'), true);
-  assert.equal(getLatestScheduleHint('account-1').reason, 'baseline');
+  assert.equal(listScheduleHints('hardening-account-1').length, 2);
+  assert.equal(getLatestScheduleHint('hardening-account-1').reason, 'claim:quest-1');
+  assert.equal(clearScheduleHint('hardening-account-1', 'quest-list'), true);
+  assert.equal(getLatestScheduleHint('hardening-account-1').reason, 'baseline');
 });
 
 test('scheduler considers rate limit recovery and stalled progress inputs', () => {
@@ -143,14 +141,14 @@ test('circuit breaker opens after repeated server failures and permits one delay
 
 test('coordinator checkpoints mutation and verifies it from a fresh Quest list', async () => {
   const token = 'checkpoint-account';
-  const jobKey = 'scheduled:coordinator-checkpoint';
-  beginRunnerState({ jobKey, ownerId: 'owner-1', mode: 'scheduled', scheduleId: 1 });
+  const jobKey = 'scheduled:coordinator-hardening-checkpoint';
+  beginRunnerState({ jobKey, ownerId: 'owner-hardening', mode: 'scheduled', scheduleId: 9201 });
   const registration = registerRunnerExecution({
     jobKey,
-    ownerId: 'owner-1',
+    ownerId: 'owner-hardening',
     userToken: token,
     mode: 'scheduled',
-    scheduleId: 1,
+    scheduleId: 9201,
   });
   const coordinator = new DiscordRateLimitCoordinator();
 
