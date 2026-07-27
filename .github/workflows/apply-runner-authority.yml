@@ -1,0 +1,38 @@
+name: Apply runner authority refactor
+
+permissions:
+  contents: write
+
+on:
+  push:
+    branches: [aa.1]
+    paths:
+      - '.github/workflows/apply-runner-authority.yml'
+  workflow_dispatch:
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout aa.1
+        uses: actions/checkout@v6
+        with:
+          ref: aa.1
+          fetch-depth: 0
+
+      - name: Apply and validate runner authority patch
+        shell: bash
+        run: |
+          git apply --check bot/scripts/runner-authority.patch
+          git apply bot/scripts/runner-authority.patch
+          node --check bot/src/discord-runner.js
+
+      - name: Commit runtime authority wiring
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add bot/src/discord-runner.js
+          git commit -m 'refactor(quest): centralize api schema and executor runtime'
+          git push origin HEAD:aa.1
