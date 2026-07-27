@@ -8,6 +8,7 @@ import {
 import { extractQuestArray, QuestCompatibilityError } from '../schema/compatibility.js';
 
 export const DISCORD_API_BASE = 'https://discord.com/api/v10';
+const DISCORD_API_URL = new URL(DISCORD_API_BASE);
 
 export class DiscordApiError extends Error {
   constructor(status, path, data) {
@@ -83,15 +84,42 @@ export function buildDiscordUserHeaders(token, path = '', profile = currentDisco
   };
 }
 
+function requireDiscordApiPath(path) {
+  if (typeof path !== 'string' || !path.startsWith('/')) {
+    throw new TypeError('Discord API path must start with /');
+  }
+  if (
+    path.startsWith('//')
+    || path.includes('\\')
+    || path.includes('?')
+    || path.includes('#')
+    || /\/(?:\.{1,2}|%2e(?:%2e)?)(?:\/|$)/i.test(path)
+  ) {
+    throw new TypeError('Discord API path contains an unsafe segment');
+  }
+  return path;
+}
+
+export function buildDiscordApiUrl(path) {
+  const safePath = requireDiscordApiPath(path);
+  const url = new URL(DISCORD_API_URL);
+  url.pathname = `${DISCORD_API_URL.pathname}${safePath}`;
+  if (url.origin !== DISCORD_API_URL.origin || !url.pathname.startsWith('/api/v10/')) {
+    throw new TypeError('Discord API URL escaped the v10 boundary');
+  }
+  return url;
+}
+
 export async function discordFetch(token, path, options = {}, policy = {}) {
+  const safePath = requireDiscordApiPath(path);
   const { headers = {}, ...requestOptions } = options;
   const method = String(requestOptions.method ?? 'GET').toUpperCase();
   const requestPolicy = method === 'POST'
     ? { ...policy, retryRateLimits: false }
     : policy;
-  const response = await fetchWithRetry(`${DISCORD_API_BASE}${path}`, {
+  const response = await fetchWithRetry(buildDiscordApiUrl(safePath), {
     ...requestOptions,
-    headers: { ...buildDiscordUserHeaders(token, path), ...headers },
+    headers: { ...buildDiscordUserHeaders(token, safePath), ...headers },
   }, requestPolicy);
   if (response.status === 204) return { ok: true, status: 204 };
   const text = await response.text();
@@ -101,7 +129,7 @@ export async function discordFetch(token, path, options = {}, policy = {}) {
   } catch {
     data = text;
   }
-  if (!response.ok) throw new DiscordApiError(response.status, path, data);
+  if (!response.ok) throw new DiscordApiError(response.status, safePath, data);
   return data;
 }
 
