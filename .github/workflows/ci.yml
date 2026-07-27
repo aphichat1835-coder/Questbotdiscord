@@ -157,9 +157,8 @@ jobs:
 
   # BEGIN TEMPORARY RUNNER REFACTOR JOB
   apply-runner-refactor:
-    name: Apply verified runner refactor
+    name: Apply runner integration
     if: github.event_name == 'push' && github.ref == 'refs/heads/aa.1'
-    needs: [repository-shape, bot-checks]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
