@@ -3,14 +3,24 @@ export const QUEST_LIST_PATHS = Object.freeze([
   '/users/@me/quests',
 ]);
 
-const claimPath = (questId) => `/quests/${questId}/claim`;
+export function encodeQuestId(questId) {
+  const value = String(questId ?? '').trim();
+  if (!value) throw new TypeError('Quest endpoint requires a non-empty quest id');
+  return encodeURIComponent(value);
+}
+
+function questPath(questId, suffix) {
+  return `/quests/${encodeQuestId(questId)}/${suffix}`;
+}
+
+const claimPath = (questId) => questPath(questId, 'claim');
 
 export const QUEST_ENDPOINT = Object.freeze({
   me: () => '/users/@me',
-  enroll: (questId) => `/quests/${questId}/enroll`,
-  videoProgress: (questId) => `/quests/${questId}/video-progress`,
-  heartbeat: (questId) => `/quests/${questId}/heartbeat`,
-  claimReward: (questId) => `/quests/${questId}/claim-reward`,
+  enroll: (questId) => questPath(questId, 'enroll'),
+  videoProgress: (questId) => questPath(questId, 'video-progress'),
+  heartbeat: (questId) => questPath(questId, 'heartbeat'),
+  claimReward: (questId) => questPath(questId, 'claim-reward'),
   claim: claimPath,
   claimLegacy: claimPath,
 });
