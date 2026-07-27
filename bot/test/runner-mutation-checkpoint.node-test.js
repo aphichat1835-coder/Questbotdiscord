@@ -112,6 +112,20 @@ test('unverified checkpoint cannot be overwritten by another mutation', () => {
   assert.equal(state.mutation_status, RUNNER_MUTATION_STATUS.PREPARED);
 });
 
+test('prepare mutation rejects a missing kind before persisting any checkpoint', () => {
+  const jobKey = 'scheduled:checkpoint-missing-kind';
+  beginRunnerState({ jobKey, ownerId: 'owner-1', mode: 'scheduled', scheduleId: 3 });
+
+  assert.throws(
+    () => prepareRunnerMutation(jobKey, { questId: 'quest-missing-kind' }),
+    /Unknown runner mutation kind: undefined/,
+  );
+  const state = getRunnerState(jobKey);
+  assert.equal(state.mutation_kind, null);
+  assert.equal(state.mutation_status, RUNNER_MUTATION_STATUS.NONE);
+  assert.equal(state.quest_id, null);
+});
+
 test('uncertain mutation records error category without losing checkpoint details', () => {
   beginRunnerState({ jobKey: 'scheduled:uncertain', ownerId: 'owner-1', mode: 'scheduled' });
   prepareRunnerMutation('scheduled:uncertain', {
