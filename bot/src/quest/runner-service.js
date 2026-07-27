@@ -3,6 +3,10 @@ import * as legacyRunner from '../discord-runner.js';
 import { isProcessRoleActive } from '../process-topology.js';
 import { listScheduledRunners } from '../scheduled-runner-store.js';
 import { observeRunnerCompletion } from './runner-completion-observer.js';
+import {
+  registerRunnerExecution,
+  runWithRunnerExecutionContext,
+} from './runner-execution-context.js';
 import { restoreScheduledRunnerRows } from './scheduled-restore.js';
 import {
   clearAllSmartWakes,
@@ -41,8 +45,11 @@ function beginDurableStart(args, source = 'runner-service') {
     state: RUNNER_STATE.QUEUED,
     nextActionAt: args.initialNextCheckAt ?? null,
     metadata: { source },
+    stateSource: source,
   });
-  transitionRunnerState(args.jobKey, RUNNER_STATE.AUTHENTICATING);
+  transitionRunnerState(args.jobKey, RUNNER_STATE.AUTHENTICATING, {
+    stateSource: source,
+  });
 }
 
 function markStarted(args) {
@@ -51,6 +58,7 @@ function markStarted(args) {
     username: args.username ?? null,
     nextActionAt: args.initialNextCheckAt ?? null,
     lastError: null,
+    stateSource: config.processRole === 'worker' ? 'worker' : 'runner-service',
   });
   registerSmartWake(args);
   observeRunnerCompletion(args.jobKey, args.mode ?? 'oneshot', args.scheduleId ?? null);
@@ -61,6 +69,7 @@ function markStartFailure(args, error) {
   transitionRunnerState(args.jobKey, RUNNER_STATE.FAILED, {
     lastError: error?.message ?? String(error),
     metadata: { stage: 'start' },
+    stateSource: 'runner-start-failure',
   });
   clearSmartWake(args.jobKey);
 }
@@ -73,7 +82,17 @@ function transitionOwnedRunner(jobKey, ownerId, state, metadata) {
   return transitionRunnerState(jobKey, state, {
     nextActionAt: null,
     metadata: { ...(current.metadata ?? {}), ...metadata },
+    stateSource: 'runner-service-control',
   });
+}
+
+function releaseExecutionWhenSettled(jobKey, registration) {
+  const job = legacyRunner.getJob(jobKey);
+  if (!job?.done) {
+    registration.release();
+    return;
+  }
+  void Promise.resolve(job.done).finally(() => registration.release());
 }
 
 export function shouldDelegateScheduledRunner(processRole, mode) {
@@ -82,11 +101,18 @@ export function shouldDelegateScheduledRunner(processRole, mode) {
 
 export async function startLocalRunner(args) {
   beginDurableStart(args, config.processRole === 'worker' ? 'worker' : 'runner-service');
+  let registration;
   try {
-    const result = await legacyRunner.startRunner(args);
+    registration = registerRunnerExecution(args);
+    const result = await runWithRunnerExecutionContext(
+      registration.context,
+      () => legacyRunner.startRunner(args),
+    );
     markStarted(args);
+    releaseExecutionWhenSettled(args.jobKey, registration);
     return result;
   } catch (error) {
+    registration?.release();
     markStartFailure(args, error);
     throw error;
   }
@@ -107,6 +133,7 @@ export async function startRunner(args) {
       delegated: true,
       reason: 'worker-queue',
     },
+    stateSource: 'control-plane',
   });
   return { queued: true, nextActionAt };
 }
@@ -142,7 +169,11 @@ export async function restoreScheduledRunners(client) {
 export async function shutdownRunners(timeoutMs = null) {
   for (const job of legacyRunner.listJobs()) {
     const current = getRunnerState(job.key);
-    if (current) transitionRunnerState(job.key, RUNNER_STATE.STOPPING);
+    if (current) {
+      transitionRunnerState(job.key, RUNNER_STATE.STOPPING, {
+        stateSource: 'shutdown',
+      });
+    }
   }
   clearAllSmartWakes();
   const result = await legacyRunner.shutdownRunners(timeoutMs);
