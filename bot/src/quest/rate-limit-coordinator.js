@@ -145,17 +145,21 @@ function mutationFromRequest(url, method, options) {
 }
 
 async function publishQuestSchedule(task, response) {
-  if (!response.ok || !isQuestListRequest(task)) return false;
+  if (!response.ok || !isQuestListRequest(task)) {
+    return { published: false, verification: null };
+  }
   const candidate = await response.clone().json().catch(() => null);
   const quests = questArray(candidate);
-  if (!quests) return false;
-  if (task.jobKey) verifyRunnerMutationFromQuests(task.jobKey, quests);
+  if (!quests) return { published: false, verification: null };
+  const verification = task.jobKey
+    ? verifyRunnerMutationFromQuests(task.jobKey, quests)
+    : null;
   const enrollmentBlockedUntil = candidate?.quest_enrollment_blocked_until ?? null;
   const hint = chooseNextQuestAction({
     quests: quests.map((quest) => schedulingQuest(quest, enrollmentBlockedUntil)),
   });
   publishScheduleHint(task.account, { ...hint, source: 'quest-list' });
-  return true;
+  return { published: true, verification };
 }
 
 function responseError(response) {
@@ -168,6 +172,13 @@ function checkpointError(stage, error) {
   return error instanceof RunnerMutationCheckpointError
     ? error
     : new RunnerMutationCheckpointError(stage, error);
+}
+
+function verificationAllowsNextMutation(verification) {
+  return !verification
+    || verification.checked === false
+    || verification.verified === true
+    || verification.retryAllowed === true;
 }
 
 export class DiscordRateLimitCoordinator {
@@ -246,6 +257,10 @@ export class DiscordRateLimitCoordinator {
       try {
         prepareRunnerMutation(task.jobKey, mutation);
       } catch (error) {
+        if (error?.code === 'RUNNER_MUTATION_REQUIRES_VERIFICATION') {
+          this.blockedMutationJobs.add(task.jobKey);
+          return Promise.reject(new RunnerMutationBlockedError(task.jobKey));
+        }
         this.stats.checkpointErrors++;
         return Promise.reject(checkpointError('prepare', error));
       }
@@ -463,26 +478,27 @@ export class DiscordRateLimitCoordinator {
     if (!task.jobKey || !task.mutation) return;
     if (response.ok) {
       markRunnerMutationAccepted(task.jobKey, new Date(this.now()));
+      this.blockedMutationJobs.add(task.jobKey);
       return;
     }
     const error = responseError(response);
     if (response.status === 429 || response.status >= 500) {
       markRunnerMutationUncertain(task.jobKey, error, new Date(this.now()));
+      this.blockedMutationJobs.add(task.jobKey);
     } else {
       markRunnerMutationFailed(task.jobKey, error, { state: RUNNER_STATE.RUNNING });
+      this.blockedMutationJobs.delete(task.jobKey);
     }
   }
 
-  publishSchedule(task, response) {
-    void publishQuestSchedule(task, response)
-      .then((published) => {
-        if (!published) return;
-        this.stats.lastScheduleHintAt = new Date(this.now()).toISOString();
-        if (task.jobKey) this.blockedMutationJobs.delete(task.jobKey);
-      })
-      .catch(() => {
-        this.stats.scheduleHintErrors++;
-      });
+  async publishSchedule(task, response) {
+    const result = await publishQuestSchedule(task, response);
+    if (!result.published) return false;
+    this.stats.lastScheduleHintAt = new Date(this.now()).toISOString();
+    if (task.jobKey && verificationAllowsNextMutation(result.verification)) {
+      this.blockedMutationJobs.delete(task.jobKey);
+    }
+    return true;
   }
 
   async handleResponse(task, response) {
@@ -501,7 +517,7 @@ export class DiscordRateLimitCoordinator {
     }
 
     try {
-      this.publishSchedule(task, response);
+      await this.publishSchedule(task, response);
     } catch {
       this.stats.scheduleHintErrors++;
     }
@@ -517,6 +533,7 @@ export class DiscordRateLimitCoordinator {
     if (task.jobKey && task.mutation) {
       try {
         markRunnerMutationUncertain(task.jobKey, error, new Date(this.now()));
+        this.blockedMutationJobs.add(task.jobKey);
       } catch {
         this.stats.checkpointErrors++;
         this.blockedMutationJobs.add(task.jobKey);
