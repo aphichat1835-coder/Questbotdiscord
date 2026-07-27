@@ -88,7 +88,7 @@ export async function execute(interaction) {
     limit: 50,
   });
   const activeRoles = listActiveProcessRoles();
-  const workerHolders = listActiveWorkerHolders();
+  const workerHolders = new Set(listActiveWorkerHolders());
   const activeClaims = listScheduledRunnerClaims({ activeOnly: true });
   const transport = getDiscordApiRuntimeStatus();
 
@@ -130,7 +130,7 @@ export async function execute(interaction) {
         value: [
           `Process นี้: **${config.processRole.toUpperCase()}**`,
           `Role ที่ทำงาน: **${activeRoles.length ? activeRoles.join(' + ').toUpperCase() : 'NONE'}**`,
-          `Worker processes: **${workerHolders.length}**`,
+          `Worker processes: **${workerHolders.size}**`,
           `Scheduled claims: **${activeClaims.length}**`,
           `Worker poll: **${config.workerPollIntervalMs}ms**`,
         ].join('\n'),
