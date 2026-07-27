@@ -90,6 +90,21 @@ test('verified mutation metadata never re-enters uncertain mutation recovery', (
   assert.equal(plan.targetState, RUNNER_STATE.RECOVERING);
 });
 
+test('stale verified mutation columns from an older row do not trigger mutation verification', () => {
+  const plan = planRunnerRecovery({
+    mode: 'scheduled',
+    state: RUNNER_STATE.RUNNING,
+    mutation_kind: RUNNER_MUTATION_KIND.CLAIM,
+    mutation_status: RUNNER_MUTATION_STATUS.VERIFIED,
+    quest_id: 'quest-stale-verified',
+    next_action_at: null,
+  });
+
+  assert.equal(plan.action, RUNNER_RECOVERY_ACTION.START_FRESH);
+  assert.equal(plan.reason, 'fetch-fresh-server-state');
+  assert.equal(plan.targetState, RUNNER_STATE.RECOVERING);
+});
+
 test('one-shot recovery is rejected because its token is intentionally not durable', () => {
   beginRunnerState({ jobKey: 'oneshot:recovery', ownerId: 'owner-1', mode: 'oneshot' });
   const plan = planRunnerRecovery(getRunnerState('oneshot:recovery'));
