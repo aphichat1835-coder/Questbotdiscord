@@ -1,7 +1,12 @@
 import { config } from '../config.js';
 import { reportCriticalError } from '../error-reporter.js';
 import { listScheduledRunners } from '../scheduled-runner-store.js';
-import { listJobs, startLocalRunner, stopJob } from './runner-service.js';
+import {
+  getJob,
+  listJobs,
+  startLocalRunner,
+  stopJob,
+} from './runner-service.js';
 import { restoreScheduledRunnerRows } from './scheduled-restore.js';
 import {
   acquireScheduledRunnerClaim,
@@ -43,9 +48,16 @@ function retryEligible(row, now) {
   return !Number.isFinite(updatedAt) || updatedAt + FAILED_RETRY_DELAY_MS <= now;
 }
 
+async function waitForLocalJobSettlement(job, options) {
+  const current = options.getJob(job.key);
+  if (!current?.done) return;
+  await Promise.resolve(current.done).catch(() => undefined);
+}
+
 async function stopSafely(job, options) {
   try {
     const requested = options.stop(job.ownerId, job.key, { removeSchedule: false }) ? 1 : 0;
+    await waitForLocalJobSettlement(job, options);
     if (options.holder) options.releaseClaim(Number(job.scheduleId), options.holder);
     return { requested, failed: 0 };
   } catch (error) {
@@ -102,6 +114,7 @@ async function restoreMissing(client, rows, surviving, options) {
       existingAccountIds: accounts,
       existingOwnerCounts: counts,
       now: new Date(options.now),
+      workerHolder: options.holder,
     });
     result.restore.restored += restored.restored;
     result.restore.failed += restored.failed;
@@ -140,6 +153,7 @@ export async function reconcileScheduledWorker(client, supplied = {}) {
   const options = {
     rows: listScheduledRunners(),
     jobs: listJobs(),
+    getJob,
     startRunner: startLocalRunner,
     stop: stopJob,
     reportStopError: reportCriticalError,
@@ -163,7 +177,7 @@ export async function reconcileScheduledWorker(client, supplied = {}) {
     claimsRenewed: activeResult.claimsRenewed,
     claimsAcquired: restored.claimsAcquired,
     claimConflicts: restored.claimConflicts,
-    finalizedStops: finalizeStops(options.rows, active, options),
+    finalizedStops: finalizeStops(options.rows, activeResult.surviving, options),
     restore: restored.restore,
   };
 }
