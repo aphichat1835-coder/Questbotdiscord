@@ -3,13 +3,16 @@ export const QUEST_LIST_PATHS = Object.freeze([
   '/users/@me/quests',
 ]);
 
+const claimPath = (questId) => `/quests/${questId}/claim`;
+
 export const QUEST_ENDPOINT = Object.freeze({
   me: () => '/users/@me',
   enroll: (questId) => `/quests/${questId}/enroll`,
   videoProgress: (questId) => `/quests/${questId}/video-progress`,
   heartbeat: (questId) => `/quests/${questId}/heartbeat`,
   claimReward: (questId) => `/quests/${questId}/claim-reward`,
-  claimLegacy: (questId) => `/quests/${questId}/claim`,
+  claim: claimPath,
+  claimLegacy: claimPath,
 });
 
 export const FATAL_FORBIDDEN_PATHS = new Set([
