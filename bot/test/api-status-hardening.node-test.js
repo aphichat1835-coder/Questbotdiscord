@@ -19,10 +19,12 @@ test('api-status exposes rate-limit hardening and worker ownership counts', asyn
   assert.match(status, /Scheduled claims/);
 });
 
-test('api-status reports worker and claim totals without rendering holder identifiers', async () => {
+test('api-status reports distinct worker and claim totals without rendering holder identifiers', async () => {
   const status = await source('../src/commands/api-status.js');
-  assert.match(status, /workerHolders\.length/);
+  assert.match(status, /new Set\(listActiveWorkerHolders\(\)\)/);
+  assert.match(status, /workerHolders\.size/);
   assert.match(status, /activeClaims\.length/);
+  assert.doesNotMatch(status, /workerHolders\.length/);
   assert.doesNotMatch(status, /workerHolders\.join/);
   assert.doesNotMatch(status, /activeClaims\.map/);
 });
