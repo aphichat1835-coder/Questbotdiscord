@@ -60,6 +60,30 @@ const acquireClaimTransaction = db.transaction((scheduleId, holder, ttlMs, now) 
   `).get(scheduleId, now)?.holder === holder;
 });
 
+const listAllClaims = db.prepare(`
+  SELECT schedule_id, holder, lease_expires_at, claimed_at, updated_at
+  FROM scheduled_runner_claims
+  ORDER BY schedule_id
+`);
+const listActiveClaims = db.prepare(`
+  SELECT schedule_id, holder, lease_expires_at, claimed_at, updated_at
+  FROM scheduled_runner_claims
+  WHERE lease_expires_at > ?
+  ORDER BY schedule_id
+`);
+const listClaimsByHolder = db.prepare(`
+  SELECT schedule_id, holder, lease_expires_at, claimed_at, updated_at
+  FROM scheduled_runner_claims
+  WHERE holder = ?
+  ORDER BY schedule_id
+`);
+const listActiveClaimsByHolder = db.prepare(`
+  SELECT schedule_id, holder, lease_expires_at, claimed_at, updated_at
+  FROM scheduled_runner_claims
+  WHERE holder = ? AND lease_expires_at > ?
+  ORDER BY schedule_id
+`);
+
 export function acquireScheduledRunnerClaim(
   scheduleId,
   holder,
@@ -116,23 +140,13 @@ export function getScheduledRunnerClaim(scheduleId, now = Date.now()) {
 }
 
 export function listScheduledRunnerClaims({ holder = null, activeOnly = true, now = Date.now() } = {}) {
-  const clauses = [];
-  const values = [];
   if (holder != null) {
-    clauses.push('holder = ?');
-    values.push(requireHolder(holder));
+    const normalizedHolder = requireHolder(holder);
+    return activeOnly
+      ? listActiveClaimsByHolder.all(normalizedHolder, now)
+      : listClaimsByHolder.all(normalizedHolder);
   }
-  if (activeOnly) {
-    clauses.push('lease_expires_at > ?');
-    values.push(now);
-  }
-  const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
-  return db.prepare(`
-    SELECT schedule_id, holder, lease_expires_at, claimed_at, updated_at
-    FROM scheduled_runner_claims
-    ${where}
-    ORDER BY schedule_id
-  `).all(...values);
+  return activeOnly ? listActiveClaims.all(now) : listAllClaims.all();
 }
 
 export function pruneExpiredScheduledRunnerClaims(now = Date.now()) {
