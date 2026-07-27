@@ -1,3 +1,4 @@
+import { randomInt } from 'node:crypto';
 import { config } from '../../config.js';
 import { fetchWithRetry } from '../../http-retry.js';
 import {
@@ -206,7 +207,8 @@ export async function claimQuestRequest(token, questId, platform, signal) {
 }
 
 export function sendVideoProgressRequest(token, questId, timestamp, signal) {
-  const submittedTimestamp = Math.round(Number(timestamp) + Math.random() * 0.5);
+  const jitter = randomInt(0, 500_000) / 1_000_000;
+  const submittedTimestamp = Math.round(Number(timestamp) + jitter);
   return discordFetch(token, QUEST_ENDPOINT.videoProgress(questId), {
     method: 'POST',
     body: JSON.stringify({ timestamp: submittedTimestamp }),
