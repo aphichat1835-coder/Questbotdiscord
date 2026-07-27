@@ -9,6 +9,10 @@ on:
     branches: [aa.1]
     paths:
       - '.github/workflows/apply-runner-refactor.yml'
+  pull_request:
+    branches: [aa]
+    paths:
+      - '.github/workflows/apply-runner-refactor.yml'
 
 jobs:
   apply:
