@@ -51,14 +51,20 @@ export async function startScheduledWorkerSupervisor(client, {
   return true;
 }
 
-export async function stopScheduledWorkerSupervisor() {
+export function releaseScheduledWorkerSupervisorClaims() {
+  if (!supervisorHolder) return 0;
+  const released = releaseScheduledRunnerClaimsByHolder(supervisorHolder);
+  supervisorHolder = null;
+  return released;
+}
+
+export async function stopScheduledWorkerSupervisor({ releaseClaims = true } = {}) {
   if (supervisorTimer) {
     clearInterval(supervisorTimer);
     supervisorTimer = null;
   }
   await reconcilePromise?.catch(() => undefined);
-  if (supervisorHolder) releaseScheduledRunnerClaimsByHolder(supervisorHolder);
-  supervisorHolder = null;
+  if (releaseClaims) releaseScheduledWorkerSupervisorClaims();
   return true;
 }
 
