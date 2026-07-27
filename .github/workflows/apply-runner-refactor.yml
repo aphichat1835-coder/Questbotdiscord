@@ -1,5 +1,6 @@
 name: Apply runner refactor
 
+# This workflow is temporary and deletes itself after the atomic patch succeeds.
 permissions:
   contents: write
 
