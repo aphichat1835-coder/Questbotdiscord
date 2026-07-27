@@ -10,6 +10,11 @@ on:
     paths:
       - '.github/workflows/export-runner-source.yml'
       - 'bot/src/discord-runner.js'
+  pull_request:
+    branches: [aa]
+    paths:
+      - '.github/workflows/export-runner-source.yml'
+      - 'bot/src/discord-runner.js'
 
 jobs:
   export:
