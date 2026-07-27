@@ -139,7 +139,7 @@ test('circuit breaker opens after repeated server failures and permits one delay
   assert.equal(coordinator.snapshot().circuitOpens, 1);
 });
 
-test('coordinator checkpoints mutation and verifies it from a fresh Quest list', async () => {
+test('coordinator blocks another mutation until fresh Quest verification completes', async () => {
   const token = 'checkpoint-account';
   const jobKey = 'scheduled:coordinator-hardening-checkpoint';
   beginRunnerState({ jobKey, ownerId: 'owner-hardening', mode: 'scheduled', scheduleId: 9201 });
@@ -151,32 +151,66 @@ test('coordinator checkpoints mutation and verifies it from a fresh Quest list',
     scheduleId: 9201,
   });
   const coordinator = new DiscordRateLimitCoordinator();
+  const mutationUrl = 'https://discord.com/api/v10/quests/quest-1/video-progress';
 
-  await coordinator.schedule('https://discord.com/api/v10/quests/quest-1/video-progress', {
-    method: 'POST',
-    headers: { Authorization: token },
-    body: JSON.stringify({ timestamp: 10, captcha_key: 'do-not-store' }),
-  }, async () => response(200));
+  try {
+    await coordinator.schedule(mutationUrl, {
+      method: 'POST',
+      headers: { Authorization: token },
+      body: JSON.stringify({ timestamp: 10, captcha_key: 'do-not-store' }),
+    }, async () => response(200));
 
-  let state = getRunnerState(jobKey);
-  assert.equal(state.mutation_status, RUNNER_MUTATION_STATUS.ACCEPTED);
-  assert.equal(state.quest_id, 'quest-1');
-  assert.deepEqual(state.mutation_payload, { timestamp: 10 });
+    let state = getRunnerState(jobKey);
+    assert.equal(state.mutation_status, RUNNER_MUTATION_STATUS.ACCEPTED);
+    assert.equal(state.quest_id, 'quest-1');
+    assert.deepEqual(state.mutation_payload, { timestamp: 10 });
+    assert.equal(coordinator.snapshot().blockedMutationJobs, 1);
 
-  const result = await coordinator.schedule('https://discord.com/api/v10/quests/@me', {
-    headers: { Authorization: token },
-  }, async () => response(200, { 'content-type': 'application/json' }, JSON.stringify({
-    quests: [{
-      id: 'quest-1',
-      config: {},
-      user_status: { progress: { WATCH_VIDEO: { value: 10 } } },
-    }],
-  })));
-  await result.json();
-  await new Promise((resolve) => setImmediate(resolve));
+    await assert.rejects(
+      coordinator.schedule('https://discord.com/api/v10/quests/quest-1/heartbeat', {
+        method: 'POST',
+        headers: { Authorization: token },
+        body: JSON.stringify({ terminal: false }),
+      }, async () => response(200)),
+      (error) => error?.code === 'RUNNER_MUTATION_REQUIRES_VERIFICATION',
+    );
 
-  state = getRunnerState(jobKey);
-  assert.equal(state.mutation_status, RUNNER_MUTATION_STATUS.VERIFIED);
-  assert.equal(state.server_progress_seconds, 10);
-  registration.release();
+    const staleResult = await coordinator.schedule('https://discord.com/api/v10/quests/@me', {
+      headers: { Authorization: token },
+    }, async () => response(200, { 'content-type': 'application/json' }, JSON.stringify({
+      quests: [{
+        id: 'quest-1',
+        config: {},
+        user_status: { progress: { WATCH_VIDEO: { value: 5 } } },
+      }],
+    })));
+    await staleResult.json();
+    assert.equal(getRunnerState(jobKey).mutation_status, RUNNER_MUTATION_STATUS.ACCEPTED);
+    assert.equal(coordinator.snapshot().blockedMutationJobs, 1);
+
+    const verifiedResult = await coordinator.schedule('https://discord.com/api/v10/quests/@me', {
+      headers: { Authorization: token },
+    }, async () => response(200, { 'content-type': 'application/json' }, JSON.stringify({
+      quests: [{
+        id: 'quest-1',
+        config: {},
+        user_status: { progress: { WATCH_VIDEO: { value: 10 } } },
+      }],
+    })));
+    await verifiedResult.json();
+
+    state = getRunnerState(jobKey);
+    assert.equal(state.mutation_status, RUNNER_MUTATION_STATUS.VERIFIED);
+    assert.equal(state.server_progress_seconds, 10);
+    assert.equal(coordinator.snapshot().blockedMutationJobs, 0);
+
+    const nextMutation = await coordinator.schedule('https://discord.com/api/v10/quests/quest-1/heartbeat', {
+      method: 'POST',
+      headers: { Authorization: token },
+      body: JSON.stringify({ terminal: false }),
+    }, async () => response(400));
+    assert.equal(nextMutation.status, 400);
+  } finally {
+    registration.release();
+  }
 });
