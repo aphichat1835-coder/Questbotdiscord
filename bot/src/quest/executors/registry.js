@@ -19,6 +19,7 @@ for (const executor of [...QUEST_EXECUTORS, unknownQuestExecutor]) {
 
 export function selectQuestExecutor(value) {
   const quest = typeof value === 'string' ? { eventName: value } : value;
+  if (quest?.autoSupported === false) return unsupportedQuestExecutor;
   return QUEST_EXECUTORS.find((executor) => executor.matches(quest)) ?? unknownQuestExecutor;
 }
 
