@@ -1,0 +1,27 @@
+name: Export runner source
+
+permissions:
+  contents: read
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [aa.1]
+    paths:
+      - '.github/workflows/export-runner-source.yml'
+      - 'bot/src/discord-runner.js'
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/upload-artifact@v7
+        with:
+          name: discord-runner-source-${{ github.run_id }}
+          path: bot/src/discord-runner.js
+          if-no-files-found: error
+          retention-days: 1
