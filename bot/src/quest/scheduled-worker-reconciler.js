@@ -81,6 +81,27 @@ async function stopJobsSafely(jobs, options) {
   }), { requested: 0, failed: 0 });
 }
 
+function claimHeartbeatDelay(options) {
+  const ttl = Number(options.claimTtlMs);
+  return Math.max(1_000, Math.floor((Number.isFinite(ttl) ? ttl : 3_000) / 3));
+}
+
+function startClaimHeartbeat(jobs, options, renewedJobs, ownershipLost) {
+  if (!options.holder || jobs.length === 0) return () => {};
+  const timer = options.setInterval(() => {
+    for (const job of jobs) {
+      try {
+        if (ownsActiveClaim(job, options)) renewedJobs.add(job.key);
+        else ownershipLost.add(job.key);
+      } catch {
+        ownershipLost.add(job.key);
+      }
+    }
+  }, claimHeartbeatDelay(options));
+  timer?.unref?.();
+  return () => options.clearInterval(timer);
+}
+
 function ownsActiveClaim(job, options, now = currentTime(options)) {
   if (!options.holder) return true;
   const id = Number(job.scheduleId);
@@ -109,17 +130,29 @@ async function reconcileActive(rows, jobs, options) {
     stopCandidates.push(job);
   }
 
-  const stopped = await stopJobsSafely(stopCandidates, options);
+  const ownershipLost = new Set();
+  const stopHeartbeat = startClaimHeartbeat(
+    surviving,
+    options,
+    renewedJobs,
+    ownershipLost,
+  );
+  let stopped;
+  try {
+    stopped = await stopJobsSafely(stopCandidates, options);
+  } finally {
+    stopHeartbeat();
+  }
   result.stopRequested += stopped.requested;
   result.stopFailures += stopped.failed;
 
-  // Cleanup may take long enough for previously renewed leases to expire. Verify
-  // ownership again before the restore phase and stop any job that lost its claim.
+  // Verify ownership again before the restore phase. The heartbeat prevents a
+  // long cleanup from allowing unrelated leases to expire mid-reconciliation.
   if (options.holder && stopCandidates.length > 0 && surviving.length > 0) {
     const confirmed = [];
     const lostDuringCleanup = [];
     for (const job of surviving) {
-      if (ownsActiveClaim(job, options)) {
+      if (!ownershipLost.has(job.key) && ownsActiveClaim(job, options)) {
         confirmed.push(job);
         renewedJobs.add(job.key);
       } else {
@@ -206,6 +239,8 @@ export async function reconcileScheduledWorker(client, supplied = {}) {
     acquireClaim: acquireScheduledRunnerClaim,
     renewClaim: renewScheduledRunnerClaim,
     releaseClaim: releaseScheduledRunnerClaim,
+    setInterval,
+    clearInterval,
     ...supplied,
   };
   const active = activeScheduledJobs(options.jobs);
