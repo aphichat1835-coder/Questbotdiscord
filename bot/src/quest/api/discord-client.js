@@ -147,3 +147,77 @@ export async function fetchQuestPayload(token, signal) {
     { code: 'QUEST_ENDPOINTS_UNAVAILABLE' },
   );
 }
+
+export function enrollQuestRequest(token, questId, signal) {
+  return discordFetch(token, QUEST_ENDPOINT.enroll(questId), {
+    method: 'POST',
+    body: JSON.stringify({
+      location: 11,
+      is_targeted: false,
+      metadata_raw: null,
+    }),
+    signal,
+  });
+}
+
+export async function claimQuestRequest(token, questId, platform, signal) {
+  try {
+    return await discordFetch(token, QUEST_ENDPOINT.claimReward(questId), {
+      method: 'POST',
+      body: JSON.stringify({ location: 11, platform }),
+      signal,
+    });
+  } catch (error) {
+    if (error?.status !== 404) throw error;
+    return discordFetch(token, QUEST_ENDPOINT.claim(questId), {
+      method: 'POST',
+      body: JSON.stringify({ location: 1, platform }),
+      signal,
+    });
+  }
+}
+
+export function sendVideoProgressRequest(token, questId, timestamp, signal) {
+  const submittedTimestamp = Math.round(Number(timestamp) + Math.random() * 0.5);
+  return discordFetch(token, QUEST_ENDPOINT.videoProgress(questId), {
+    method: 'POST',
+    body: JSON.stringify({ timestamp: submittedTimestamp }),
+    signal,
+  });
+}
+
+export function sendApplicationHeartbeatRequest(token, quest, terminal, signal) {
+  if (!quest?.applicationId) {
+    throw new QuestCompatibilityError(
+      `Quest ${quest?.id ?? '<unknown>'} is missing config.application.id`,
+      { code: 'QUEST_APPLICATION_ID_MISSING' },
+    );
+  }
+  return discordFetch(token, QUEST_ENDPOINT.heartbeat(quest.id), {
+    method: 'POST',
+    body: JSON.stringify({ application_id: quest.applicationId, terminal: Boolean(terminal) }),
+    signal,
+  });
+}
+
+export async function sendHeartbeatRequest(
+  token,
+  quest,
+  terminal,
+  useApplicationPayload,
+  signal,
+) {
+  if (useApplicationPayload) {
+    return sendApplicationHeartbeatRequest(token, quest, terminal, signal);
+  }
+  try {
+    return await discordFetch(token, QUEST_ENDPOINT.heartbeat(quest.id), {
+      method: 'POST',
+      body: JSON.stringify({ stream_key: `call:${quest.id}:1`, terminal: Boolean(terminal) }),
+      signal,
+    });
+  } catch (error) {
+    if (error?.status !== 400 || !quest?.applicationId) throw error;
+    return sendApplicationHeartbeatRequest(token, quest, terminal, signal);
+  }
+}
