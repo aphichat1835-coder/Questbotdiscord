@@ -3,7 +3,10 @@ import { config } from '../config.js';
 import { db } from '../db.js';
 import { redactSensitive } from '../error-reporter.js';
 import { isManager } from '../permissions.js';
-import { listActiveProcessRoles } from '../process-topology.js';
+import {
+  listActiveProcessRoles,
+  listActiveWorkerHolders,
+} from '../process-topology.js';
 import { getDiscordApiRuntimeStatus } from '../quest/discord-api-runtime.js';
 import {
   getQuestEngineStatus,
@@ -11,6 +14,7 @@ import {
   listQuestEngineStatuses,
 } from '../quest/runner-service.js';
 import { listRunnerStates, RUNNER_STATE } from '../quest/runner-state-store.js';
+import { listScheduledRunnerClaims } from '../quest/scheduled-worker-claims.js';
 import { listScheduledRunners } from '../scheduled-runner-store.js';
 
 export const data = new SlashCommandBuilder()
@@ -84,6 +88,8 @@ export async function execute(interaction) {
     limit: 50,
   });
   const activeRoles = listActiveProcessRoles();
+  const workerHolders = listActiveWorkerHolders();
+  const activeClaims = listScheduledRunnerClaims({ activeOnly: true });
   const transport = getDiscordApiRuntimeStatus();
 
   const questDetails = [
@@ -123,7 +129,9 @@ export async function execute(interaction) {
         name: 'Process Topology',
         value: [
           `Process นี้: **${config.processRole.toUpperCase()}**`,
-          `Lease ที่ทำงาน: **${activeRoles.length ? activeRoles.join(' + ').toUpperCase() : 'NONE'}**`,
+          `Role ที่ทำงาน: **${activeRoles.length ? activeRoles.join(' + ').toUpperCase() : 'NONE'}**`,
+          `Worker processes: **${workerHolders.length}**`,
+          `Scheduled claims: **${activeClaims.length}**`,
           `Worker poll: **${config.workerPollIntervalMs}ms**`,
         ].join('\n'),
         inline: false,
@@ -134,8 +142,10 @@ export async function execute(interaction) {
           `Runtime: **${transport.installed ? 'ACTIVE' : 'INACTIVE'}**`,
           `Queue: **${transport.rateLimit.queued}** · Active: **${transport.rateLimit.active}**`,
           `429: **${transport.rateLimit.rateLimited}** · Global: **${transport.rateLimit.globalRateLimits}**`,
+          `Routes/Scopes: **${transport.rateLimit.knownRoutes ?? 0}/${transport.rateLimit.knownScopes ?? 0}**`,
           `Blocked buckets: **${transport.rateLimit.blockedBuckets}**`,
-          `Hint errors: **${transport.rateLimit.scheduleHintErrors ?? 0}**`,
+          `Circuits: **${transport.rateLimit.openCircuits ?? 0} open / ${transport.rateLimit.halfOpenCircuits ?? 0} probe**`,
+          `Checkpoint errors: **${transport.rateLimit.checkpointErrors ?? 0}** · Hint errors: **${transport.rateLimit.scheduleHintErrors ?? 0}**`,
         ].join('\n'),
         inline: false,
       },
@@ -148,6 +158,11 @@ export async function execute(interaction) {
           `Durable state ที่ยังทำงาน: **${activeDurable.length}**`,
           `Recovering: **${activeDurable.filter((row) => row.state === RUNNER_STATE.RECOVERING).length}**`,
           `Stopping: **${activeDurable.filter((row) => row.state === RUNNER_STATE.STOPPING).length}**`,
+          `Verifying mutation: **${activeDurable.filter((row) => [
+            RUNNER_STATE.VERIFYING_ENROLLMENT,
+            RUNNER_STATE.VERIFYING_PROGRESS,
+            RUNNER_STATE.VERIFYING_CLAIM,
+          ].includes(row.state)).length}**`,
         ].join('\n'),
         inline: false,
       },
