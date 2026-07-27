@@ -79,3 +79,23 @@ test('abort failures are terminal and never verify or retry', async () => {
     (thrown) => thrown === error,
   );
 });
+
+for (const code of [
+  'RUNNER_CHECKPOINT_FAILED',
+  'RUNNER_MUTATION_CHECKPOINT_FAILED',
+  'RUNNER_MUTATION_REQUIRES_VERIFICATION',
+  'RUNNER_OWNERSHIP_LOST',
+]) {
+  test(`${code} is terminal and never enters mutation verification`, async () => {
+    const error = new Error(code);
+    error.code = code;
+    await assert.rejects(
+      executeVerifiedMutation({
+        perform: async () => { throw error; },
+        verify: async () => assert.fail(`${code} must not verify`),
+        wait: async () => assert.fail(`${code} must not wait`),
+      }),
+      (thrown) => thrown === error,
+    );
+  });
+}
