@@ -10,37 +10,63 @@ import {
 
 const MAX_RETRY_DELAY_MS = 60_000;
 
+export class RunnerCheckpointError extends Error {
+  constructor(stage, cause) {
+    super(`Runner checkpoint failed during ${stage}: ${cause?.message ?? 'unknown storage error'}`, {
+      cause,
+    });
+    this.name = 'RunnerCheckpointError';
+    this.code = 'RUNNER_CHECKPOINT_FAILED';
+    this.stage = stage;
+  }
+}
+
 function currentJobKey() {
   return currentRunnerExecutionContext()?.jobKey ?? null;
 }
 
-function checkpoint(callback) {
+function checkpoint(stage, callback, { required = false } = {}) {
   const jobKey = currentJobKey();
   if (!jobKey) return null;
   try {
     return callback(jobKey);
   } catch (error) {
-    console.warn(`[MutationCheckpoint:${jobKey}] ${error?.message ?? 'checkpoint failed'}`);
+    console.warn(
+      `[MutationCheckpoint:${jobKey}] ${stage} failed — ${error?.message ?? 'checkpoint failed'}`,
+    );
+    if (required) throw new RunnerCheckpointError(stage, error);
     return null;
   }
 }
 
 function markUncertain(error) {
-  return checkpoint((jobKey) => markRunnerMutationUncertain(jobKey, error));
+  return checkpoint(
+    'mark-uncertain',
+    (jobKey) => markRunnerMutationUncertain(jobKey, error),
+    { required: true },
+  );
 }
 
 function markVerified() {
-  return checkpoint((jobKey) => markRunnerMutationVerified(jobKey));
+  return checkpoint(
+    'mark-verified',
+    (jobKey) => markRunnerMutationVerified(jobKey),
+    { required: true },
+  );
 }
 
 function markFailed(error) {
-  return checkpoint((jobKey) => markRunnerMutationFailed(jobKey, error, {
+  return checkpoint('mark-failed', (jobKey) => markRunnerMutationFailed(jobKey, error, {
     state: RUNNER_STATE.RUNNING,
   }));
 }
 
 function markControlledRetry() {
-  return checkpoint((jobKey) => incrementRunnerRetry(jobKey));
+  return checkpoint(
+    'controlled-retry',
+    (jobKey) => incrementRunnerRetry(jobKey),
+    { required: true },
+  );
 }
 
 export function isUncertainMutationFailure(error) {
@@ -74,6 +100,10 @@ async function verifyAfterUncertainFailure(verify) {
  * A mutating request is never retried blindly. After an uncertain failure
  * (network, timeout, 429 or 5xx), fresh server state is checked first. Only
  * when the desired state is still absent can one controlled retry occur.
+ *
+ * Durable checkpoint updates for an uncertain result and a controlled retry
+ * are mandatory. If storage cannot record those boundaries, execution stops
+ * and the existing PREPARED/IN_FLIGHT checkpoint is left for restart recovery.
  */
 export async function executeVerifiedMutation({
   perform,
