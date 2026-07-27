@@ -143,7 +143,9 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: bot-test-output-${{ github.run_id }}
-          path: bot/test-output.log
+          path: |
+            bot/test-output.log
+            bot/src/discord-runner.js
           if-no-files-found: error
           retention-days: 7
 
