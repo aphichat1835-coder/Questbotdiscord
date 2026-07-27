@@ -1,0 +1,131 @@
+import './setup-env.js';
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { authorizationFingerprint } from '../src/quest/authorization-fingerprint.js';
+import {
+  clearScheduleHint,
+  clearScheduleHintsForTests,
+  publishScheduleHint,
+  subscribeScheduleHints,
+} from '../src/quest/schedule-hint-bus.js';
+import {
+  clearAllSmartWakes,
+  configureSmartWakeController,
+  registerSmartWake,
+} from '../src/quest/smart-wake-controller.js';
+import {
+  beginRunnerState,
+  clearRunnerStatesForTests,
+  getRunnerState,
+  RUNNER_STATE,
+} from '../src/quest/runner-state-store.js';
+
+test.beforeEach(() => {
+  clearAllSmartWakes();
+  clearScheduleHintsForTests();
+  clearRunnerStatesForTests();
+  configureSmartWakeController(null);
+});
+
+test.after(() => {
+  clearAllSmartWakes();
+  clearScheduleHintsForTests();
+  clearRunnerStatesForTests();
+  configureSmartWakeController(null);
+});
+
+test('clearing the final effective hint notifies subscribers with null', () => {
+  const account = authorizationFingerprint('hint-clear-token');
+  const observed = [];
+  const unsubscribe = subscribeScheduleHints(account, (hint) => observed.push(hint));
+  const nextActionAt = new Date(Date.now() + 60_000).toISOString();
+
+  assert.equal(publishScheduleHint(account, {
+    nextActionAt,
+    reason: 'verification',
+    source: 'verification',
+  }), true);
+  assert.equal(clearScheduleHint(account, 'verification'), true);
+  assert.equal(observed[0].nextActionAt, nextActionAt);
+  assert.equal(observed[1], null);
+  unsubscribe();
+});
+
+test('clearing a due hint cancels its stale smart wake timer', async () => {
+  const jobKey = 'scheduled:hint-clear-timer';
+  const token = 'hint-clear-timer-token';
+  const account = authorizationFingerprint(token);
+  beginRunnerState({
+    jobKey,
+    ownerId: 'hint-owner',
+    accountId: 'hint-account',
+    mode: 'scheduled',
+    scheduleId: 9901,
+    state: RUNNER_STATE.RUNNING,
+  });
+
+  let restarts = 0;
+  configureSmartWakeController(async () => { restarts++; }, {
+    getJob: () => ({
+      done: Promise.resolve(),
+      summary: () => ({ status: 'AUTO DAILY ACTIVE', nextCheckAt: null }),
+    }),
+    stopJob: () => true,
+    getScheduled: () => ({ id: 9901 }),
+  });
+  assert.equal(registerSmartWake({
+    jobKey,
+    ownerId: 'hint-owner',
+    userToken: token,
+    channelId: 'hint-channel',
+    client: {},
+    mode: 'scheduled',
+    scheduleId: 9901,
+    accountId: 'hint-account',
+    username: 'hint-user',
+  }), true);
+
+  assert.equal(publishScheduleHint(account, {
+    nextActionAt: new Date(Date.now() - 1).toISOString(),
+    reason: 'recovery',
+    source: 'recovery',
+    priority: 99,
+  }), true);
+  assert.equal(clearScheduleHint(account, 'recovery'), true);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(restarts, 0);
+});
+
+test('a schedule hint without reason safely uses the waiting-schedule state', () => {
+  const jobKey = 'scheduled:hint-without-reason';
+  const token = 'hint-without-reason-token';
+  const nextActionAt = new Date(Date.now() + 60_000).toISOString();
+  beginRunnerState({
+    jobKey,
+    ownerId: 'hint-owner',
+    accountId: 'hint-account',
+    mode: 'scheduled',
+    scheduleId: 9902,
+    state: RUNNER_STATE.RUNNING,
+  });
+  assert.equal(registerSmartWake({
+    jobKey,
+    ownerId: 'hint-owner',
+    userToken: token,
+    channelId: 'hint-channel',
+    client: {},
+    mode: 'scheduled',
+    scheduleId: 9902,
+    accountId: 'hint-account',
+    username: 'hint-user',
+  }), true);
+
+  assert.equal(publishScheduleHint(authorizationFingerprint(token), {
+    nextActionAt,
+    source: 'reasonless-test',
+  }), true);
+  const state = getRunnerState(jobKey);
+  assert.equal(state.state, RUNNER_STATE.WAITING_SCHEDULE);
+  assert.equal(state.next_action_at, nextActionAt);
+  assert.equal(state.state_source, 'schedule-hint:reasonless-test');
+});
