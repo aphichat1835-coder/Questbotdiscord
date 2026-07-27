@@ -12,6 +12,7 @@ import {
 import {
   beginRunnerState,
   getRunnerState,
+  RUNNER_ERROR_CATEGORY,
   RUNNER_MUTATION_KIND,
   RUNNER_MUTATION_STATUS,
   RUNNER_STATE,
@@ -28,6 +29,25 @@ test('captcha and ambiguous platforms use durable long claim cooldowns', () => {
   const ambiguous = classifyClaimRetry(null, { platformAmbiguous: true });
   assert.equal(ambiguous.reason, CLAIM_RETRY_REASON.PLATFORM_AMBIGUOUS);
   assert.equal(ambiguous.delayMs, CLAIM_LONG_RETRY_DELAY_MS);
+});
+
+test('generic HTTP 400 is not misclassified as CAPTCHA', () => {
+  const rejected = classifyClaimRetry({
+    status: 400,
+    message: 'invalid request body',
+    data: { code: 50_035 },
+  });
+
+  assert.equal(rejected.reason, CLAIM_RETRY_REASON.REQUEST_REJECTED);
+  assert.equal(rejected.delayMs, CLAIM_RETRY_DELAY_MS);
+  assert.equal(rejected.error.status, 400);
+});
+
+test('HTTP 429 keeps a standard durable cooldown and a distinct reason', () => {
+  const limited = classifyClaimRetry({ status: 429, message: 'rate limited' });
+  assert.equal(limited.reason, CLAIM_RETRY_REASON.RATE_LIMITED);
+  assert.equal(limited.delayMs, CLAIM_RETRY_DELAY_MS);
+  assert.equal(limited.error.status, 429);
 });
 
 test('temporary claim failures use the standard cooldown', () => {
@@ -61,4 +81,21 @@ test('claim retry survives restart through durable next_action_at', () => {
   assert.equal(state.mutation_status, RUNNER_MUTATION_STATUS.FAILED);
   assert.equal(state.metadata.claimRetryReason, CLAIM_RETRY_REASON.TEMPORARY_API_ERROR);
   assert.equal(claimRetryAt(jobKey), now.getTime() + CLAIM_RETRY_DELAY_MS);
+});
+
+test('rejected claim persists an API 4xx error category', () => {
+  const jobKey = 'scheduled:claim-retry-policy-rejected';
+  beginRunnerState({
+    jobKey,
+    ownerId: 'claim-retry-owner',
+    mode: 'scheduled',
+    scheduleId: 920002,
+  });
+
+  const retry = classifyClaimRetry({ status: 400, message: 'invalid claim payload' });
+  persistClaimRetry(jobKey, { id: 'claim-retry-quest-rejected' }, { ...retry });
+
+  const state = getRunnerState(jobKey);
+  assert.equal(state.metadata.claimRetryReason, CLAIM_RETRY_REASON.REQUEST_REJECTED);
+  assert.equal(state.error_category, RUNNER_ERROR_CATEGORY.API_4XX);
 });
