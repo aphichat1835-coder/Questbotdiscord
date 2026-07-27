@@ -34,7 +34,28 @@ const TERMINAL_RUNNER_STATES = new Set([
   RUNNER_STATE.FAILED,
 ]);
 
+function recoveryMetadata(args, source, current = null) {
+  return {
+    ...(current?.metadata ?? {}),
+    source,
+    recoveryAction: args.recoveryPlan?.action ?? null,
+    recoveryReason: args.recoveryPlan?.reason ?? null,
+  };
+}
+
 function beginDurableStart(args, source = 'runner-service') {
+  const current = getRunnerState(args.jobKey);
+  if (args.recoveryPlan && current) {
+    transitionRunnerState(args.jobKey, RUNNER_STATE.AUTHENTICATING, {
+      accountId: args.accountId ?? current.account_id,
+      username: args.username ?? current.username,
+      nextActionAt: args.initialNextCheckAt ?? current.next_action_at,
+      metadata: recoveryMetadata(args, source, current),
+      stateSource: 'recovery-start',
+    });
+    return;
+  }
+
   beginRunnerState({
     jobKey: args.jobKey,
     ownerId: args.ownerId,
@@ -53,12 +74,19 @@ function beginDurableStart(args, source = 'runner-service') {
 }
 
 function markStarted(args) {
-  transitionRunnerState(args.jobKey, RUNNER_STATE.RUNNING, {
-    accountId: args.accountId ?? null,
-    username: args.username ?? null,
-    nextActionAt: args.initialNextCheckAt ?? null,
-    lastError: null,
-    stateSource: config.processRole === 'worker' ? 'worker' : 'runner-service',
+  const current = getRunnerState(args.jobKey);
+  const targetState = args.recoveryPlan?.targetState ?? RUNNER_STATE.RUNNING;
+  transitionRunnerState(args.jobKey, targetState, {
+    accountId: args.accountId ?? current?.account_id ?? null,
+    username: args.username ?? current?.username ?? null,
+    nextActionAt: args.initialNextCheckAt ?? current?.next_action_at ?? null,
+    lastError: args.recoveryPlan ? current?.last_error ?? null : null,
+    metadata: args.recoveryPlan
+      ? recoveryMetadata(args, 'recovery-started', current)
+      : current?.metadata ?? null,
+    stateSource: args.recoveryPlan
+      ? 'recovery-started'
+      : config.processRole === 'worker' ? 'worker' : 'runner-service',
   });
   registerSmartWake(args);
   observeRunnerCompletion(args.jobKey, args.mode ?? 'oneshot', args.scheduleId ?? null);
