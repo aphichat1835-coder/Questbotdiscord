@@ -37,10 +37,10 @@ function recordSkippedRestore(row, message) {
   failDurableRestore(row, message);
 }
 
-function failOrphanedRecoveringStates(rows) {
+function failOrphanedScheduledStates(rows) {
   const validScheduleIds = new Set(rows.map((row) => Number(row.id)));
   for (const state of listRunnerStates({ activeOnly: true, limit: 500 })) {
-    if (state.state !== RUNNER_STATE.RECOVERING || state.mode !== 'scheduled') continue;
+    if (state.mode !== 'scheduled') continue;
     if (validScheduleIds.has(Number(state.schedule_id))) continue;
     transitionRunnerState(state.job_key, RUNNER_STATE.FAILED, {
       lastError: 'Persisted runner state has no matching scheduled runner row',
@@ -94,7 +94,7 @@ export async function restoreScheduledRunnerRows(client, startRunner, {
   existingOwnerCounts = new Map(),
   now = new Date(),
 } = {}) {
-  failOrphanedRecoveringStates(reconciliationRows);
+  failOrphanedScheduledStates(reconciliationRows);
   if (!rows.length) return { restored: 0, failed: 0 };
 
   if (!config.runnerTokenSecret || config.runnerTokenSecret.length < 16) {
