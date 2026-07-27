@@ -60,6 +60,7 @@ import {
   normalizeQuest as normalizeQuestV2,
   normalizeQuestPayload as normalizeQuestPayloadV2,
 } from './quest/schema/normalizer.js';
+import { QuestCompatibilityError } from './quest/schema/compatibility.js';
 import {
   executeQuestExecutor,
   selectQuestExecutor,
@@ -307,12 +308,7 @@ function transitionCurrentRunner(state, values = {}, { preserveMutation = false 
   }
 }
 
-export class QuestCompatibilityError extends Error {
-  constructor(message) {
-    super(message);
-    this.name = 'QuestCompatibilityError';
-  }
-}
+export { QuestCompatibilityError };
 
 export function getQuestEngineStatus(statusKey = null) {
   return getStoredQuestStatus(statusKey);
