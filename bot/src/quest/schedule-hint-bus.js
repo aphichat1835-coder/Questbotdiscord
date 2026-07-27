@@ -82,11 +82,11 @@ export function publishScheduleHint(accountKey, hint) {
     priority: Number.isFinite(Number(hint.priority)) ? Number(hint.priority) : 0,
     publishedAtMs: Date.now(),
   };
+  const previousEffective = effectiveHints.get(accountKey) ?? selectEffectiveScheduleHint(accountKey);
   if (!hintsByAccount.has(accountKey)) hintsByAccount.set(accountKey, new Map());
   const hints = hintsByAccount.get(accountKey);
   const previousSource = hints.get(source);
   if (sameHint(previousSource, normalized)) return false;
-  const previousEffective = effectiveHints.get(accountKey) ?? selectEffectiveScheduleHint(accountKey);
   hints.set(source, normalized);
   publishEffectiveChange(accountKey, previousEffective);
   return true;
