@@ -299,14 +299,20 @@ test('restart failure becomes a durable FAILED state after rejected cleanup is s
   const jobKey = 'scheduled:smart-wake-restart-failure';
   const token = 'smart-wake-restart-failure-token';
   beginScheduled(jobKey, 9);
+  let rejectCleanup;
+  const cleanup = new Promise((_, reject) => { rejectCleanup = reject; });
+  const active = {
+    done: cleanup,
+    summary: () => ({ status: 'NEXT CHECK: later', nextCheckAt: null }),
+  };
   configureSmartWakeController(async () => {
     throw new Error('restart failed');
   }, {
-    getJob: () => ({
-      done: Promise.reject(new Error('cleanup failed')),
-      summary: () => ({ status: 'NEXT CHECK: later', nextCheckAt: null }),
-    }),
-    stopJob: () => true,
+    getJob: () => active,
+    stopJob: () => {
+      rejectCleanup(new Error('cleanup failed'));
+      return true;
+    },
     getScheduled: () => ({ id: 9 }),
   });
 
