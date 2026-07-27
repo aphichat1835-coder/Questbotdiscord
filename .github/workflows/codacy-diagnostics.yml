@@ -1,0 +1,41 @@
+name: Codacy diagnostics
+
+permissions:
+  contents: read
+
+on:
+  push:
+    branches: [aa.1]
+    paths:
+      - '.github/workflows/codacy-diagnostics.yml'
+  workflow_dispatch:
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Query pull request issues
+        shell: bash
+        run: |
+          set -euo pipefail
+          url='https://api.codacy.com/api/v3/analysis/organizations/gh/aphichat1835-coder/repositories/Questbotdiscord/pull-requests/15/issues?status=new&limit=100'
+          curl --silent --show-error --location \
+            --header 'Accept: application/json' \
+            --dump-header codacy-headers.txt \
+            --output codacy-issues.json \
+            --write-out '%{http_code}\n' \
+            "$url" | tee codacy-status.txt
+          cat codacy-issues.json
+
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: codacy-pr-15-diagnostics-${{ github.run_id }}
+          path: |
+            codacy-status.txt
+            codacy-headers.txt
+            codacy-issues.json
+          if-no-files-found: error
+          retention-days: 1
