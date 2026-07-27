@@ -6,6 +6,10 @@ import {
   updateScheduledRunner,
 } from '../scheduled-runner-store.js';
 import {
+  applyRunnerRecoveryPlan,
+  planRunnerRecovery,
+} from './recovery-planner.js';
+import {
   getRunnerState,
   listRunnerStates,
   RUNNER_STATE,
@@ -24,6 +28,7 @@ function failDurableRestore(row, message) {
   transitionRunnerState(jobKey, RUNNER_STATE.FAILED, {
     lastError: message,
     metadata: { stage: 'restore' },
+    stateSource: 'scheduled-restore-failure',
   });
 }
 
@@ -40,14 +45,29 @@ function failOrphanedRecoveringStates(rows) {
     transitionRunnerState(state.job_key, RUNNER_STATE.FAILED, {
       lastError: 'Persisted runner state has no matching scheduled runner row',
       metadata: { stage: 'restore-reconcile' },
+      stateSource: 'scheduled-restore-reconcile',
     });
   }
 }
 
-async function restoreRow({ row, client, startRunner, ownerCount }) {
+export function buildScheduledRestorePlan(row, now = new Date()) {
+  const jobKey = durableJobKey(row);
+  const current = getRunnerState(jobKey);
+  const recoveryPlan = planRunnerRecovery(current, now);
+  if (current) applyRunnerRecoveryPlan(jobKey, recoveryPlan);
+  return {
+    jobKey,
+    current,
+    recoveryPlan,
+    initialNextCheckAt: recoveryPlan.initialNextCheckAt ?? row.next_check_at ?? null,
+  };
+}
+
+async function restoreRow({ row, client, startRunner, ownerCount, now }) {
+  const restore = buildScheduledRestorePlan(row, now);
   const token = decryptRunnerToken(row, config.runnerTokenSecret);
   await startRunner({
-    jobKey: durableJobKey(row),
+    jobKey: restore.jobKey,
     ownerId: row.owner_id,
     userToken: token,
     channelId: row.channel_id,
@@ -56,7 +76,8 @@ async function restoreRow({ row, client, startRunner, ownerCount }) {
     scheduleId: row.id,
     accountId: row.account_id,
     username: row.username,
-    initialNextCheckAt: row.next_check_at,
+    initialNextCheckAt: restore.initialNextCheckAt,
+    recoveryPlan: restore.recoveryPlan,
   });
   return ownerCount + 1;
 }
@@ -71,6 +92,7 @@ export async function restoreScheduledRunnerRows(client, startRunner, {
   reconciliationRows = rows,
   existingAccountIds = [],
   existingOwnerCounts = new Map(),
+  now = new Date(),
 } = {}) {
   failOrphanedRecoveringStates(reconciliationRows);
   if (!rows.length) return { restored: 0, failed: 0 };
@@ -100,7 +122,7 @@ export async function restoreScheduledRunnerRows(client, startRunner, {
     }
 
     try {
-      const nextOwnerCount = await restoreRow({ row, client, startRunner, ownerCount });
+      const nextOwnerCount = await restoreRow({ row, client, startRunner, ownerCount, now });
       restored++;
       restoredByOwner.set(row.owner_id, nextOwnerCount);
       if (row.account_id) restoredAccounts.add(row.account_id);
