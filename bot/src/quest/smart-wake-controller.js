@@ -1,6 +1,6 @@
 import * as legacyRunner from '../discord-runner.js';
 import { getScheduledRunner } from '../scheduled-runner-store.js';
-import { authorizationFingerprint } from './rate-limit-coordinator.js';
+import { authorizationFingerprint } from './authorization-fingerprint.js';
 import { subscribeScheduleHints } from './schedule-hint-bus.js';
 import {
   getRunnerState,
@@ -16,9 +16,13 @@ let restartRunner = null;
 
 function hintState(reason) {
   if (reason.startsWith('claim:')) return RUNNER_STATE.CLAIMING;
+  if (reason === 'claim-retry') return RUNNER_STATE.WAITING_RETRY;
   if (reason.startsWith('enrollment:')) return RUNNER_STATE.WAITING_ENROLLMENT;
-  if (reason === 'retry') return RUNNER_STATE.WAITING_RETRY;
+  if (reason === 'rate-limit') return RUNNER_STATE.WAITING_RATE_LIMIT;
+  if (reason === 'retry' || reason === 'circuit-breaker') return RUNNER_STATE.WAITING_RETRY;
+  if (reason === 'progress-stall') return RUNNER_STATE.VERIFYING_PROGRESS;
   if (reason === 'verification') return RUNNER_STATE.VERIFYING_COMPLETION;
+  if (reason === 'recovery') return RUNNER_STATE.RECOVERING;
   return RUNNER_STATE.WAITING_SCHEDULE;
 }
 
@@ -33,6 +37,7 @@ function recordWakeFailure(jobKey, error) {
   transitionRunnerState(jobKey, RUNNER_STATE.FAILED, {
     lastError: error?.message ?? String(error),
     metadata: { stage: 'smart-wakeup' },
+    stateSource: 'smart-wakeup-failure',
   });
 }
 
@@ -57,6 +62,7 @@ async function restartSleepingRunner(args) {
   transitionRunnerState(args.jobKey, RUNNER_STATE.RECOVERING, {
     nextActionAt: new Date().toISOString(),
     metadata: { reason: 'smart-wakeup' },
+    stateSource: 'smart-wakeup',
   });
   const completion = active.done;
   legacyRunner.stopJob(args.ownerId, args.jobKey, { removeSchedule: false });
@@ -107,6 +113,7 @@ function scheduleSmartWake(args, hint) {
   transitionRunnerState(args.jobKey, hintState(hint.reason), {
     nextActionAt: hint.nextActionAt,
     metadata: { reason: hint.reason, priority: hint.priority },
+    stateSource: `schedule-hint:${hint.source ?? 'runner'}`,
   });
   installWakeTimer(args, hint, existing);
 }
