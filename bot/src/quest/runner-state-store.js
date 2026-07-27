@@ -420,7 +420,7 @@ export function prepareRunnerMutation(jobKey, {
   payload = null,
   stateSource = 'rate-limit-coordinator',
 } = {}) {
-  assertOptionalEnum(kind, VALID_MUTATION_KINDS, 'runner mutation kind');
+  if (!VALID_MUTATION_KINDS.has(kind)) throw new Error(`Unknown runner mutation kind: ${kind}`);
   const current = getRunnerState(jobKey);
   if (!current || TERMINAL_STATES.has(current.state)) return current;
   if (UNVERIFIED_MUTATION_STATUSES.has(current.mutation_status)) {
