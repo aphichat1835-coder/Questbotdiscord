@@ -139,9 +139,17 @@ jobs:
           exit "$status"
 
       - name: Run critical mutation safety gate
-        run: npm run test:mutation-safety
+        id: mutations
+        shell: bash
+        run: |
+          set +e
+          npm run test:mutation-safety 2>&1 | tee mutation-output.log
+          status=${PIPESTATUS[0]}
+          echo "exit_code=$status" >> "$GITHUB_OUTPUT"
+          exit "$status"
 
       - name: Confirm mutation gate restored all sources
+        if: always()
         working-directory: ${{ github.workspace }}
         run: git diff --exit-code
 
@@ -150,7 +158,9 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: bot-test-output-${{ github.run_id }}
-          path: bot/test-output.log
+          path: |
+            bot/test-output.log
+            bot/mutation-output.log
           if-no-files-found: error
           retention-days: 7
 
