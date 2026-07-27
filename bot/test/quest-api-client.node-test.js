@@ -2,6 +2,7 @@ import './setup-env.js';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  buildDiscordApiUrl,
   buildDiscordUserHeaders,
   claimQuestRequest,
   DISCORD_API_BASE,
@@ -52,6 +53,34 @@ test('discordFetch sends Quest traffic to v10 without relying on runtime rewriti
     url: 'https://discord.com/api/v10/users/@me',
     method: 'GET',
   }]);
+});
+
+test('API URL builder rejects authority, query, fragment and traversal injection', () => {
+  assert.equal(String(buildDiscordApiUrl('/users/@me')), 'https://discord.com/api/v10/users/@me');
+  for (const unsafePath of [
+    '//attacker.example/quests',
+    '/../users/@me',
+    '/%2e%2e/users/@me',
+    '/users/@me?redirect=https://attacker.example',
+    '/users/@me#fragment',
+    '/users\\@me',
+  ]) {
+    assert.throws(() => buildDiscordApiUrl(unsafePath), TypeError);
+  }
+});
+
+test('external Quest identifiers are encoded as one URL path segment', async () => {
+  let requestUrl = null;
+  globalThis.fetch = async (url) => {
+    requestUrl = String(url);
+    return new Response('{}', { status: 200 });
+  };
+
+  await enrollQuestRequest('fixture-token', 'quest/../../escape?next=https://attacker.example');
+  assert.equal(
+    requestUrl,
+    'https://discord.com/api/v10/quests/quest%2F..%2F..%2Fescape%3Fnext%3Dhttps%3A%2F%2Fattacker.example/enroll',
+  );
 });
 
 test('Quest endpoint fallback accepts an empty first endpoint and populated second endpoint', async () => {
