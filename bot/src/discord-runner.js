@@ -390,7 +390,18 @@ async function throwQuestEndpointFailure({ signal, fatalError, lastError }) {
 }
 
 async function selectQuestPayload(token, signal) {
-  return fetchQuestPayload(token, signal);
+  try {
+    return await fetchQuestPayload(token, signal);
+  } catch (error) {
+    if (isAbortFailure(error, signal)) throw abortFailure();
+    if (error instanceof QuestCompatibilityError) {
+      recordQuestError(error);
+      await reportCriticalError('Quest API compatibility', error);
+    } else if (isFatalAuthError(error)) {
+      recordQuestError(error);
+    }
+    throw error;
+  }
 }
 
 async function normalizeQuestPayload(payload) {
