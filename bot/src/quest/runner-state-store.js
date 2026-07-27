@@ -59,6 +59,12 @@ const VALID_STATES = new Set(Object.values(RUNNER_STATE));
 const VALID_MUTATION_KINDS = new Set(Object.values(RUNNER_MUTATION_KIND));
 const VALID_MUTATION_STATUSES = new Set(Object.values(RUNNER_MUTATION_STATUS));
 const VALID_ERROR_CATEGORIES = new Set(Object.values(RUNNER_ERROR_CATEGORY));
+const UNVERIFIED_MUTATION_STATUSES = new Set([
+  RUNNER_MUTATION_STATUS.PREPARED,
+  RUNNER_MUTATION_STATUS.IN_FLIGHT,
+  RUNNER_MUTATION_STATUS.ACCEPTED,
+  RUNNER_MUTATION_STATUS.UNCERTAIN,
+]);
 const TERMINAL_STATES = new Set([
   RUNNER_STATE.STOPPED,
   RUNNER_STATE.COMPLETED,
@@ -67,6 +73,17 @@ const TERMINAL_STATES = new Set([
 const ACTIVE_STATES = [...VALID_STATES].filter((state) => !TERMINAL_STATES.has(state));
 const ACTIVE_STATE_PLACEHOLDERS = ACTIVE_STATES.map(() => '?').join(', ');
 const CHECKPOINT_VERSION = 2;
+
+export class RunnerMutationPendingVerificationError extends Error {
+  constructor(jobKey, current) {
+    super(`Runner ${jobKey} has an unverified ${current?.mutation_kind ?? 'unknown'} mutation`);
+    this.name = 'RunnerMutationPendingVerificationError';
+    this.code = 'RUNNER_MUTATION_REQUIRES_VERIFICATION';
+    this.jobKey = jobKey;
+    this.mutationKind = current?.mutation_kind ?? null;
+    this.mutationStatus = current?.mutation_status ?? null;
+  }
+}
 
 const ADDITIVE_COLUMNS = Object.freeze({
   checkpoint_version: `INTEGER NOT NULL DEFAULT ${CHECKPOINT_VERSION}`,
@@ -406,6 +423,9 @@ export function prepareRunnerMutation(jobKey, {
   assertOptionalEnum(kind, VALID_MUTATION_KINDS, 'runner mutation kind');
   const current = getRunnerState(jobKey);
   if (!current || TERMINAL_STATES.has(current.state)) return current;
+  if (UNVERIFIED_MUTATION_STATUSES.has(current.mutation_status)) {
+    throw new RunnerMutationPendingVerificationError(jobKey, current);
+  }
   return transitionRunnerState(jobKey, mutationRunState(kind), {
     questId: questId ?? current.quest_id,
     questName: questName ?? current.quest_name,
@@ -556,6 +576,7 @@ export function markInterruptedRunnerStates(now = new Date(), {
         next_action_at = ?,
         completed_at = NULL,
         last_error = 'Process restarted before the previous lifecycle completed',
+        error_category = ?,
         state_source = 'restart-reconciliation',
         updated_at = datetime('now')
     WHERE mode = 'scheduled'
@@ -579,6 +600,7 @@ export function markInterruptedRunnerStates(now = new Date(), {
       changed += markScheduled.run(
         RUNNER_STATE.RECOVERING,
         nextActionAt,
+        RUNNER_ERROR_CATEGORY.ABORTED,
         ...ACTIVE_STATES,
       ).changes;
     }
