@@ -88,16 +88,26 @@ test('uncertain mutation records error category without losing checkpoint detail
   assert.equal(state.retry_count, 1);
 });
 
-test('additive migration upgrades an old runner_states table without deleting rows', () => {
+test('additive migration upgrades the previous runner_states schema without deleting rows', () => {
   const database = new Database(':memory:');
   database.exec(`
     CREATE TABLE runner_states (
       job_key TEXT PRIMARY KEY,
       owner_id TEXT NOT NULL,
+      account_id TEXT,
+      username TEXT,
       mode TEXT NOT NULL,
+      schedule_id INTEGER,
       state TEXT NOT NULL,
-      started_at TEXT,
-      updated_at TEXT,
+      quest_id TEXT,
+      quest_name TEXT,
+      progress REAL,
+      next_action_at TEXT,
+      retry_count INTEGER NOT NULL DEFAULT 0,
+      last_error TEXT,
+      metadata_json TEXT,
+      started_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
       completed_at TEXT
     );
     INSERT INTO runner_states (job_key, owner_id, mode, state)
