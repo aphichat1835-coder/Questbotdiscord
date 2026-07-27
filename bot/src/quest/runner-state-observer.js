@@ -2,6 +2,7 @@ import { listJobs } from '../discord-runner.js';
 import {
   beginRunnerState,
   getRunnerState,
+  RUNNER_MUTATION_STATUS,
   RUNNER_STATE,
   transitionRunnerState,
 } from './runner-state-store.js';
@@ -13,9 +14,15 @@ const SMART_WAKE_STATES = new Set([
   RUNNER_STATE.WAITING_ENROLLMENT,
   RUNNER_STATE.WAITING_RETRY,
   RUNNER_STATE.CLAIMING,
+  RUNNER_STATE.VERIFYING_ENROLLMENT,
   RUNNER_STATE.VERIFYING_PROGRESS,
   RUNNER_STATE.VERIFYING_COMPLETION,
   RUNNER_STATE.VERIFYING_CLAIM,
+  RUNNER_STATE.RECOVERING,
+]);
+const GENERIC_OBSERVED_STATES = new Set([
+  RUNNER_STATE.RUNNING,
+  RUNNER_STATE.WAITING_SCHEDULE,
 ]);
 let observerTimer = null;
 
@@ -47,16 +54,28 @@ function questNameFromStatus(status) {
   return progress?.[1]?.trim().slice(0, 160) ?? null;
 }
 
-function observedTransition(job, current, observedState) {
-  const preserveSmartWake = Boolean(
-    current
-    && SMART_WAKE_STATES.has(current.state)
-    && observedState === RUNNER_STATE.WAITING_SCHEDULE,
+function hasActiveMutationCheckpoint(current) {
+  return Boolean(
+    current?.mutation_status
+    && ![RUNNER_MUTATION_STATUS.NONE, RUNNER_MUTATION_STATUS.VERIFIED].includes(
+      current.mutation_status,
+    ),
   );
-  const state = preserveSmartWake ? current.state : observedState;
+}
+
+function preserveDirectState(current, observedState) {
+  if (!current || !GENERIC_OBSERVED_STATES.has(observedState)) return false;
+  if (SMART_WAKE_STATES.has(current.state)) return true;
+  if (hasActiveMutationCheckpoint(current)) return true;
+  return Boolean(current.state_source && current.state_source !== 'legacy-observer');
+}
+
+function observedTransition(job, current, observedState) {
+  const preserve = preserveDirectState(current, observedState);
+  const state = preserve ? current.state : observedState;
   const questName = questNameFromStatus(job.status);
   const progress = progressFromStatus(job.status);
-  const metadata = preserveSmartWake
+  const metadata = preserve
     ? {
         ...(current.metadata ?? {}),
         lifecycle: job.lifecycle,
@@ -75,11 +94,14 @@ function observedTransition(job, current, observedState) {
       ...(job.username != null ? { username: job.username } : {}),
       ...(questName != null ? { questName } : {}),
       ...(progress != null ? { progress } : {}),
-      nextActionAt: preserveSmartWake ? current.next_action_at : job.nextCheckAt,
-      lastError: state === RUNNER_STATE.FAILED
-        ? String(job.status ?? '').slice(0, 500)
-        : null,
+      nextActionAt: preserve ? current.next_action_at : job.nextCheckAt,
+      lastError: preserve
+        ? current.last_error
+        : state === RUNNER_STATE.FAILED
+          ? String(job.status ?? '').slice(0, 500)
+          : null,
       metadata,
+      stateSource: preserve ? current.state_source : 'legacy-observer',
     },
   };
 }
@@ -98,6 +120,7 @@ export function syncRunnerState(job) {
       state: RUNNER_STATE.RUNNING,
       nextActionAt: job.nextCheckAt,
       metadata: { source: 'observer' },
+      stateSource: 'legacy-observer',
     });
   }
 
