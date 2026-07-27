@@ -1,0 +1,68 @@
+--- a/bot/src/discord-runner.js
++++ b/bot/src/discord-runner.js
+@@ -53,6 +53,12 @@
+   normalizeQuest as normalizeQuestV2,
+   normalizeQuestPayload as normalizeQuestPayloadV2,
+ } from './quest/schema/normalizer.js';
++import {
++  claimRetryAt as durableClaimRetryAt,
++  CLAIM_RETRY_REASON,
++  classifyClaimRetry,
++  persistClaimRetry,
++} from './quest/claim-retry-policy.js';
+ import {
+   executeQuestExecutor,
+   selectQuestExecutor,
+@@ -927,7 +933,10 @@
+   }
+ 
+   async function claimSilently(quest) {
+-    if ((claimRetryAt.get(quest.id) ?? 0) > Date.now()) return false;
++    const retryAt = Math.max(
++      claimRetryAt.get(quest.id) ?? 0,
++      durableClaimRetryAt(jobKey) ?? 0,
++    );
++    if (retryAt > Date.now()) return false;
+     transitionCurrentRunner(RUNNER_STATE.CLAIMING, {
+       questId: quest.id,
+       questName: quest.name,
+@@ -938,7 +947,10 @@
+     });
+     const platform = selectQuestClaimPlatform(quest);
+     if (platform == null) {
+-      claimRetryAt.set(quest.id, Date.now() + CLAIM_LONG_RETRY_DELAY_MS);
++      const retry = classifyClaimRetry(null, { platformAmbiguous: true });
++      claimRetryAt.set(quest.id, Date.now() + retry.delayMs);
++      persistClaimRetry(jobKey, quest, retry);
+       return false;
+     }
+@@ -961,20 +973,26 @@
+           serverProgressSeconds: claimed.progressSecs,
+         });
+       } else {
+-        claimRetryAt.set(quest.id, Date.now() + CLAIM_RETRY_DELAY_MS);
++        const retry = {
++          reason: CLAIM_RETRY_REASON.VERIFICATION_ABSENT,
++          delayMs: CLAIM_RETRY_DELAY_MS,
++          error: new Error('Discord has not confirmed claimed_at after verification'),
++        };
++        claimRetryAt.set(quest.id, Date.now() + retry.delayMs);
++        persistClaimRetry(jobKey, quest, retry);
+       }
+       return Boolean(claimed);
+     } catch (error) {
+       if (isAbortFailure(error, signal)) throw abortFailure();
+       rethrowFatalAuth(error);
+-      const retryDelay = isCaptchaChallenge(error) || error?.status === 400
+-        ? CLAIM_LONG_RETRY_DELAY_MS
+-        : CLAIM_RETRY_DELAY_MS;
++      const retry = classifyClaimRetry(error);
+       claimRetryAt.set(
+         quest.id,
+-        Date.now() + retryDelay,
++        Date.now() + retry.delayMs,
+       );
++      persistClaimRetry(jobKey, quest, retry);
+       return false;
+     }
+   }
