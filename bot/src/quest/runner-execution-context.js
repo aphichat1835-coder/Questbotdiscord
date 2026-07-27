@@ -14,6 +14,7 @@ function publicContext(context) {
     username: context.username ?? null,
     mode: context.mode ?? null,
     scheduleId: context.scheduleId ?? null,
+    workerHolder: context.workerHolder ?? null,
     accountKey: context.accountKey,
   };
 }
@@ -27,6 +28,7 @@ export function createRunnerExecutionContext(args) {
     username: args.username ?? null,
     mode: args.mode ?? 'oneshot',
     scheduleId: args.scheduleId ?? null,
+    workerHolder: args.workerHolder ?? null,
     accountKey: args.userToken ? authorizationFingerprint(args.userToken) : null,
   });
 }
