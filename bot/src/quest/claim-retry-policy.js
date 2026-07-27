@@ -13,6 +13,8 @@ export const CLAIM_LONG_RETRY_DELAY_MS = 24 * 60 * 60 * 1000;
 export const CLAIM_RETRY_REASON = Object.freeze({
   CAPTCHA: 'CAPTCHA',
   PLATFORM_AMBIGUOUS: 'PLATFORM_AMBIGUOUS',
+  REQUEST_REJECTED: 'REQUEST_REJECTED',
+  RATE_LIMITED: 'RATE_LIMITED',
   VERIFICATION_ABSENT: 'VERIFICATION_ABSENT',
   TEMPORARY_API_ERROR: 'TEMPORARY_API_ERROR',
 });
@@ -46,17 +48,43 @@ export function classifyClaimRetry(error, { platformAmbiguous = false } = {}) {
       ),
     };
   }
-  if (isCaptchaChallengeData(error?.data) || error?.status === 400) {
+
+  if (isCaptchaChallengeData(error?.data)) {
     return {
       reason: CLAIM_RETRY_REASON.CAPTCHA,
       delayMs: CLAIM_LONG_RETRY_DELAY_MS,
       error: retryError(
         CLAIM_RETRY_REASON.CAPTCHA,
-        error?.message ?? 'Discord claim requires a long retry cooldown',
+        error?.message ?? 'Discord claim requires a CAPTCHA cooldown',
         error?.status,
       ),
     };
   }
+
+  if (error?.status === 400) {
+    return {
+      reason: CLAIM_RETRY_REASON.REQUEST_REJECTED,
+      delayMs: CLAIM_RETRY_DELAY_MS,
+      error: retryError(
+        CLAIM_RETRY_REASON.REQUEST_REJECTED,
+        error?.message ?? 'Discord rejected the claim request without a CAPTCHA challenge',
+        error.status,
+      ),
+    };
+  }
+
+  if (error?.status === 429) {
+    return {
+      reason: CLAIM_RETRY_REASON.RATE_LIMITED,
+      delayMs: CLAIM_RETRY_DELAY_MS,
+      error: retryError(
+        CLAIM_RETRY_REASON.RATE_LIMITED,
+        error?.message ?? 'Discord rate limited the claim request',
+        error.status,
+      ),
+    };
+  }
+
   return {
     reason: CLAIM_RETRY_REASON.TEMPORARY_API_ERROR,
     delayMs: CLAIM_RETRY_DELAY_MS,
@@ -93,7 +121,9 @@ export function persistClaimRetry(jobKey, quest, {
       ? RUNNER_ERROR_CATEGORY.RATE_LIMIT
       : Number(error?.status) >= 500
         ? RUNNER_ERROR_CATEGORY.API_5XX
-        : RUNNER_ERROR_CATEGORY.VERIFICATION,
+        : Number(error?.status) >= 400
+          ? RUNNER_ERROR_CATEGORY.API_4XX
+          : RUNNER_ERROR_CATEGORY.VERIFICATION,
     metadata: {
       ...(current.metadata ?? {}),
       claimRetryReason: reason,
