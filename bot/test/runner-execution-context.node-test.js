@@ -44,3 +44,12 @@ test('tokenless test contexts do not collide through the anonymous fingerprint',
   first.release();
   second.release();
 });
+
+test('every missing authorization form uses one anonymous fingerprint bucket', () => {
+  const expected = authorizationFingerprint('anonymous');
+  assert.equal(authorizationFingerprint(), expected);
+  assert.equal(authorizationFingerprint(null), expected);
+  assert.equal(authorizationFingerprint({}), expected);
+  assert.equal(authorizationFingerprint(new Headers()), expected);
+  assert.equal(authorizationFingerprint(''), expected);
+});
