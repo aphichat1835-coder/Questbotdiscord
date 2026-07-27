@@ -63,16 +63,20 @@ async function restartSleepingRunner(args) {
   }
 
   restartingJobs.add(args.jobKey);
-  transitionRunnerState(args.jobKey, RUNNER_STATE.RECOVERING, {
-    nextActionAt: new Date().toISOString(),
-    metadata: { reason: 'smart-wakeup' },
-    stateSource: 'smart-wakeup',
-  });
-  const completion = active.done;
-  stopActiveJob(args.ownerId, args.jobKey, { removeSchedule: false });
-  await Promise.resolve(completion).catch(() => undefined);
-
   try {
+    const completion = active.done;
+    const stopped = stopActiveJob(args.ownerId, args.jobKey, { removeSchedule: false });
+    if (!stopped) return false;
+
+    transitionRunnerState(args.jobKey, RUNNER_STATE.RECOVERING, {
+      nextActionAt: new Date().toISOString(),
+      metadata: { reason: 'smart-wakeup' },
+      stateSource: 'smart-wakeup',
+    });
+    await Promise.resolve(completion).catch(() => undefined);
+
+    const replacement = readActiveJob(args.jobKey);
+    if (replacement && replacement !== active) return false;
     if (!readScheduledRunner(args.scheduleId)) return false;
     await restartRunner({ ...args, initialNextCheckAt: null });
     return true;
