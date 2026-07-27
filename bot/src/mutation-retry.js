@@ -9,6 +9,12 @@ import {
 } from './quest/runner-state-store.js';
 
 const MAX_RETRY_DELAY_MS = 60_000;
+const NON_NETWORK_GUARD_CODES = new Set([
+  'RUNNER_CHECKPOINT_FAILED',
+  'RUNNER_MUTATION_CHECKPOINT_FAILED',
+  'RUNNER_MUTATION_REQUIRES_VERIFICATION',
+  'RUNNER_OWNERSHIP_LOST',
+]);
 
 export class RunnerCheckpointError extends Error {
   constructor(stage, cause) {
@@ -72,6 +78,7 @@ function markControlledRetry() {
 export function isUncertainMutationFailure(error) {
   if (!error) return false;
   if (error.name === 'AbortError' || error.message === 'aborted') return false;
+  if (NON_NETWORK_GUARD_CODES.has(error.code)) return false;
   if (!Number.isInteger(error.status)) return true;
   return error.status === 429 || error.status >= 500;
 }
