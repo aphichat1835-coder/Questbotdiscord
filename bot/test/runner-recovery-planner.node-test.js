@@ -68,6 +68,21 @@ test('uncertain mutation restarts in verification state before any resend', () =
   assert.equal(state.metadata.recoveryAction, RUNNER_RECOVERY_ACTION.VERIFY_MUTATION);
 });
 
+test('uncertain checkpoint is verified even when the persisted runner state is still running', () => {
+  const plan = planRunnerRecovery({
+    mode: 'scheduled',
+    state: RUNNER_STATE.RUNNING,
+    mutation_kind: RUNNER_MUTATION_KIND.CLAIM,
+    mutation_status: RUNNER_MUTATION_STATUS.UNCERTAIN,
+    quest_id: 'quest-crash-before-state-transition',
+    next_action_at: null,
+  });
+
+  assert.equal(plan.action, RUNNER_RECOVERY_ACTION.VERIFY_MUTATION);
+  assert.equal(plan.reason, 'verify-claim');
+  assert.equal(plan.targetState, RUNNER_STATE.VERIFYING_CLAIM);
+});
+
 test('verified mutation metadata never re-enters uncertain mutation recovery', () => {
   beginRunnerState({
     jobKey: 'scheduled:recovery-verified',
