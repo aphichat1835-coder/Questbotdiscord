@@ -504,6 +504,11 @@ export class DiscordRateLimitCoordinator {
   async handleResponse(task, response) {
     try {
       await this.updateRateLimitState(task, response);
+    } catch {
+      this.stats.bookkeepingErrors++;
+    }
+
+    try {
       this.updateCircuitFromResponse(task, response);
     } catch {
       this.stats.bookkeepingErrors++;
