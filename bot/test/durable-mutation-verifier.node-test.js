@@ -7,7 +7,6 @@ import {
 } from '../src/quest/durable-mutation-verifier.js';
 import {
   beginRunnerState,
-  clearRunnerStatesForTests,
   getRunnerState,
   prepareRunnerMutation,
   RUNNER_MUTATION_KIND,
@@ -15,11 +14,10 @@ import {
   RUNNER_STATE,
 } from '../src/quest/runner-state-store.js';
 
-test.beforeEach(() => clearRunnerStatesForTests());
-
 test('video recovery verifies normalized server progress at the persisted timestamp', () => {
-  beginRunnerState({ jobKey: 'scheduled:video', ownerId: 'owner-1', mode: 'scheduled' });
-  prepareRunnerMutation('scheduled:video', {
+  const jobKey = 'scheduled:verifier-video';
+  beginRunnerState({ jobKey, ownerId: 'owner-verifier', mode: 'scheduled' });
+  prepareRunnerMutation(jobKey, {
     kind: RUNNER_MUTATION_KIND.VIDEO_PROGRESS,
     questId: 'quest-video',
     payload: { timestamp: 30 },
@@ -31,22 +29,23 @@ test('video recovery verifies normalized server progress at the persisted timest
     completed: false,
   };
 
-  assert.equal(isRunnerMutationVerifiedByQuest(getRunnerState('scheduled:video'), quest), true);
-  const result = verifyRunnerMutationFromQuests('scheduled:video', [quest]);
+  assert.equal(isRunnerMutationVerifiedByQuest(getRunnerState(jobKey), quest), true);
+  const result = verifyRunnerMutationFromQuests(jobKey, [quest]);
   assert.equal(result.verified, true);
-  const state = getRunnerState('scheduled:video');
+  const state = getRunnerState(jobKey);
   assert.equal(state.mutation_status, RUNNER_MUTATION_STATUS.VERIFIED);
   assert.equal(state.server_progress_seconds, 30);
 });
 
 test('absent mutation evidence clears the uncertain checkpoint before execution resumes', () => {
-  beginRunnerState({ jobKey: 'scheduled:claim', ownerId: 'owner-1', mode: 'scheduled' });
-  prepareRunnerMutation('scheduled:claim', {
+  const jobKey = 'scheduled:verifier-claim';
+  beginRunnerState({ jobKey, ownerId: 'owner-verifier', mode: 'scheduled' });
+  prepareRunnerMutation(jobKey, {
     kind: RUNNER_MUTATION_KIND.CLAIM,
     questId: 'quest-claim',
     payload: { platform: 4 },
   });
-  const result = verifyRunnerMutationFromQuests('scheduled:claim', [{
+  const result = verifyRunnerMutationFromQuests(jobKey, [{
     id: 'quest-claim',
     claimed: false,
     completed: true,
@@ -54,7 +53,7 @@ test('absent mutation evidence clears the uncertain checkpoint before execution 
 
   assert.equal(result.checked, true);
   assert.equal(result.verified, false);
-  const state = getRunnerState('scheduled:claim');
+  const state = getRunnerState(jobKey);
   assert.equal(state.state, RUNNER_STATE.RUNNING);
   assert.equal(state.mutation_status, RUNNER_MUTATION_STATUS.NONE);
   assert.equal(state.mutation_kind, null);
