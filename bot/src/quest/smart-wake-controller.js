@@ -13,6 +13,9 @@ export const MAX_SMART_WAKE_TIMER_MS = 24 * 60 * 60 * 1000;
 const smartWakeups = new Map();
 const restartingJobs = new Set();
 let restartRunner = null;
+let readActiveJob = legacyRunner.getJob;
+let stopActiveJob = legacyRunner.stopJob;
+let readScheduledRunner = getScheduledRunner;
 
 function hintState(reason) {
   if (reason.startsWith('claim:')) return RUNNER_STATE.CLAIMING;
@@ -51,9 +54,9 @@ async function restartSleepingRunner(args) {
   if (typeof restartRunner !== 'function') {
     throw new Error('Smart wake restart handler is not configured');
   }
-  const active = legacyRunner.getJob(args.jobKey);
+  const active = readActiveJob(args.jobKey);
   if (!active || !runnerIsSleeping(active)) return false;
-  if (!getScheduledRunner(args.scheduleId)) {
+  if (!readScheduledRunner(args.scheduleId)) {
     clearSmartWake(args.jobKey);
     return false;
   }
@@ -65,11 +68,11 @@ async function restartSleepingRunner(args) {
     stateSource: 'smart-wakeup',
   });
   const completion = active.done;
-  legacyRunner.stopJob(args.ownerId, args.jobKey, { removeSchedule: false });
+  stopActiveJob(args.ownerId, args.jobKey, { removeSchedule: false });
   await Promise.resolve(completion).catch(() => undefined);
 
   try {
-    if (!getScheduledRunner(args.scheduleId)) return false;
+    if (!readScheduledRunner(args.scheduleId)) return false;
     await restartRunner({ ...args, initialNextCheckAt: null });
     return true;
   } finally {
@@ -104,7 +107,7 @@ function scheduleSmartWake(args, hint) {
   const at = Date.parse(hint.nextActionAt);
   if (!Number.isFinite(at)) return;
 
-  const active = legacyRunner.getJob(args.jobKey);
+  const active = readActiveJob(args.jobKey);
   const currentNextAt = Date.parse(active?.summary?.().nextCheckAt);
   if (Number.isFinite(currentNextAt) && currentNextAt <= at) return;
 
@@ -118,8 +121,15 @@ function scheduleSmartWake(args, hint) {
   installWakeTimer(args, hint, existing);
 }
 
-export function configureSmartWakeController(handler) {
+export function configureSmartWakeController(handler, {
+  getJob = legacyRunner.getJob,
+  stopJob = legacyRunner.stopJob,
+  getScheduled = getScheduledRunner,
+} = {}) {
   restartRunner = handler;
+  readActiveJob = getJob;
+  stopActiveJob = stopJob;
+  readScheduledRunner = getScheduled;
 }
 
 export function registerSmartWake(args) {
