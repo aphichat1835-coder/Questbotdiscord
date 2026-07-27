@@ -103,8 +103,11 @@ export function clearScheduleHint(accountKey, source) {
 export function subscribeScheduleHints(accountKey, listener) {
   if (!listeners.has(accountKey)) listeners.set(accountKey, new Set());
   listeners.get(accountKey).add(listener);
-  const latest = selectEffectiveScheduleHint(accountKey);
-  if (latest) queueMicrotask(() => notifyListener(listener, latest));
+  queueMicrotask(() => {
+    if (!listeners.get(accountKey)?.has(listener)) return;
+    const latest = selectEffectiveScheduleHint(accountKey);
+    if (latest) notifyListener(listener, latest);
+  });
   return () => {
     const accountListeners = listeners.get(accountKey);
     accountListeners?.delete(listener);
