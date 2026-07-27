@@ -157,7 +157,7 @@ export async function restoreScheduledRunners(client) {
 
   markInterruptedRunnerStates(new Date(), {
     includeOneShot: config.processRole !== 'worker',
-    includeScheduled: true,
+    includeScheduled: false,
   });
   const result = await restoreScheduledRunnerRows(client, startLocalRunner);
   syncAllRunnerStates();
