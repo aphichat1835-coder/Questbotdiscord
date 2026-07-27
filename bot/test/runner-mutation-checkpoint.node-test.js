@@ -4,7 +4,6 @@ import Database from 'better-sqlite3';
 import test from 'node:test';
 import {
   beginRunnerState,
-  clearRunnerStatesForTests,
   ensureRunnerStateSchema,
   getRunnerState,
   incrementRunnerRetry,
@@ -18,8 +17,6 @@ import {
   RUNNER_MUTATION_STATUS,
   RUNNER_STATE,
 } from '../src/quest/runner-state-store.js';
-
-test.beforeEach(() => clearRunnerStatesForTests());
 
 test('durable mutation checkpoint follows prepared through verified lifecycle', () => {
   beginRunnerState({
