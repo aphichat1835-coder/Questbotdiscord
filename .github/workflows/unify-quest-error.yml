@@ -1,0 +1,62 @@
+name: Unify Quest compatibility error
+
+permissions:
+  contents: write
+
+on:
+  push:
+    branches: [aa.1]
+    paths:
+      - '.github/workflows/unify-quest-error.yml'
+  workflow_dispatch:
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout aa.1
+        uses: actions/checkout@v6
+        with:
+          ref: aa.1
+          fetch-depth: 0
+
+      - name: Use the canonical compatibility error class
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('bot/src/discord-runner.js')
+          source = path.read_text()
+          normalizer_import = """import {
+            normalizeQuest as normalizeQuestV2,
+            normalizeQuestPayload as normalizeQuestPayloadV2,
+          } from './quest/schema/normalizer.js';
+          """
+          replacement_import = normalizer_import + "import { QuestCompatibilityError } from './quest/schema/compatibility.js';\n"
+          local_class = """export class QuestCompatibilityError extends Error {
+            constructor(message) {
+              super(message);
+              this.name = 'QuestCompatibilityError';
+            }
+          }
+          """
+          if source.count(normalizer_import) != 1:
+              raise SystemExit('normalizer import block mismatch')
+          if source.count(local_class) != 1:
+              raise SystemExit('local compatibility class block mismatch')
+          source = source.replace(normalizer_import, replacement_import, 1)
+          source = source.replace(local_class, 'export { QuestCompatibilityError };\n', 1)
+          path.write_text(source)
+          PY
+          node --check bot/src/discord-runner.js
+
+      - name: Commit canonical error wiring
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add bot/src/discord-runner.js
+          git commit -m 'refactor(quest): share compatibility error contract'
+          git push origin HEAD:aa.1
