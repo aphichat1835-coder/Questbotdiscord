@@ -1,15 +1,13 @@
 import { authorizationFingerprint } from './authorization-fingerprint.js';
+import { verifyRunnerMutationFromQuests } from './durable-mutation-verifier.js';
 import { resolveRunnerJobKey } from './runner-execution-context.js';
 import {
-  getRunnerState,
   markRunnerMutationAccepted,
   markRunnerMutationFailed,
   markRunnerMutationInFlight,
   markRunnerMutationUncertain,
-  markRunnerMutationVerified,
   prepareRunnerMutation,
   RUNNER_MUTATION_KIND,
-  RUNNER_MUTATION_STATUS,
   RUNNER_STATE,
   transitionRunnerState,
 } from './runner-state-store.js';
@@ -19,6 +17,7 @@ import { publishScheduleHint } from './schedule-hint-bus.js';
 export { authorizationFingerprint } from './authorization-fingerprint.js';
 
 const MAX_RESET_DELAY_MS = 60_000;
+const RATE_LIMIT_FALLBACK_MS = 1000;
 const DEFAULT_MAX_CONCURRENCY = 4;
 const DEFAULT_CIRCUIT_FAILURE_THRESHOLD = 3;
 const DEFAULT_CIRCUIT_OPEN_MS = 30_000;
@@ -28,12 +27,26 @@ const CIRCUIT_STATE = Object.freeze({
   OPEN: 'OPEN',
   HALF_OPEN: 'HALF_OPEN',
 });
-const VERIFYABLE_MUTATION_STATUSES = new Set([
-  RUNNER_MUTATION_STATUS.PREPARED,
-  RUNNER_MUTATION_STATUS.IN_FLIGHT,
-  RUNNER_MUTATION_STATUS.ACCEPTED,
-  RUNNER_MUTATION_STATUS.UNCERTAIN,
-]);
+
+export class RunnerMutationCheckpointError extends Error {
+  constructor(stage, cause) {
+    super(`Runner mutation checkpoint failed during ${stage}: ${cause?.message ?? 'unknown storage error'}`, {
+      cause,
+    });
+    this.name = 'RunnerMutationCheckpointError';
+    this.code = 'RUNNER_MUTATION_CHECKPOINT_FAILED';
+    this.stage = stage;
+  }
+}
+
+export class RunnerMutationBlockedError extends Error {
+  constructor(jobKey) {
+    super(`Runner ${jobKey} must fetch fresh Quest state before another mutation`);
+    this.name = 'RunnerMutationBlockedError';
+    this.code = 'RUNNER_MUTATION_REQUIRES_VERIFICATION';
+    this.jobKey = jobKey;
+  }
+}
 
 function headerNumber(headers, name) {
   const value = Number.parseFloat(headers?.get?.(name));
@@ -70,7 +83,7 @@ async function retryDelayMs(response) {
       return Math.min(MAX_RESET_DELAY_MS, Math.ceil(bodySeconds * 1000));
     }
   } catch {}
-  return 0;
+  return response.status === 429 ? RATE_LIMIT_FALLBACK_MS : 0;
 }
 
 function questArray(candidate) {
@@ -130,70 +143,12 @@ function mutationFromRequest(url, method, options) {
   };
 }
 
-function maxNumericProgress(value) {
-  if (typeof value === 'number' && Number.isFinite(value)) return value;
-  if (typeof value === 'string') {
-    const parsed = Number.parseFloat(value);
-    return Number.isFinite(parsed) ? parsed : 0;
-  }
-  if (!value || typeof value !== 'object') return 0;
-  if (Array.isArray(value)) return Math.max(0, ...value.map(maxNumericProgress));
-  return Math.max(0, ...Object.values(value).map((entry) => (
-    entry && typeof entry === 'object' && Object.hasOwn(entry, 'value')
-      ? maxNumericProgress(entry.value)
-      : maxNumericProgress(entry)
-  )));
-}
-
-function rawQuestProgress(raw) {
-  const userStatus = raw?.user_status ?? {};
-  return Math.max(
-    maxNumericProgress(userStatus.progress),
-    Number(userStatus.stream_progress_seconds) || 0,
-  );
-}
-
-function mutationVerifiedByQuest(state, rawQuest) {
-  if (!state?.mutation_kind || !rawQuest) return false;
-  const status = rawQuest.user_status ?? {};
-  if (state.mutation_kind === RUNNER_MUTATION_KIND.ENROLL) return Boolean(status.enrolled_at);
-  if (state.mutation_kind === RUNNER_MUTATION_KIND.CLAIM) {
-    return Boolean(status.claimed_at) || status.orb_quantity_claimed != null;
-  }
-  if (status.completed_at) return true;
-  const progress = rawQuestProgress(rawQuest);
-  if (state.mutation_kind === RUNNER_MUTATION_KIND.VIDEO_PROGRESS) {
-    const target = Number(state.mutation_payload?.timestamp);
-    return Number.isFinite(target) && progress >= Math.floor(target);
-  }
-  if (state.mutation_kind === RUNNER_MUTATION_KIND.HEARTBEAT) {
-    return progress > Number(state.server_progress_seconds ?? 0);
-  }
-  return false;
-}
-
-function verifyDurableMutation(task, quests) {
-  if (!task.jobKey) return false;
-  const state = getRunnerState(task.jobKey);
-  if (!state?.quest_id || !VERIFYABLE_MUTATION_STATUSES.has(state.mutation_status)) return false;
-  const rawQuest = quests.find((quest) => String(quest?.id) === String(state.quest_id));
-  if (!mutationVerifiedByQuest(state, rawQuest)) return false;
-  const serverProgressSeconds = rawQuestProgress(rawQuest);
-  markRunnerMutationVerified(task.jobKey, {
-    serverProgressSeconds,
-    state: rawQuest?.user_status?.completed_at
-      ? RUNNER_STATE.VERIFYING_COMPLETION
-      : RUNNER_STATE.RUNNING,
-  });
-  return true;
-}
-
 async function publishQuestSchedule(task, response) {
   if (!response.ok || !isQuestListRequest(task)) return false;
   const candidate = await response.clone().json().catch(() => null);
   const quests = questArray(candidate);
   if (!quests) return false;
-  verifyDurableMutation(task, quests);
+  if (task.jobKey) verifyRunnerMutationFromQuests(task.jobKey, quests);
   const enrollmentBlockedUntil = candidate?.quest_enrollment_blocked_until ?? null;
   const hint = chooseNextQuestAction({
     quests: quests.map((quest) => schedulingQuest(quest, enrollmentBlockedUntil)),
@@ -206,6 +161,12 @@ function responseError(response) {
   const error = new Error(`Discord API ${response.status}`);
   error.status = response.status;
   return error;
+}
+
+function checkpointError(stage, error) {
+  return error instanceof RunnerMutationCheckpointError
+    ? error
+    : new RunnerMutationCheckpointError(stage, error);
 }
 
 export class DiscordRateLimitCoordinator {
@@ -231,6 +192,7 @@ export class DiscordRateLimitCoordinator {
     this.accountBucketResetAt = new Map();
     this.globalResetAt = 0;
     this.circuits = new Map();
+    this.blockedMutationJobs = new Set();
     this.wakeupTimer = null;
     this.stats = {
       queued: 0,
@@ -265,11 +227,16 @@ export class DiscordRateLimitCoordinator {
       mutation,
     };
 
+    if (task.jobKey && mutation && this.blockedMutationJobs.has(task.jobKey)) {
+      return Promise.reject(new RunnerMutationBlockedError(task.jobKey));
+    }
+
     if (task.jobKey && mutation) {
       try {
         prepareRunnerMutation(task.jobKey, mutation);
-      } catch {
+      } catch (error) {
         this.stats.checkpointErrors++;
+        return Promise.reject(checkpointError('prepare', error));
       }
     }
 
@@ -301,7 +268,9 @@ export class DiscordRateLimitCoordinator {
   circuitBlockedUntil(task) {
     const circuit = this.circuits.get(this.circuitKey(task));
     if (!circuit || circuit.state === CIRCUIT_STATE.CLOSED) return 0;
-    if (circuit.state === CIRCUIT_STATE.HALF_OPEN && circuit.probeActive) return Number.POSITIVE_INFINITY;
+    if (circuit.state === CIRCUIT_STATE.HALF_OPEN && circuit.probeActive) {
+      return Number.POSITIVE_INFINITY;
+    }
     return circuit.openUntil ?? 0;
   }
 
@@ -374,11 +343,17 @@ export class DiscordRateLimitCoordinator {
     const bucket = response.headers?.get?.('x-ratelimit-bucket');
     if (bucket) this.routeBuckets.set(task.route, bucket);
     const resolvedBucket = bucket ?? this.routeBuckets.get(task.route) ?? task.route;
-    const scope = String(response.headers?.get?.('x-ratelimit-scope') ?? this.routeScopes.get(task.route) ?? 'shared')
-      .toLowerCase();
+    const scope = String(
+      response.headers?.get?.('x-ratelimit-scope')
+        ?? this.routeScopes.get(task.route)
+        ?? 'shared',
+    ).toLowerCase();
     if (['user', 'shared', 'global'].includes(scope)) this.routeScopes.set(task.route, scope);
     const remaining = headerNumber(response.headers, 'x-ratelimit-remaining');
-    const delay = await retryDelayMs(response);
+    const parsedDelay = await retryDelayMs(response);
+    const delay = remaining === 0 && parsedDelay === 0
+      ? RATE_LIMIT_FALLBACK_MS
+      : parsedDelay;
 
     if (remaining === 0 && delay > 0) this.setBucketReset(task, resolvedBucket, delay, scope);
 
@@ -389,7 +364,7 @@ export class DiscordRateLimitCoordinator {
         String(response.headers?.get?.('x-ratelimit-global')).toLowerCase() === 'true'
         || scope === 'global'
       ) {
-        this.globalResetAt = this.now() + Math.max(1, delay);
+        this.globalResetAt = this.now() + Math.max(RATE_LIMIT_FALLBACK_MS, delay);
         this.stats.globalRateLimits++;
         publishScheduleHint(task.account, {
           nextActionAt: new Date(this.globalResetAt).toISOString(),
@@ -398,8 +373,13 @@ export class DiscordRateLimitCoordinator {
           source: 'rate-limit',
           expiresAt: new Date(this.globalResetAt + 60_000).toISOString(),
         });
-      } else if (delay > 0) {
-        this.setBucketReset(task, resolvedBucket, delay, scope);
+      } else {
+        this.setBucketReset(
+          task,
+          resolvedBucket,
+          Math.max(RATE_LIMIT_FALLBACK_MS, delay),
+          scope,
+        );
       }
     }
   }
@@ -440,7 +420,10 @@ export class DiscordRateLimitCoordinator {
       return;
     }
     const opens = previous.opens + 1;
-    const delay = Math.min(this.circuitMaxOpenMs, this.circuitOpenMs * (2 ** Math.max(0, opens - 1)));
+    const delay = Math.min(
+      this.circuitMaxOpenMs,
+      this.circuitOpenMs * (2 ** Math.max(0, opens - 1)),
+    );
     const openUntil = this.now() + delay;
     this.circuits.set(key, {
       state: CIRCUIT_STATE.OPEN,
@@ -482,7 +465,9 @@ export class DiscordRateLimitCoordinator {
   publishSchedule(task, response) {
     void publishQuestSchedule(task, response)
       .then((published) => {
-        if (published) this.stats.lastScheduleHintAt = new Date(this.now()).toISOString();
+        if (!published) return;
+        this.stats.lastScheduleHintAt = new Date(this.now()).toISOString();
+        if (task.jobKey) this.blockedMutationJobs.delete(task.jobKey);
       })
       .catch(() => {
         this.stats.scheduleHintErrors++;
@@ -493,10 +478,17 @@ export class DiscordRateLimitCoordinator {
     try {
       await this.updateRateLimitState(task, response);
       this.updateCircuitFromResponse(task, response);
-      this.updateMutationFromResponse(task, response);
     } catch {
       this.stats.bookkeepingErrors++;
     }
+
+    try {
+      this.updateMutationFromResponse(task, response);
+    } catch {
+      this.stats.checkpointErrors++;
+      if (task.jobKey && task.mutation) this.blockedMutationJobs.add(task.jobKey);
+    }
+
     try {
       this.publishSchedule(task, response);
     } catch {
@@ -508,26 +500,47 @@ export class DiscordRateLimitCoordinator {
   handleFailure(task, error) {
     try {
       this.recordCircuitFailure(task);
-      if (task.jobKey && task.mutation) markRunnerMutationUncertain(task.jobKey, error, new Date(this.now()));
     } catch {
-      this.stats.checkpointErrors++;
+      this.stats.bookkeepingErrors++;
+    }
+    if (task.jobKey && task.mutation) {
+      try {
+        markRunnerMutationUncertain(task.jobKey, error, new Date(this.now()));
+      } catch {
+        this.stats.checkpointErrors++;
+        this.blockedMutationJobs.add(task.jobKey);
+      }
     }
     task.reject(error);
+  }
+
+  finishTask(task) {
+    const circuit = this.circuits.get(this.circuitKey(task));
+    if (circuit?.state === CIRCUIT_STATE.HALF_OPEN) circuit.probeActive = false;
+    this.activeCount--;
+    this.activeAccounts.delete(task.account);
+    this.stats.active = this.activeCount;
+    this.stats.completed++;
+    this.pump();
   }
 
   run(task) {
     this.activeCount++;
     this.activeAccounts.add(task.account);
     this.enterHalfOpen(task);
+    this.stats.active = this.activeCount;
+    this.stats.queued = this.queue.length;
+
     if (task.jobKey && task.mutation) {
       try {
         markRunnerMutationInFlight(task.jobKey, new Date(this.now()));
-      } catch {
+      } catch (error) {
         this.stats.checkpointErrors++;
+        task.reject(checkpointError('in-flight', error));
+        this.finishTask(task);
+        return;
       }
     }
-    this.stats.active = this.activeCount;
-    this.stats.queued = this.queue.length;
 
     void Promise.resolve()
       .then(() => task.execute())
@@ -535,15 +548,7 @@ export class DiscordRateLimitCoordinator {
         (response) => this.handleResponse(task, response),
         (error) => this.handleFailure(task, error),
       )
-      .finally(() => {
-        const circuit = this.circuits.get(this.circuitKey(task));
-        if (circuit?.state === CIRCUIT_STATE.HALF_OPEN) circuit.probeActive = false;
-        this.activeCount--;
-        this.activeAccounts.delete(task.account);
-        this.stats.active = this.activeCount;
-        this.stats.completed++;
-        this.pump();
-      });
+      .finally(() => this.finishTask(task));
   }
 
   pump() {
@@ -563,6 +568,7 @@ export class DiscordRateLimitCoordinator {
       ...this.stats,
       knownRoutes: this.routeBuckets.size,
       knownScopes: this.routeScopes.size,
+      blockedMutationJobs: this.blockedMutationJobs.size,
       blockedBuckets: [
         ...this.bucketResetAt.values(),
         ...this.accountBucketResetAt.values(),
