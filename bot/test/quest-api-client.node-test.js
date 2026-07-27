@@ -3,10 +3,14 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   buildDiscordUserHeaders,
+  claimQuestRequest,
   DISCORD_API_BASE,
   DiscordApiError,
   discordFetch,
+  enrollQuestRequest,
   fetchQuestPayload,
+  sendHeartbeatRequest,
+  sendVideoProgressRequest,
 } from '../src/quest/api/discord-client.js';
 
 const originalFetch = globalThis.fetch;
@@ -63,6 +67,75 @@ test('Quest endpoint fallback accepts an empty first endpoint and populated seco
   assert.equal(payload.path, '/users/@me/quests');
   assert.equal(payload.quests[0].id, 'quest-1');
   assert.equal(calls.length, 2);
+});
+
+test('enroll and video progress mutations are built by the authoritative API client', async () => {
+  const calls = [];
+  globalThis.fetch = async (url, options) => {
+    calls.push({
+      url: String(url),
+      method: options.method,
+      body: JSON.parse(options.body),
+    });
+    return new Response('{}', { status: 200 });
+  };
+
+  await enrollQuestRequest('fixture-token', 'quest-enroll');
+  await sendVideoProgressRequest('fixture-token', 'quest-video', 30);
+
+  assert.equal(calls[0].url, 'https://discord.com/api/v10/quests/quest-enroll/enroll');
+  assert.deepEqual(calls[0].body, {
+    location: 11,
+    is_targeted: false,
+    metadata_raw: null,
+  });
+  assert.equal(calls[1].url, 'https://discord.com/api/v10/quests/quest-video/video-progress');
+  assert.ok(calls[1].body.timestamp >= 30 && calls[1].body.timestamp <= 31);
+});
+
+test('claim falls back from claim-reward to the legacy claim endpoint only on 404', async () => {
+  const calls = [];
+  globalThis.fetch = async (url, options) => {
+    calls.push({ url: String(url), body: JSON.parse(options.body) });
+    if (String(url).endsWith('/claim-reward')) {
+      return new Response(JSON.stringify({ message: 'not found' }), { status: 404 });
+    }
+    return new Response('{}', { status: 200 });
+  };
+
+  await claimQuestRequest('fixture-token', 'quest-claim', 4);
+  assert.deepEqual(calls, [
+    {
+      url: 'https://discord.com/api/v10/quests/quest-claim/claim-reward',
+      body: { location: 11, platform: 4 },
+    },
+    {
+      url: 'https://discord.com/api/v10/quests/quest-claim/claim',
+      body: { location: 1, platform: 4 },
+    },
+  ]);
+});
+
+test('desktop heartbeat falls back to application payload after stream-key 400', async () => {
+  const calls = [];
+  globalThis.fetch = async (url, options) => {
+    const body = JSON.parse(options.body);
+    calls.push(body);
+    if (Object.hasOwn(body, 'stream_key')) {
+      return new Response(JSON.stringify({ message: 'application payload required' }), { status: 400 });
+    }
+    return new Response('{}', { status: 200 });
+  };
+
+  await sendHeartbeatRequest('fixture-token', {
+    id: 'quest-heartbeat',
+    applicationId: 'application-1',
+  }, false, false);
+
+  assert.deepEqual(calls, [
+    { stream_key: 'call:quest-heartbeat:1', terminal: false },
+    { application_id: 'application-1', terminal: false },
+  ]);
 });
 
 test('Discord API errors preserve fatal authentication classification', async () => {
