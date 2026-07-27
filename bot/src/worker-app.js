@@ -15,10 +15,7 @@ import {
   installDiscordApiRuntime,
   uninstallDiscordApiRuntime,
 } from './quest/discord-api-runtime.js';
-import {
-  restoreScheduledRunners,
-  shutdownRunners,
-} from './quest/runner-service.js';
+import { shutdownRunners } from './quest/runner-service.js';
 import {
   startScheduledWorkerSupervisor,
   stopScheduledWorkerSupervisor,
@@ -27,8 +24,8 @@ import { createWorkerDiscordClient } from './quest/worker-discord-client.js';
 
 export function createWorkerApp({ exit = process.exit } = {}) {
   const processRole = 'worker';
-  const runtimeLeaseName = processLeaseName(processRole);
   const runtimeLeaseHolder = `${process.pid}:${randomUUID()}`;
+  const runtimeLeaseName = processLeaseName(processRole, runtimeLeaseHolder);
   const outputClient = createWorkerDiscordClient();
   let runtimeLeaseTimer = null;
   let runtimeLeaseAcquired = false;
@@ -135,7 +132,7 @@ export function createWorkerApp({ exit = process.exit } = {}) {
     if (!acquireProcessRoleLease(processRole, runtimeLeaseHolder)) {
       return fatalShutdown(
         INCIDENT.RUNTIME_LEASE_CONFLICT,
-        new Error('Scheduled worker conflicts with another worker or all-in-one process'),
+        new Error('Scheduled worker conflicts with an all-in-one process'),
         { leaseName: runtimeLeaseName, holder: runtimeLeaseHolder },
       );
     }
@@ -153,8 +150,9 @@ export function createWorkerApp({ exit = process.exit } = {}) {
 
     try {
       await startDashboard(outputClient);
-      await restoreScheduledRunners(outputClient);
-      await startScheduledWorkerSupervisor(outputClient);
+      await startScheduledWorkerSupervisor(outputClient, {
+        holder: runtimeLeaseHolder,
+      });
       outputClient.markReady();
       console.log(
         `✅ Scheduled worker ready · poll ${config.workerPollIntervalMs}ms · API v10`,
