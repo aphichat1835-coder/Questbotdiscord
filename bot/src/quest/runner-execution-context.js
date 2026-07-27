@@ -27,17 +27,17 @@ export function createRunnerExecutionContext(args) {
     username: args.username ?? null,
     mode: args.mode ?? 'oneshot',
     scheduleId: args.scheduleId ?? null,
-    accountKey: authorizationFingerprint(args.userToken ?? ''),
+    accountKey: args.userToken ? authorizationFingerprint(args.userToken) : null,
   });
 }
 
 export function registerRunnerExecution(args) {
   const context = createRunnerExecutionContext(args);
-  const existing = jobsByAccount.get(context.accountKey);
+  const existing = context.accountKey ? jobsByAccount.get(context.accountKey) : null;
   if (existing && existing !== context.jobKey) {
     throw new Error(`Authorization fingerprint is already registered to ${existing}`);
   }
-  jobsByAccount.set(context.accountKey, context.jobKey);
+  if (context.accountKey) jobsByAccount.set(context.accountKey, context.jobKey);
   contextsByJob.set(context.jobKey, context);
   let active = true;
   return {
@@ -45,7 +45,7 @@ export function registerRunnerExecution(args) {
     release() {
       if (!active) return false;
       active = false;
-      if (jobsByAccount.get(context.accountKey) === context.jobKey) {
+      if (context.accountKey && jobsByAccount.get(context.accountKey) === context.jobKey) {
         jobsByAccount.delete(context.accountKey);
       }
       if (contextsByJob.get(context.jobKey) === context) contextsByJob.delete(context.jobKey);
@@ -64,7 +64,7 @@ export function currentRunnerExecutionContext() {
 }
 
 export function resolveRunnerJobKey(accountKey) {
-  return jobsByAccount.get(accountKey) ?? null;
+  return accountKey ? jobsByAccount.get(accountKey) ?? null : null;
 }
 
 export function resolveRunnerExecutionContext(jobKey) {
