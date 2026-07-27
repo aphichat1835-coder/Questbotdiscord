@@ -138,14 +138,19 @@ jobs:
           echo "exit_code=$status" >> "$GITHUB_OUTPUT"
           exit "$status"
 
+      - name: Run critical mutation safety gate
+        run: npm run test:mutation-safety
+
+      - name: Confirm mutation gate restored all sources
+        working-directory: ${{ github.workspace }}
+        run: git diff --exit-code
+
       - name: Upload test output
         if: always()
         uses: actions/upload-artifact@v7
         with:
           name: bot-test-output-${{ github.run_id }}
-          path: |
-            bot/test-output.log
-            bot/src/discord-runner.js
+          path: bot/test-output.log
           if-no-files-found: error
           retention-days: 7
 
@@ -154,35 +159,3 @@ jobs:
 
       - name: Production dependency audit
         run: npm audit --omit=dev --audit-level=high
-
-  # BEGIN TEMPORARY RUNNER REFACTOR JOB
-  apply-runner-refactor:
-    name: Apply runner integration
-    if: github.event_name == 'push' && github.ref == 'refs/heads/aa.1'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      contents: write
-    steps:
-      - name: Checkout aa.1
-        uses: actions/checkout@v6
-        with:
-          ref: aa.1
-          fetch-depth: 0
-
-      - name: Apply and validate patch
-        shell: bash
-        run: |
-          git apply --check bot/scripts/discord-runner-plugin.patch
-          git apply bot/scripts/discord-runner-plugin.patch
-          node --check bot/src/discord-runner.js
-
-      - name: Commit runner integration
-        shell: bash
-        run: |
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add bot/src/discord-runner.js
-          git commit -m 'refactor(quest): route legacy runner through plugins'
-          git push origin HEAD:aa.1
-  # END TEMPORARY RUNNER REFACTOR JOB
