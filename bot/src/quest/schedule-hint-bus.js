@@ -5,7 +5,7 @@ const URGENT_WINDOW_MS = 30 * 60 * 1000;
 
 function notifyListener(listener, hint) {
   try {
-    listener({ ...hint });
+    listener(hint ? { ...hint } : null);
   } catch (error) {
     console.warn(`[QuestScheduler] schedule hint listener failed: ${error?.message ?? 'unknown error'}`);
   }
@@ -67,9 +67,7 @@ function publishEffectiveChange(accountKey, previous) {
   if (sameHint(previous, selected)) return false;
   if (selected) effectiveHints.set(accountKey, selected);
   else effectiveHints.delete(accountKey);
-  if (selected) {
-    for (const listener of listeners.get(accountKey) ?? []) notifyListener(listener, selected);
-  }
+  for (const listener of listeners.get(accountKey) ?? []) notifyListener(listener, selected);
   return true;
 }
 
