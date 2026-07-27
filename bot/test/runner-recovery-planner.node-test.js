@@ -9,7 +9,6 @@ import {
 import { buildScheduledRestorePlan } from '../src/quest/scheduled-restore.js';
 import {
   beginRunnerState,
-  clearRunnerStatesForTests,
   getRunnerState,
   prepareRunnerMutation,
   RUNNER_MUTATION_KIND,
@@ -18,75 +17,73 @@ import {
   transitionRunnerState,
 } from '../src/quest/runner-state-store.js';
 
-test.beforeEach(() => clearRunnerStatesForTests());
-
 test('future waiting checkpoint resumes at its persisted next action time', () => {
   beginRunnerState({
-    jobKey: 'scheduled:1',
+    jobKey: 'scheduled:recovery-wait',
     ownerId: 'owner-1',
     mode: 'scheduled',
-    scheduleId: 1,
+    scheduleId: 9101,
   });
-  transitionRunnerState('scheduled:1', RUNNER_STATE.WAITING_RATE_LIMIT, {
+  transitionRunnerState('scheduled:recovery-wait', RUNNER_STATE.WAITING_RATE_LIMIT, {
     nextActionAt: '2030-01-01T01:00:00.000Z',
   });
 
   const recovery = buildScheduledRestorePlan(
-    { id: 1, next_check_at: '2030-01-01T08:00:00.000Z' },
+    { id: 'recovery-wait', next_check_at: '2030-01-01T08:00:00.000Z' },
     new Date('2030-01-01T00:00:00.000Z'),
   );
   assert.equal(recovery.recoveryPlan.action, RUNNER_RECOVERY_ACTION.WAIT);
   assert.equal(recovery.initialNextCheckAt, '2030-01-01T01:00:00.000Z');
-  assert.equal(getRunnerState('scheduled:1').state, RUNNER_STATE.WAITING_RATE_LIMIT);
+  assert.equal(getRunnerState('scheduled:recovery-wait').state, RUNNER_STATE.WAITING_RATE_LIMIT);
 });
 
 test('uncertain mutation restarts in verification state before any resend', () => {
   beginRunnerState({
-    jobKey: 'scheduled:2',
+    jobKey: 'scheduled:recovery-uncertain',
     ownerId: 'owner-1',
     mode: 'scheduled',
-    scheduleId: 2,
+    scheduleId: 9102,
   });
-  prepareRunnerMutation('scheduled:2', {
+  prepareRunnerMutation('scheduled:recovery-uncertain', {
     kind: RUNNER_MUTATION_KIND.CLAIM,
     questId: 'quest-claim',
     payload: { platform: 4 },
   });
-  transitionRunnerState('scheduled:2', RUNNER_STATE.VERIFYING_CLAIM, {
+  transitionRunnerState('scheduled:recovery-uncertain', RUNNER_STATE.VERIFYING_CLAIM, {
     mutationStatus: RUNNER_MUTATION_STATUS.UNCERTAIN,
   });
 
   const plan = planRunnerRecovery(
-    getRunnerState('scheduled:2'),
+    getRunnerState('scheduled:recovery-uncertain'),
     new Date('2030-01-01T00:00:00.000Z'),
   );
   assert.equal(plan.action, RUNNER_RECOVERY_ACTION.VERIFY_MUTATION);
   assert.equal(plan.targetState, RUNNER_STATE.VERIFYING_CLAIM);
   assert.equal(plan.initialNextCheckAt, null);
 
-  applyRunnerRecoveryPlan('scheduled:2', plan);
-  const state = getRunnerState('scheduled:2');
+  applyRunnerRecoveryPlan('scheduled:recovery-uncertain', plan);
+  const state = getRunnerState('scheduled:recovery-uncertain');
   assert.equal(state.state, RUNNER_STATE.VERIFYING_CLAIM);
   assert.equal(state.mutation_status, RUNNER_MUTATION_STATUS.UNCERTAIN);
   assert.equal(state.metadata.recoveryAction, RUNNER_RECOVERY_ACTION.VERIFY_MUTATION);
 });
 
 test('one-shot recovery is rejected because its token is intentionally not durable', () => {
-  beginRunnerState({ jobKey: 'oneshot:1', ownerId: 'owner-1', mode: 'oneshot' });
-  const plan = planRunnerRecovery(getRunnerState('oneshot:1'));
+  beginRunnerState({ jobKey: 'oneshot:recovery', ownerId: 'owner-1', mode: 'oneshot' });
+  const plan = planRunnerRecovery(getRunnerState('oneshot:recovery'));
   assert.equal(plan.action, RUNNER_RECOVERY_ACTION.FAIL);
   assert.equal(plan.targetState, RUNNER_STATE.FAILED);
 });
 
 test('active scheduled row with a terminal checkpoint starts from fresh server state', () => {
   beginRunnerState({
-    jobKey: 'scheduled:3',
+    jobKey: 'scheduled:recovery-terminal',
     ownerId: 'owner-1',
     mode: 'scheduled',
-    scheduleId: 3,
+    scheduleId: 9103,
     state: RUNNER_STATE.FAILED,
   });
-  const plan = planRunnerRecovery(getRunnerState('scheduled:3'));
+  const plan = planRunnerRecovery(getRunnerState('scheduled:recovery-terminal'));
   assert.equal(plan.action, RUNNER_RECOVERY_ACTION.START_FRESH);
   assert.equal(plan.targetState, RUNNER_STATE.RECOVERING);
 });
