@@ -1,6 +1,47 @@
 import { abortableDelay } from './abortable-delay.js';
+import { currentRunnerExecutionContext } from './quest/runner-execution-context.js';
+import {
+  incrementRunnerRetry,
+  markRunnerMutationFailed,
+  markRunnerMutationUncertain,
+  markRunnerMutationVerified,
+  RUNNER_STATE,
+} from './quest/runner-state-store.js';
 
 const MAX_RETRY_DELAY_MS = 60_000;
+
+function currentJobKey() {
+  return currentRunnerExecutionContext()?.jobKey ?? null;
+}
+
+function checkpoint(callback) {
+  const jobKey = currentJobKey();
+  if (!jobKey) return null;
+  try {
+    return callback(jobKey);
+  } catch (error) {
+    console.warn(`[MutationCheckpoint:${jobKey}] ${error?.message ?? 'checkpoint failed'}`);
+    return null;
+  }
+}
+
+function markUncertain(error) {
+  return checkpoint((jobKey) => markRunnerMutationUncertain(jobKey, error));
+}
+
+function markVerified() {
+  return checkpoint((jobKey) => markRunnerMutationVerified(jobKey));
+}
+
+function markFailed(error) {
+  return checkpoint((jobKey) => markRunnerMutationFailed(jobKey, error, {
+    state: RUNNER_STATE.RUNNING,
+  }));
+}
+
+function markControlledRetry() {
+  return checkpoint((jobKey) => incrementRunnerRetry(jobKey));
+}
 
 export function isUncertainMutationFailure(error) {
   if (!error) return false;
@@ -23,6 +64,12 @@ export function waitForMutationRetry(ms, signal) {
   return abortableDelay(ms, signal, { unref: true });
 }
 
+async function verifyAfterUncertainFailure(verify) {
+  const verified = await verify();
+  if (verified) markVerified();
+  return verified;
+}
+
 /**
  * A mutating request is never retried blindly. After an uncertain failure
  * (network, timeout, 429 or 5xx), fresh server state is checked first. Only
@@ -41,17 +88,35 @@ export async function executeVerifiedMutation({
     firstError = error;
   }
 
-  if (!isUncertainMutationFailure(firstError)) throw firstError;
-  if (await verify()) return { verifiedAfterFailure: true };
+  if (!isUncertainMutationFailure(firstError)) {
+    markFailed(firstError);
+    throw firstError;
+  }
+
+  markUncertain(firstError);
+  try {
+    if (await verifyAfterUncertainFailure(verify)) return { verifiedAfterFailure: true };
+  } catch (verificationError) {
+    markFailed(verificationError);
+    throw verificationError;
+  }
 
   await wait(mutationRetryDelayMs(firstError), signal);
+  markControlledRetry();
 
   try {
     return await perform();
   } catch (retryError) {
-    if (isUncertainMutationFailure(retryError) && await verify()) {
-      return { verifiedAfterFailure: true };
+    if (isUncertainMutationFailure(retryError)) {
+      markUncertain(retryError);
+      try {
+        if (await verifyAfterUncertainFailure(verify)) return { verifiedAfterFailure: true };
+      } catch (verificationError) {
+        markFailed(verificationError);
+        throw verificationError;
+      }
     }
+    markFailed(retryError);
     throw retryError;
   }
 }
