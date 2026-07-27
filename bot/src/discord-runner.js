@@ -40,8 +40,20 @@ import {
   ONE_SHOT_QUEST_STATUS,
   recordOneShotVerifiedProgress,
 } from './one-shot-quest-session.js';
+import {
+  executeQuestExecutor,
+  selectQuestExecutor,
+} from './quest/executors.js';
+import { currentRunnerExecutionContext } from './quest/runner-execution-context.js';
+import { verifyRunnerMutationFromQuests } from './quest/durable-mutation-verifier.js';
+import {
+  getRunnerState,
+  RUNNER_MUTATION_STATUS,
+  RUNNER_STATE,
+  transitionRunnerState,
+} from './quest/runner-state-store.js';
 
-const DISCORD_API = 'https://discord.com/api/v9';
+const DISCORD_API = 'https://discord.com/api/v10';
 const QUEST_LIST_PATHS = ['/quests/@me', '/users/@me/quests'];
 const FATAL_FORBIDDEN_PATHS = new Set(['/users/@me', ...QUEST_LIST_PATHS]);
 
@@ -157,27 +169,21 @@ async function discordFetch(token, path, options = {}, policy = {}) {
   return data;
 }
 
-// Quest event names → which API to use
-// VIDEO  → POST /quests/{id}/video-progress
-// STREAM → POST /quests/{id}/heartbeat
-// SKIP   → cannot complete via API (requires real game/console/activity)
-const VIDEO_EVENTS  = new Set(['WATCH_VIDEO', 'WATCH_VIDEO_ON_MOBILE']);
-const GAME_EVENTS   = new Set(['PLAY_ON_DESKTOP', 'PLAY_ON_DESKTOP_V2']);
-const STREAM_EVENTS = new Set(['STREAM_ON_DESKTOP']);
-const SKIP_EVENTS   = new Set(['ACHIEVEMENT_IN_GAME', 'ACHIEVEMENT_IN_ACTIVITY', 'PLAY_ACTIVITY',
-                                'PLAY_ON_XBOX', 'PLAY_ON_PLAYSTATION', 'progress',
-                                ...STREAM_EVENTS]);
+// Quest execution support is defined by the plugin registry only.
+function questExecutor(value) {
+  return selectQuestExecutor(typeof value === 'string' ? { eventName: value } : value);
+}
 
 function isVideoEvent(eventName) {
-  return VIDEO_EVENTS.has(eventName) || /^WATCH_VIDEO(?:_|$)/.test(eventName);
+  return questExecutor(eventName).id === 'video';
 }
 
 function isGameEvent(eventName) {
-  return GAME_EVENTS.has(eventName) || /^PLAY_ON_DESKTOP(?:_V\d+)?$/.test(eventName);
+  return questExecutor(eventName).id === 'desktop';
 }
 
-function isSupportedEvent(eventName) {
-  return isVideoEvent(eventName) || isGameEvent(eventName);
+function isSupportedEvent(value) {
+  return questExecutor(value).supportsAutomaticProgress;
 }
 
 function questUnavailableReason(quest, now = Date.now()) {
@@ -194,7 +200,7 @@ function questUnavailableReason(quest, now = Date.now()) {
 }
 
 function isRunnableQuest(quest) {
-  return isSupportedEvent(quest.eventName) && !questUnavailableReason(quest);
+  return isSupportedEvent(quest) && !questUnavailableReason(quest);
 }
 
 function oneShotFreshQuestFailureReason(error) {
@@ -264,6 +270,36 @@ function normalizeStatusContext(context = {}) {
 
 function currentQuestStatusContext() {
   return questStatusStorage.getStore() ?? normalizeStatusContext();
+}
+
+const ACTIVE_MUTATION_STATUSES = new Set([
+  RUNNER_MUTATION_STATUS.PREPARED,
+  RUNNER_MUTATION_STATUS.IN_FLIGHT,
+  RUNNER_MUTATION_STATUS.ACCEPTED,
+  RUNNER_MUTATION_STATUS.UNCERTAIN,
+]);
+
+function transitionCurrentRunner(state, values = {}, { preserveMutation = false } = {}) {
+  const jobKey = currentRunnerExecutionContext()?.jobKey
+    ?? currentQuestStatusContext().jobKey;
+  if (!jobKey) return null;
+  try {
+    const current = getRunnerState(jobKey);
+    if (
+      preserveMutation
+      && current?.mutation_status
+      && ACTIVE_MUTATION_STATUSES.has(current.mutation_status)
+    ) {
+      return current;
+    }
+    return transitionRunnerState(jobKey, state, {
+      ...values,
+      stateSource: 'quest-orchestrator',
+    });
+  } catch (error) {
+    console.warn(`[RunnerState:${jobKey}] direct transition failed — ${error?.message ?? 'unknown error'}`);
+    return null;
+  }
 }
 
 export class QuestCompatibilityError extends Error {
@@ -394,7 +430,7 @@ async function normalizeQuestPayload(payload) {
 function summarizeQuestCompatibility(quests) {
   const unknownEvents = [...new Set(
     quests
-      .filter((quest) => !isSupportedEvent(quest.eventName) && !SKIP_EVENTS.has(quest.eventName))
+      .filter((quest) => questExecutor(quest).id === 'unknown')
       .map((quest) => quest.eventName),
   )];
   return {
@@ -422,6 +458,7 @@ export async function fetchQuests(token, signal, explicitStatusContext = null) {
   }
 
   const statusContext = currentQuestStatusContext();
+  transitionCurrentRunner(RUNNER_STATE.FETCHING_QUESTS, {}, { preserveMutation: true });
   recordQuestAttempt(statusContext.key, statusContext);
   const payload = await selectQuestPayload(token, signal);
   const quests = await normalizeQuestPayload(payload);
@@ -824,6 +861,7 @@ export async function startRunner({
   accountId: initialAccountId = null,
   username: initialUsername = null,
   initialNextCheckAt = null,
+  recoveryPlan = null,
   speedMultiplier = 5,
   heartbeatInterval = 30,
 }) {
@@ -968,6 +1006,13 @@ export async function startRunner({
 
   async function claimSilently(quest) {
     if ((claimRetryAt.get(quest.id) ?? 0) > Date.now()) return false;
+    transitionCurrentRunner(RUNNER_STATE.CLAIMING, {
+      questId: quest.id,
+      questName: quest.name,
+      questEvent: quest.eventName,
+      progress: quest.progress,
+      serverProgressSeconds: quest.progressSecs,
+    });
     const platform = selectQuestClaimPlatform(quest);
     if (platform == null) {
       claimRetryAt.set(quest.id, Date.now() + CLAIM_LONG_RETRY_DELAY_MS);
@@ -985,6 +1030,13 @@ export async function startRunner({
       if (claimed) {
         claimRetryAt.delete(quest.id);
         recordQuestVerification(currentQuestStatusContext().key, 'claim', currentQuestStatusContext());
+        transitionCurrentRunner(RUNNER_STATE.RUNNING, {
+          questId: quest.id,
+          questName: quest.name,
+          questEvent: quest.eventName,
+          progress: 100,
+          serverProgressSeconds: claimed.progressSecs,
+        });
       } else {
         claimRetryAt.set(quest.id, Date.now() + CLAIM_RETRY_DELAY_MS);
       }
@@ -1198,6 +1250,13 @@ export async function startRunner({
 
   async function ensureQuestEnrollment(quest, selection) {
     if (quest.enrolled) return { quest };
+    transitionCurrentRunner(RUNNER_STATE.ENROLLING, {
+      questId: quest.id,
+      questName: quest.name,
+      questEvent: quest.eventName,
+      progress: quest.progress,
+      serverProgressSeconds: quest.progressSecs,
+    });
     try {
       await enrollQuest(userToken, quest.id, signal);
       const enrolled = await waitForQuestState(
@@ -1206,7 +1265,16 @@ export async function startRunner({
         (fresh) => fresh.enrolled,
         signal,
       );
-      if (enrolled) return { quest: enrolled };
+      if (enrolled) {
+        transitionCurrentRunner(RUNNER_STATE.RUNNING, {
+          questId: enrolled.id,
+          questName: enrolled.name,
+          questEvent: enrolled.eventName,
+          progress: enrolled.progress,
+          serverProgressSeconds: enrolled.progressSecs,
+        });
+        return { quest: enrolled };
+      }
       return {
         outcome: await questFailureOutcome(
           quest,
@@ -1229,6 +1297,13 @@ export async function startRunner({
   }
 
   async function announceQuestProgress(quest) {
+    transitionCurrentRunner(RUNNER_STATE.RUNNING_PROGRESS, {
+      questId: quest.id,
+      questName: quest.name,
+      questEvent: quest.eventName,
+      progress: quest.progress,
+      serverProgressSeconds: quest.progressSecs,
+    });
     addLog(questActivityLine('▶️', `กำลังทำ ${quest.name}`));
     const initialPercent = Math.min(100, Math.max(0, Math.floor(quest.progress)));
     addLog(questActivityLine('⌛', `${quest.name} ${initialPercent}%`));
@@ -1261,6 +1336,16 @@ export async function startRunner({
       }
       lastVerifiedProgressSecs = Math.max(lastVerifiedProgressSecs, fresh.progressSecs);
       completionSeen ||= fresh.completed;
+      transitionCurrentRunner(
+        fresh.completed ? RUNNER_STATE.VERIFYING_COMPLETION : RUNNER_STATE.RUNNING_PROGRESS,
+        {
+          questId: fresh.id,
+          questName: fresh.name,
+          questEvent: fresh.eventName,
+          progress: percent,
+          serverProgressSeconds: fresh.progressSecs,
+        },
+      );
       while (nextCheckpoint <= 100 && percent >= nextCheckpoint) {
         if (nextCheckpoint > lastReportedPercent) {
           addLog(questActivityLine('⌛', `${quest.name} ${nextCheckpoint}%`));
@@ -1281,17 +1366,35 @@ export async function startRunner({
   }
 
   async function executeQuestProgress(quest, selection, hooks) {
-    const runner = isVideoEvent(quest.eventName) ? runVideoQuest : runGameQuest;
+    const executor = questExecutor(quest);
     try {
-      await runner(
-        userToken,
+      const execution = await executeQuestExecutor(executor, {
         quest,
-        signal,
-        hooks.onServerProgress,
-        speedMultiplier,
-        heartbeatInterval,
-        hooks.onMutationAccepted,
-      );
+        executeVideo: (executorQuest) => runVideoQuest(
+          userToken,
+          executorQuest,
+          signal,
+          hooks.onServerProgress,
+          speedMultiplier,
+          heartbeatInterval,
+          hooks.onMutationAccepted,
+        ),
+        executeDesktop: (executorQuest) => runGameQuest(
+          userToken,
+          executorQuest,
+          signal,
+          hooks.onServerProgress,
+          speedMultiplier,
+          heartbeatInterval,
+          hooks.onMutationAccepted,
+        ),
+        verifyCompletion: (_executorQuest, result) => Boolean(result?.completed),
+      });
+      if (!execution.verified) {
+        throw new QuestCompatibilityError(
+          `Quest executor ${executor.id} did not return verified completion`,
+        );
+      }
       if (signal.aborted) throw new Error('aborted');
       return null;
     } catch (error) {
@@ -1309,6 +1412,13 @@ export async function startRunner({
   }
 
   async function verifyQuestCompletion(quest, selection) {
+    transitionCurrentRunner(RUNNER_STATE.VERIFYING_COMPLETION, {
+      questId: quest.id,
+      questName: quest.name,
+      questEvent: quest.eventName,
+      progress: quest.progress,
+      serverProgressSeconds: quest.progressSecs,
+    });
     try {
       const fresh = await waitForQuestState(
         userToken,
@@ -1413,6 +1523,33 @@ export async function startRunner({
     addLog(`⏰ ${username}: NEXT CHECK ${formatScheduleTime(restoredAt)}`);
     await render();
     await sleep(restoredAt.getTime() - Date.now(), signal);
+  }
+
+  async function recoverDurableCheckpoint() {
+    if (mode !== 'scheduled' || !recoveryPlan) return;
+    if (!['VERIFY_MUTATION', 'VERIFY_COMPLETION'].includes(recoveryPlan.action)) return;
+
+    const quests = await fetchQuests(userToken, signal);
+    if (recoveryPlan.action === 'VERIFY_MUTATION') {
+      const result = verifyRunnerMutationFromQuests(jobKey, quests, { finalizeAbsent: true });
+      addLog(result.verified
+        ? `✅ ${username}: RECOVERY VERIFIED — ${recoveryPlan.mutationKind ?? 'MUTATION'}`
+        : `🔄 ${username}: RECOVERY CHECKED — RESUME FROM SERVER STATE`);
+      await render();
+      return;
+    }
+
+    const quest = quests.find((item) => item.id === recoveryPlan.questId);
+    transitionCurrentRunner(
+      quest?.completed ? RUNNER_STATE.VERIFYING_COMPLETION : RUNNER_STATE.RUNNING,
+      {
+        questId: quest?.id ?? recoveryPlan.questId ?? null,
+        questName: quest?.name ?? null,
+        questEvent: quest?.eventName ?? null,
+        progress: quest?.progress ?? null,
+        serverProgressSeconds: quest?.progressSecs ?? null,
+      },
+    );
   }
 
   async function runRoundSafely() {
@@ -1554,6 +1691,7 @@ export async function startRunner({
     try {
       await initializeRunnerSession();
       await restoreInitialSchedule();
+      await recoverDurableCheckpoint();
       await runQuestLoop();
       await reportOneShotSummary();
     } catch (error) {
