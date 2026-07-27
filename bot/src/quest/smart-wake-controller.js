@@ -17,7 +17,8 @@ let readActiveJob = legacyRunner.getJob;
 let stopActiveJob = legacyRunner.stopJob;
 let readScheduledRunner = getScheduledRunner;
 
-function hintState(reason) {
+function hintState(rawReason) {
+  const reason = String(rawReason ?? '');
   if (reason.startsWith('claim:')) return RUNNER_STATE.CLAIMING;
   if (reason === 'claim-retry') return RUNNER_STATE.WAITING_RETRY;
   if (reason.startsWith('enrollment:')) return RUNNER_STATE.WAITING_ENROLLMENT;
@@ -80,6 +81,14 @@ async function restartSleepingRunner(args) {
   }
 }
 
+function clearWakeTimer(jobKey) {
+  const entry = smartWakeups.get(jobKey);
+  if (!entry) return false;
+  if (entry.timer) clearTimeout(entry.timer);
+  smartWakeups.set(jobKey, { ...entry, timer: null, hint: null });
+  return true;
+}
+
 function installWakeTimer(args, hint, existing) {
   const delay = smartWakeTimerDelay(hint.nextActionAt);
   if (delay == null) return false;
@@ -103,7 +112,12 @@ function installWakeTimer(args, hint, existing) {
 }
 
 function scheduleSmartWake(args, hint) {
-  if (args.mode !== 'scheduled' || hint.reason === 'baseline') return;
+  if (args.mode !== 'scheduled') return;
+  if (!hint) {
+    clearWakeTimer(args.jobKey);
+    return;
+  }
+  if (hint.reason === 'baseline') return;
   const at = Date.parse(hint.nextActionAt);
   if (!Number.isFinite(at)) return;
 
@@ -145,7 +159,7 @@ export function registerSmartWake(args) {
 export function clearSmartWake(jobKey) {
   const entry = smartWakeups.get(jobKey);
   if (!entry) return false;
-  if (entry.timer) clearTimeout(entry.timer);
+  clearWakeTimer(jobKey);
   entry.unsubscribe?.();
   smartWakeups.delete(jobKey);
   return true;
