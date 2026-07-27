@@ -3,7 +3,9 @@ import { createHash } from 'node:crypto';
 export function authorizationFingerprint(value = null) {
   const candidate = typeof value === 'string'
     ? value
-    : new Headers(value).get('authorization');
+    : value == null
+      ? null
+      : new Headers(value).get('authorization');
   const authorization = typeof candidate === 'string' && candidate.length > 0
     ? candidate
     : 'anonymous';
