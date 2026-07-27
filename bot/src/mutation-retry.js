@@ -103,6 +103,15 @@ async function verifyAfterUncertainFailure(verify) {
   return verified;
 }
 
+function handleVerificationFailure(error) {
+  // Fresh server evidence may already prove the mutation landed. If persisting
+  // VERIFIED fails, preserve the existing uncertain checkpoint for recovery
+  // instead of incorrectly downgrading it to FAILED.
+  if (error instanceof RunnerCheckpointError) throw error;
+  markFailed(error);
+  throw error;
+}
+
 /**
  * A mutating request is never retried blindly. After an uncertain failure
  * (network, timeout, 429 or 5xx), fresh server state is checked first. Only
@@ -134,8 +143,7 @@ export async function executeVerifiedMutation({
   try {
     if (await verifyAfterUncertainFailure(verify)) return { verifiedAfterFailure: true };
   } catch (verificationError) {
-    markFailed(verificationError);
-    throw verificationError;
+    handleVerificationFailure(verificationError);
   }
 
   await wait(mutationRetryDelayMs(firstError), signal);
@@ -149,8 +157,7 @@ export async function executeVerifiedMutation({
       try {
         if (await verifyAfterUncertainFailure(verify)) return { verifiedAfterFailure: true };
       } catch (verificationError) {
-        markFailed(verificationError);
-        throw verificationError;
+        handleVerificationFailure(verificationError);
       }
     }
     markFailed(retryError);
