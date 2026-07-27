@@ -14,6 +14,7 @@ import {
   prepareRunnerMutation,
   RUNNER_ERROR_CATEGORY,
   RUNNER_MUTATION_KIND,
+  RunnerMutationPendingVerificationError,
   RUNNER_MUTATION_STATUS,
   RUNNER_STATE,
 } from '../src/quest/runner-state-store.js';
@@ -63,6 +64,52 @@ test('durable mutation checkpoint follows prepared through verified lifecycle', 
   assert.equal(state.progress, 50);
   assert.equal(state.server_progress_seconds, 30);
   assert.equal(state.mutation_verified_at, '2030-01-01T00:00:02.000Z');
+});
+
+test('unverified checkpoint cannot be overwritten by another mutation', () => {
+  const jobKey = 'scheduled:checkpoint-barrier';
+  beginRunnerState({ jobKey, ownerId: 'owner-1', mode: 'scheduled', scheduleId: 2 });
+
+  const prepareNext = () => prepareRunnerMutation(jobKey, {
+    kind: RUNNER_MUTATION_KIND.HEARTBEAT,
+    questId: 'quest-2',
+    payload: { terminal: false },
+  });
+  const assertBlocked = (status) => assert.throws(
+    prepareNext,
+    (error) => (
+      error instanceof RunnerMutationPendingVerificationError
+      && error.code === 'RUNNER_MUTATION_REQUIRES_VERIFICATION'
+      && error.mutationStatus === status
+    ),
+  );
+
+  prepareRunnerMutation(jobKey, {
+    kind: RUNNER_MUTATION_KIND.VIDEO_PROGRESS,
+    questId: 'quest-1',
+    payload: { timestamp: 10 },
+  });
+  assertBlocked(RUNNER_MUTATION_STATUS.PREPARED);
+
+  markRunnerMutationInFlight(jobKey, new Date('2030-01-01T00:00:00.000Z'));
+  assertBlocked(RUNNER_MUTATION_STATUS.IN_FLIGHT);
+
+  markRunnerMutationAccepted(jobKey, new Date('2030-01-01T00:00:01.000Z'));
+  assertBlocked(RUNNER_MUTATION_STATUS.ACCEPTED);
+
+  markRunnerMutationUncertain(jobKey, new Error('fresh verification unavailable'));
+  assertBlocked(RUNNER_MUTATION_STATUS.UNCERTAIN);
+
+  markRunnerMutationVerified(jobKey, {
+    serverProgressSeconds: 10,
+    now: new Date('2030-01-01T00:00:02.000Z'),
+  });
+  assert.doesNotThrow(prepareNext);
+
+  const state = getRunnerState(jobKey);
+  assert.equal(state.quest_id, 'quest-2');
+  assert.equal(state.mutation_kind, RUNNER_MUTATION_KIND.HEARTBEAT);
+  assert.equal(state.mutation_status, RUNNER_MUTATION_STATUS.PREPARED);
 });
 
 test('uncertain mutation records error category without losing checkpoint details', () => {
