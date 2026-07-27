@@ -64,7 +64,7 @@ export function buildScheduledRestorePlan(row, now = new Date()) {
   };
 }
 
-async function restoreRow({ row, client, startRunner, ownerCount, now }) {
+async function restoreRow({ row, client, startRunner, ownerCount, now, workerHolder }) {
   const restore = buildScheduledRestorePlan(row, now);
   const token = decryptRunnerToken(row, config.runnerTokenSecret);
   await startRunner({
@@ -79,6 +79,7 @@ async function restoreRow({ row, client, startRunner, ownerCount, now }) {
     username: row.username,
     initialNextCheckAt: restore.initialNextCheckAt,
     recoveryPlan: restore.recoveryPlan,
+    workerHolder,
   });
   return ownerCount + 1;
 }
@@ -94,6 +95,7 @@ export async function restoreScheduledRunnerRows(client, startRunner, {
   existingAccountIds = [],
   existingOwnerCounts = new Map(),
   now = new Date(),
+  workerHolder = null,
 } = {}) {
   failOrphanedScheduledStates(reconciliationRows);
   if (!rows.length) return { restored: 0, failed: 0 };
@@ -123,7 +125,14 @@ export async function restoreScheduledRunnerRows(client, startRunner, {
     }
 
     try {
-      const nextOwnerCount = await restoreRow({ row, client, startRunner, ownerCount, now });
+      const nextOwnerCount = await restoreRow({
+        row,
+        client,
+        startRunner,
+        ownerCount,
+        now,
+        workerHolder,
+      });
       restored++;
       restoredByOwner.set(row.owner_id, nextOwnerCount);
       if (row.account_id) restoredAccounts.add(row.account_id);
