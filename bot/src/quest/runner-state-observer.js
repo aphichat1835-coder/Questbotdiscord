@@ -9,21 +9,6 @@ import {
 import { stateScheduleReason } from './smart-scheduler.js';
 
 const OBSERVER_INTERVAL_MS = 1000;
-const SMART_WAKE_STATES = new Set([
-  RUNNER_STATE.WAITING_RATE_LIMIT,
-  RUNNER_STATE.WAITING_ENROLLMENT,
-  RUNNER_STATE.WAITING_RETRY,
-  RUNNER_STATE.CLAIMING,
-  RUNNER_STATE.VERIFYING_ENROLLMENT,
-  RUNNER_STATE.VERIFYING_PROGRESS,
-  RUNNER_STATE.VERIFYING_COMPLETION,
-  RUNNER_STATE.VERIFYING_CLAIM,
-  RUNNER_STATE.RECOVERING,
-]);
-const GENERIC_OBSERVED_STATES = new Set([
-  RUNNER_STATE.RUNNING,
-  RUNNER_STATE.WAITING_SCHEDULE,
-]);
 let observerTimer = null;
 
 function stateFromStatus(job) {
@@ -63,37 +48,31 @@ function hasActiveMutationCheckpoint(current) {
   );
 }
 
-function preserveDirectState(current, observedState) {
-  if (!current || !GENERIC_OBSERVED_STATES.has(observedState)) return false;
-  if (SMART_WAKE_STATES.has(current.state)) return true;
+function hasAuthoritativeDirectState(current) {
+  if (!current) return false;
   if (hasActiveMutationCheckpoint(current)) return true;
   return Boolean(current.state_source && current.state_source !== 'legacy-observer');
 }
 
 function observedTransition(job, current, observedState) {
-  const preserve = preserveDirectState(current, observedState);
+  const preserve = hasAuthoritativeDirectState(current);
   const state = preserve ? current.state : observedState;
   const questName = questNameFromStatus(job.status);
   const progress = progressFromStatus(job.status);
-  const metadata = preserve
-    ? {
-        ...(current.metadata ?? {}),
-        lifecycle: job.lifecycle,
-        status: String(job.status ?? '').slice(0, 500),
-      }
-    : {
-        lifecycle: job.lifecycle,
-        scheduleReason: stateScheduleReason(state),
-        status: String(job.status ?? '').slice(0, 500),
-      };
+  const metadata = {
+    ...(preserve ? current.metadata ?? {} : {}),
+    lifecycle: job.lifecycle,
+    status: String(job.status ?? '').slice(0, 500),
+    ...(preserve ? {} : { scheduleReason: stateScheduleReason(state) }),
+  };
 
   return {
     state,
     values: {
       ...(job.accountId != null ? { accountId: job.accountId } : {}),
       ...(job.username != null ? { username: job.username } : {}),
-      ...(questName != null ? { questName } : {}),
-      ...(progress != null ? { progress } : {}),
+      ...(!preserve && questName != null ? { questName } : {}),
+      ...(!preserve && progress != null ? { progress } : {}),
       nextActionAt: preserve ? current.next_action_at : job.nextCheckAt,
       lastError: preserve
         ? current.last_error
