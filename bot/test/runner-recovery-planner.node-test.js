@@ -68,6 +68,28 @@ test('uncertain mutation restarts in verification state before any resend', () =
   assert.equal(state.metadata.recoveryAction, RUNNER_RECOVERY_ACTION.VERIFY_MUTATION);
 });
 
+test('verified mutation metadata never re-enters uncertain mutation recovery', () => {
+  beginRunnerState({
+    jobKey: 'scheduled:recovery-verified',
+    ownerId: 'owner-1',
+    mode: 'scheduled',
+    scheduleId: 9104,
+  });
+  prepareRunnerMutation('scheduled:recovery-verified', {
+    kind: RUNNER_MUTATION_KIND.CLAIM,
+    questId: 'quest-verified',
+    payload: { platform: 4 },
+  });
+  transitionRunnerState('scheduled:recovery-verified', RUNNER_STATE.RUNNING, {
+    mutationStatus: RUNNER_MUTATION_STATUS.VERIFIED,
+  });
+
+  const plan = planRunnerRecovery(getRunnerState('scheduled:recovery-verified'));
+  assert.equal(plan.action, RUNNER_RECOVERY_ACTION.START_FRESH);
+  assert.equal(plan.reason, 'fetch-fresh-server-state');
+  assert.equal(plan.targetState, RUNNER_STATE.RECOVERING);
+});
+
 test('one-shot recovery is rejected because its token is intentionally not durable', () => {
   beginRunnerState({ jobKey: 'oneshot:recovery', ownerId: 'owner-1', mode: 'oneshot' });
   const plan = planRunnerRecovery(getRunnerState('oneshot:recovery'));
