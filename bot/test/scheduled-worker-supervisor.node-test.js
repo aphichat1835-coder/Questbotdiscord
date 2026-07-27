@@ -1,6 +1,8 @@
 import './setup-env.js';
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { config } from '../src/config.js';
+import { encryptRunnerToken } from '../src/runner-token-crypto.js';
 import {
   beginRunnerState,
   clearRunnerStatesForTests,
@@ -15,6 +17,28 @@ import {
 
 const OWNER_ID = 'scheduled-worker-supervisor-owner';
 
+function scheduledRow(id) {
+  const accountId = `account-${id}`;
+  const token = encryptRunnerToken(
+    `scheduled-worker-token-${id}`,
+    config.runnerTokenSecret,
+    OWNER_ID,
+    accountId,
+  );
+  return {
+    id,
+    owner_id: OWNER_ID,
+    account_id: accountId,
+    username: `user-${id}`,
+    channel_id: `channel-${id}`,
+    token_ciphertext: token.ciphertext,
+    token_iv: token.iv,
+    token_tag: token.tag,
+    token_salt: token.salt,
+    next_check_at: null,
+  };
+}
+
 test.beforeEach(clearRunnerStatesForTests);
 test.afterEach(async () => {
   await stopScheduledWorkerSupervisor();
@@ -24,17 +48,7 @@ test.afterEach(async () => {
 test('supervisor stops deleted rows and starts newly persisted rows', async () => {
   const stopped = [];
   const started = [];
-  const rows = [{
-    id: 2,
-    owner_id: OWNER_ID,
-    account_id: 'account-2',
-    username: 'user-2',
-    channel_id: 'channel-2',
-    token_ciphertext: 'ciphertext',
-    token_iv: 'iv',
-    token_tag: 'tag',
-    next_check_at: null,
-  }];
+  const rows = [scheduledRow(2)];
 
   const result = await reconcileScheduledWorker({}, {
     rows,
@@ -64,21 +78,12 @@ test('supervisor stops deleted rows and starts newly persisted rows', async () =
     options: { removeSchedule: false },
   }]);
   assert.equal(started[0].jobKey, 'scheduled:2');
+  assert.equal(started[0].token, 'scheduled-worker-token-2');
 });
 
 test('one stop failure does not block later stops, restore or finalization', async () => {
   const stopped = [];
-  const rows = [{
-    id: 3,
-    owner_id: OWNER_ID,
-    account_id: 'account-3',
-    username: 'user-3',
-    channel_id: 'channel-3',
-    token_ciphertext: 'ciphertext',
-    token_iv: 'iv',
-    token_tag: 'tag',
-    next_check_at: null,
-  }];
+  const rows = [scheduledRow(3)];
   beginRunnerState({
     jobKey: 'scheduled:30',
     ownerId: OWNER_ID,
@@ -125,17 +130,7 @@ test('one stop failure does not block later stops, restore or finalization', asy
 });
 
 test('failed rows use a bounded retry delay before the supervisor restarts them', async () => {
-  const row = {
-    id: 3,
-    owner_id: OWNER_ID,
-    account_id: 'account-3',
-    username: 'user-3',
-    channel_id: 'channel-3',
-    token_ciphertext: 'ciphertext',
-    token_iv: 'iv',
-    token_tag: 'tag',
-    next_check_at: null,
-  };
+  const row = scheduledRow(3);
   beginRunnerState({
     jobKey: 'scheduled:3',
     ownerId: OWNER_ID,
