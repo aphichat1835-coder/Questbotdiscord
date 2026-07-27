@@ -1,6 +1,7 @@
 import { authorizationFingerprint } from './authorization-fingerprint.js';
 import { verifyRunnerMutationFromQuests } from './durable-mutation-verifier.js';
 import { resolveRunnerJobKey } from './runner-execution-context.js';
+import { assertRunnerMutationOwnership } from './runner-ownership-guard.js';
 import {
   markRunnerMutationAccepted,
   markRunnerMutationFailed,
@@ -203,6 +204,7 @@ export class DiscordRateLimitCoordinator {
       bookkeepingErrors: 0,
       scheduleHintErrors: 0,
       checkpointErrors: 0,
+      ownershipLosses: 0,
       circuitOpens: 0,
       lastRateLimitAt: null,
       lastScheduleHintAt: null,
@@ -226,6 +228,15 @@ export class DiscordRateLimitCoordinator {
       priority: requestPriority(url, method),
       mutation,
     };
+
+    if (task.jobKey && mutation) {
+      try {
+        assertRunnerMutationOwnership(task.jobKey, this.now());
+      } catch (error) {
+        this.stats.ownershipLosses++;
+        return Promise.reject(error);
+      }
+    }
 
     if (task.jobKey && mutation && this.blockedMutationJobs.has(task.jobKey)) {
       return Promise.reject(new RunnerMutationBlockedError(task.jobKey));
@@ -533,10 +544,16 @@ export class DiscordRateLimitCoordinator {
 
     if (task.jobKey && task.mutation) {
       try {
+        assertRunnerMutationOwnership(task.jobKey, this.now());
         markRunnerMutationInFlight(task.jobKey, new Date(this.now()));
       } catch (error) {
-        this.stats.checkpointErrors++;
-        task.reject(checkpointError('in-flight', error));
+        if (error?.code === 'RUNNER_OWNERSHIP_LOST') {
+          this.stats.ownershipLosses++;
+          task.reject(error);
+        } else {
+          this.stats.checkpointErrors++;
+          task.reject(checkpointError('in-flight', error));
+        }
         this.finishTask(task);
         return;
       }
