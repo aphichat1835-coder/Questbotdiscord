@@ -78,7 +78,7 @@ test('supervisor stops deleted rows and starts newly persisted rows', async () =
     options: { removeSchedule: false },
   }]);
   assert.equal(started[0].jobKey, 'scheduled:2');
-  assert.equal(started[0].token, 'scheduled-worker-token-2');
+  assert.equal(started[0].userToken, 'scheduled-worker-token-2');
 });
 
 test('one stop failure does not block later stops, restore or finalization', async () => {
