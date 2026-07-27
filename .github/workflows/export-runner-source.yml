@@ -1,7 +1,7 @@
 name: Export runner source
 
 permissions:
-  contents: read
+  contents: write
 
 on:
   workflow_dispatch:
@@ -21,12 +21,45 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v6
+      - name: Checkout aa.1
+        uses: actions/checkout@v6
         with:
-          persist-credentials: false
-      - uses: actions/upload-artifact@v7
-        with:
-          name: discord-runner-source-${{ github.run_id }}
-          path: bot/src/discord-runner.js
-          if-no-files-found: error
-          retention-days: 1
+          ref: aa.1
+          fetch-depth: 0
+
+      - name: Apply verified runner patch
+        shell: bash
+        run: |
+          git apply --check bot/scripts/discord-runner-plugin.patch
+          git apply bot/scripts/discord-runner-plugin.patch
+          node --check bot/src/discord-runner.js
+
+      - name: Restore stable CI and remove temporary files
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('.github/workflows/ci.yml')
+          content = path.read_text()
+          temporary = """          path: |
+            bot/test-output.log
+            bot/src/discord-runner.js
+"""
+          stable = """          path: bot/test-output.log
+"""
+          if temporary not in content:
+              raise SystemExit('temporary CI artifact block not found')
+          path.write_text(content.replace(temporary, stable, 1))
+          PY
+          git rm bot/scripts/discord-runner-plugin.patch
+          git rm .github/workflows/apply-runner-refactor.yml
+          git rm .github/workflows/export-runner-source.yml
+
+      - name: Commit runner integration
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add bot/src/discord-runner.js .github/workflows/ci.yml
+          git commit -m 'refactor(quest): route legacy runner through plugins'
+          git push origin HEAD:aa.1
