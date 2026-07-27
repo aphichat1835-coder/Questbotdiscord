@@ -41,6 +41,12 @@ function ownerCounts(jobs) {
   return counts;
 }
 
+function currentTime(options) {
+  const value = typeof options.now === 'function' ? options.now() : options.now;
+  const now = Number(value);
+  return Number.isFinite(now) ? now : Date.now();
+}
+
 function retryEligible(row, now) {
   const state = getRunnerState(`scheduled:${row.id}`);
   if (state?.state !== RUNNER_STATE.FAILED) return true;
@@ -67,31 +73,67 @@ async function stopSafely(job, options) {
   }
 }
 
-function ownsActiveClaim(job, options) {
+async function stopJobsSafely(jobs, options) {
+  const results = await Promise.all(jobs.map((job) => stopSafely(job, options)));
+  return results.reduce((summary, result) => ({
+    requested: summary.requested + result.requested,
+    failed: summary.failed + result.failed,
+  }), { requested: 0, failed: 0 });
+}
+
+function ownsActiveClaim(job, options, now = currentTime(options)) {
   if (!options.holder) return true;
   const id = Number(job.scheduleId);
-  return options.renewClaim(id, options.holder, options.claimTtlMs, options.now)
-    || options.acquireClaim(id, options.holder, options.claimTtlMs, options.now);
+  return options.renewClaim(id, options.holder, options.claimTtlMs, now)
+    || options.acquireClaim(id, options.holder, options.claimTtlMs, now);
 }
 
 async function reconcileActive(rows, jobs, options) {
   const rowIds = new Set(rows.map((row) => Number(row.id)));
-  const surviving = [];
-  const result = { stopRequested: 0, stopFailures: 0, claimLost: 0, claimsRenewed: 0 };
+  let surviving = [];
+  const stopCandidates = [];
+  const renewedJobs = new Set();
+  const result = { stopRequested: 0, stopFailures: 0, claimLost: 0 };
+
+  // Renew every healthy local job before awaiting cleanup for any removed/lost job.
+  // This prevents one slow shutdown from starving unrelated ownership leases.
   for (const job of jobs) {
     const rowExists = rowIds.has(Number(job.scheduleId));
     const ownsClaim = rowExists && ownsActiveClaim(job, options);
     if (rowExists && ownsClaim) {
       surviving.push(job);
-      if (options.holder) result.claimsRenewed++;
+      if (options.holder) renewedJobs.add(job.key);
       continue;
     }
     if (rowExists && !ownsClaim) result.claimLost++;
-    const stopped = await stopSafely(job, options);
-    result.stopRequested += stopped.requested;
-    result.stopFailures += stopped.failed;
+    stopCandidates.push(job);
   }
-  return { ...result, surviving };
+
+  const stopped = await stopJobsSafely(stopCandidates, options);
+  result.stopRequested += stopped.requested;
+  result.stopFailures += stopped.failed;
+
+  // Cleanup may take long enough for previously renewed leases to expire. Verify
+  // ownership again before the restore phase and stop any job that lost its claim.
+  if (options.holder && stopCandidates.length > 0 && surviving.length > 0) {
+    const confirmed = [];
+    const lostDuringCleanup = [];
+    for (const job of surviving) {
+      if (ownsActiveClaim(job, options)) {
+        confirmed.push(job);
+        renewedJobs.add(job.key);
+      } else {
+        result.claimLost++;
+        lostDuringCleanup.push(job);
+      }
+    }
+    const lostStops = await stopJobsSafely(lostDuringCleanup, options);
+    result.stopRequested += lostStops.requested;
+    result.stopFailures += lostStops.failed;
+    surviving = confirmed;
+  }
+
+  return { ...result, claimsRenewed: renewedJobs.size, surviving };
 }
 
 async function restoreMissing(client, rows, surviving, options) {
@@ -102,8 +144,9 @@ async function restoreMissing(client, rows, surviving, options) {
 
   for (const row of rows) {
     const id = Number(row.id);
-    if (activeIds.has(id) || !retryEligible(row, options.now)) continue;
-    if (options.holder && !options.acquireClaim(id, options.holder, options.claimTtlMs, options.now)) {
+    const now = currentTime(options);
+    if (activeIds.has(id) || !retryEligible(row, now)) continue;
+    if (options.holder && !options.acquireClaim(id, options.holder, options.claimTtlMs, now)) {
       result.claimConflicts++;
       continue;
     }
@@ -113,7 +156,7 @@ async function restoreMissing(client, rows, surviving, options) {
       reconciliationRows: rows,
       existingAccountIds: accounts,
       existingOwnerCounts: counts,
-      now: new Date(options.now),
+      now: new Date(now),
       workerHolder: options.holder,
     });
     result.restore.restored += restored.restored;
@@ -157,7 +200,7 @@ export async function reconcileScheduledWorker(client, supplied = {}) {
     startRunner: startLocalRunner,
     stop: stopJob,
     reportStopError: reportCriticalError,
-    now: Date.now(),
+    now: Date.now,
     holder: null,
     claimTtlMs: scheduledClaimTtlMs(),
     acquireClaim: acquireScheduledRunnerClaim,
