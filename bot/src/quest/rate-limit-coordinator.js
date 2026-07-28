@@ -17,7 +17,6 @@ import { publishScheduleHint } from './schedule-hint-bus.js';
 
 export { authorizationFingerprint } from './authorization-fingerprint.js';
 
-const MAX_RESET_DELAY_MS = 60_000;
 const RATE_LIMIT_FALLBACK_MS = 1000;
 const DEFAULT_MAX_CONCURRENCY = 4;
 const DEFAULT_CIRCUIT_FAILURE_THRESHOLD = 3;
@@ -76,15 +75,16 @@ function requestPriority(url, method) {
 async function retryDelayMs(response) {
   const seconds = headerNumber(response.headers, 'retry-after')
     ?? headerNumber(response.headers, 'x-ratelimit-reset-after');
-  if (seconds != null) return Math.min(MAX_RESET_DELAY_MS, Math.ceil(seconds * 1000));
+  if (seconds != null) return Math.ceil(seconds * 1000);
+  if (response.status !== 429) return 0;
   try {
     const body = await response.clone().json();
     const bodySeconds = Number(body?.retry_after);
     if (Number.isFinite(bodySeconds) && bodySeconds >= 0) {
-      return Math.min(MAX_RESET_DELAY_MS, Math.ceil(bodySeconds * 1000));
+      return Math.ceil(bodySeconds * 1000);
     }
   } catch {}
-  return response.status === 429 ? RATE_LIMIT_FALLBACK_MS : 0;
+  return RATE_LIMIT_FALLBACK_MS;
 }
 
 function questArray(candidate) {
@@ -376,7 +376,8 @@ export class DiscordRateLimitCoordinator {
     ).toLowerCase();
     if (['user', 'shared', 'global'].includes(scope)) this.routeScopes.set(task.route, scope);
     const remaining = headerNumber(response.headers, 'x-ratelimit-remaining');
-    const parsedDelay = await retryDelayMs(response);
+    const shouldReadDelay = response.status === 429 || remaining === 0;
+    const parsedDelay = shouldReadDelay ? await retryDelayMs(response) : 0;
     const delay = remaining === 0 && parsedDelay === 0
       ? RATE_LIMIT_FALLBACK_MS
       : parsedDelay;
