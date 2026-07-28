@@ -19,6 +19,7 @@ cleanup() {
   [[ ! -f "$tmp_dir/all-mode-recovery.js" ]] || cp -- "$tmp_dir/all-mode-recovery.js" src/quest/all-mode-recovery.js
   [[ ! -f "$tmp_dir/runner-state-observer.js" ]] || cp -- "$tmp_dir/runner-state-observer.js" src/quest/runner-state-observer.js
   [[ ! -f "$tmp_dir/discord-client.js" ]] || cp -- "$tmp_dir/discord-client.js" src/quest/api/discord-client.js
+  [[ ! -f "$tmp_dir/runner-completion-observer.js" ]] || cp -- "$tmp_dir/runner-completion-observer.js" src/quest/runner-completion-observer.js
   rm -rf -- "$tmp_dir"
 }
 trap cleanup EXIT
@@ -303,9 +304,40 @@ cp -- "$tmp_dir/discord-client.js" src/quest/api/discord-client.js
 rm -- "$tmp_dir/discord-client.js"
 record_result 'malformed video timestamp reaches the network boundary' "$status"
 
+cp -- src/quest/runner-completion-observer.js "$tmp_dir/runner-completion-observer.js"
+python3 <<'PY'
+from pathlib import Path
+path = Path('src/quest/runner-completion-observer.js')
+source = path.read_text(encoding='utf-8')
+old = """  void Promise.resolve(job.done)
+    .then(
+      () => runObserverHandler(jobKey, () => handleResolved(jobKey, mode, scheduleId)),
+      (error) => runObserverHandler(jobKey, () => handleRejected(jobKey, error)),
+    )
+    .finally(() => observedCompletions.delete(jobKey))
+    .catch((error) => reportSafely(error, jobKey));"""
+new = """  void Promise.resolve(job.done)
+    .then(
+      () => handleResolved(jobKey, mode, scheduleId),
+      (error) => handleRejected(jobKey, error),
+    )
+    .finally(() => observedCompletions.delete(jobKey));"""
+if source.count(old) < 1:
+    raise SystemExit('mutation target not found: completion observer containment')
+path.write_text(source.replace(old, new, 1), encoding='utf-8')
+PY
+set +e
+node --import ./test/setup-env.js --test --test-concurrency=1 \
+  test/runner-completion-observer.node-test.js >"$tmp_dir/test-output.log" 2>&1
+status=$?
+set -e
+cp -- "$tmp_dir/runner-completion-observer.js" src/quest/runner-completion-observer.js
+rm -- "$tmp_dir/runner-completion-observer.js"
+record_result 'completion observer transition failure escapes its promise chain' "$status"
+
 if [[ "$survived" -gt 0 ]]; then
   echo "$survived critical mutation(s) survived" >&2
   exit 1
 fi
 
-echo 'All 13 critical mutations were killed'
+echo 'All 14 critical mutations were killed'
