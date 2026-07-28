@@ -72,6 +72,7 @@ const TERMINAL_STATES = new Set([
 ]);
 const ACTIVE_STATES = [...VALID_STATES].filter((state) => !TERMINAL_STATES.has(state));
 const ACTIVE_STATE_PLACEHOLDERS = ACTIVE_STATES.map(() => '?').join(', ');
+const NETWORK_ERROR_CODES = new Set(['ECONNRESET', 'ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN']);
 const CHECKPOINT_VERSION = 2;
 
 export class RunnerMutationPendingVerificationError extends Error {
@@ -253,21 +254,41 @@ export function mutationVerificationState(kind) {
   }[kind] ?? RUNNER_STATE.VERIFYING_COMPLETION;
 }
 
-export function classifyRunnerError(error) {
-  if (error?.name === 'AbortError' || error?.message === 'aborted') return RUNNER_ERROR_CATEGORY.ABORTED;
+function classifyNamedRunnerError(error) {
+  if (error?.name === 'AbortError' || error?.message === 'aborted') {
+    return RUNNER_ERROR_CATEGORY.ABORTED;
+  }
   if (error?.name === 'QuestCompatibilityError') return RUNNER_ERROR_CATEGORY.SCHEMA;
   if (error?.name === 'RequestTimeoutError' || error?.code === 'ETIMEDOUT') {
     return RUNNER_ERROR_CATEGORY.TIMEOUT;
   }
-  if (error?.status === 401 || error?.status === 403) return RUNNER_ERROR_CATEGORY.AUTH;
-  if (error?.status === 429) return RUNNER_ERROR_CATEGORY.RATE_LIMIT;
-  if (Number.isInteger(error?.status) && error.status >= 500) return RUNNER_ERROR_CATEGORY.API_5XX;
-  if (Number.isInteger(error?.status) && error.status >= 400) return RUNNER_ERROR_CATEGORY.API_4XX;
-  if (String(error?.code ?? '').startsWith('SQLITE_')) return RUNNER_ERROR_CATEGORY.STORAGE;
-  if (['ECONNRESET', 'ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN'].includes(error?.code)) {
+  return null;
+}
+
+function classifyHttpRunnerError(error) {
+  const status = error?.status;
+  if (status === 401 || status === 403) return RUNNER_ERROR_CATEGORY.AUTH;
+  if (status === 429) return RUNNER_ERROR_CATEGORY.RATE_LIMIT;
+  if (Number.isInteger(status) && status >= 500) return RUNNER_ERROR_CATEGORY.API_5XX;
+  if (Number.isInteger(status) && status >= 400) return RUNNER_ERROR_CATEGORY.API_4XX;
+  return null;
+}
+
+function classifyCodeRunnerError(error) {
+  const code = String(error?.code ?? '');
+  if (code.startsWith('SQLITE_')) return RUNNER_ERROR_CATEGORY.STORAGE;
+  if (NETWORK_ERROR_CODES.has(code)) return RUNNER_ERROR_CATEGORY.NETWORK;
+  return null;
+}
+
+export function classifyRunnerError(error) {
+  const category = classifyNamedRunnerError(error)
+    ?? classifyHttpRunnerError(error)
+    ?? classifyCodeRunnerError(error);
+  if (category) return category;
+  if (!Number.isInteger(error?.status) && error instanceof Error) {
     return RUNNER_ERROR_CATEGORY.NETWORK;
   }
-  if (!Number.isInteger(error?.status) && error instanceof Error) return RUNNER_ERROR_CATEGORY.NETWORK;
   return RUNNER_ERROR_CATEGORY.UNKNOWN;
 }
 
