@@ -111,6 +111,7 @@ test('enroll and video progress mutations are built by the authoritative API cli
 
   await enrollQuestRequest('fixture-token', 'quest-enroll');
   await sendVideoProgressRequest('fixture-token', 'quest-video', 30);
+  await sendVideoProgressRequest('fixture-token', 'quest-video-string', '30');
 
   assert.equal(calls[0].url, 'https://discord.com/api/v10/quests/quest-enroll/enroll');
   assert.deepEqual(calls[0].body, {
@@ -119,7 +120,26 @@ test('enroll and video progress mutations are built by the authoritative API cli
     metadata_raw: null,
   });
   assert.equal(calls[1].url, 'https://discord.com/api/v10/quests/quest-video/video-progress');
-  assert.ok(calls[1].body.timestamp >= 30 && calls[1].body.timestamp <= 31);
+  assert.deepEqual(calls[1].body, { timestamp: 30 });
+  assert.equal(calls[2].url, 'https://discord.com/api/v10/quests/quest-video-string/video-progress');
+  assert.deepEqual(calls[2].body, { timestamp: 30 });
+});
+
+test('video progress rejects malformed timestamps before any network request', async () => {
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls++;
+    return new Response('{}', { status: 200 });
+  };
+
+  for (const timestamp of [Number.NaN, Number.POSITIVE_INFINITY, -1, 1.5, 'invalid']) {
+    assert.throws(
+      () => sendVideoProgressRequest('fixture-token', 'quest-video-invalid', timestamp),
+      /non-negative integer/,
+      String(timestamp),
+    );
+  }
+  assert.equal(calls, 0);
 });
 
 test('claim falls back from claim-reward to the legacy claim endpoint only on 404', async () => {
