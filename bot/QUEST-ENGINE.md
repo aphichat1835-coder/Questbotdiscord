@@ -1,17 +1,19 @@
 # Quest Engine Architecture
 
-เอกสารนี้อธิบาย Quest Engine หลังการตรวจโค้ดและแก้ Correctness findings บนกิ่ง `aa.1` ใช้เป็นขอบเขตอ้างอิงสำหรับ Review, UAT, Deploy และ Incident response
+เอกสารนี้อธิบายสถาปัตยกรรม Quest Engine บนกิ่ง `aa.1` หลัง Correctness review รอบสุดท้าย ใช้เป็น Source of truth สำหรับ Review, UAT, Incident response และการพิจารณา Deploy
 
 ## 1. ขอบเขตที่ล็อกไว้
 
-- Discord HTTP API ใช้ `https://discord.com/api/v10` โดยตรง
-- Discord panel คงไว้เฉพาะ `START NOW` และ `STOP ALL`
+- ใช้ Discord HTTP API v10 โดยตรง
+- Panel มีเพียง `START NOW` และ `STOP ALL`
+- Production lifecycle ต้องผ่าน `quest/runner-service.js`
 - One-shot token ไม่ถูก Persist เพิ่ม
 - ไม่เพิ่ม Control Panel V2
 - ไม่เพิ่ม Persistent analytics/history
-- ไม่เพิ่ม Encryption key rotation
-- ห้าม Retry Mutation แบบเดาสุ่มหรือส่งซ้ำก่อนตรวจ Fresh server state
-- PR ต้องคง Draft จน Controlled UAT และ External quality gates ผ่าน
+- ไม่ทำ Encryption key rotation
+- ไม่เพิ่มหรือเปลี่ยน Commands โดยไม่จำเป็น
+- ห้าม Blind retry Mutation ก่อนตรวจ Fresh server state
+- PR ต้องคง Draft จน External gates และ Controlled UAT ผ่าน
 
 ## 2. Module boundaries
 
@@ -30,45 +32,75 @@ src/quest/
 │  ├─ desktop-executor.js
 │  └─ unsupported-executor.js
 ├─ all-mode-recovery.js
+├─ claim-retry-policy.js
+├─ durable-mutation-verifier.js
+├─ rate-limit-coordinator.js
+├─ recovery-planner.js
 ├─ runner-completion-observer.js
 ├─ runner-completion-release.js
-├─ durable-mutation-verifier.js
-├─ recovery-planner.js
 ├─ runner-execution-context.js
 ├─ runner-ownership-guard.js
-├─ runner-state-store.js
 ├─ runner-state-observer.js
-├─ rate-limit-coordinator.js
-├─ claim-retry-policy.js
+├─ runner-state-store.js
 ├─ schedule-hint-bus.js
-├─ smart-scheduler.js
-├─ smart-wake-controller.js
+├─ scheduled-restore.js
 ├─ scheduled-worker-claims.js
 ├─ scheduled-worker-reconciler.js
-└─ scheduled-worker-supervisor.js
+├─ scheduled-worker-supervisor.js
+├─ smart-scheduler.js
+└─ smart-wake-controller.js
 ```
 
-`discord-runner.js` เป็น Orchestrator และ Presentation boundary ของระบบเดิม ส่วน Lifecycle สำหรับ Production ต้องผ่าน `quest/runner-service.js`
+`discord-runner.js` เป็น Orchestrator และ Presentation boundary ของระบบเดิม แต่ Production entrypoints, Commands, Restore และ Lifecycle ต้องผ่าน `quest/runner-service.js`
 
 Source of truth:
 
-- API base, Headers, URL validation และ `DiscordApiError` → `quest/api/discord-client.js`
-- Quest endpoint paths → `quest/api/quest-endpoints.js`
-- Schema parsing และ Numeric validation → `quest/schema/*`
-- Event support และ Progress loops → `quest/executors/*`
-- Durable mutation checkpoint → `quest/runner-state-store.js`
+- API base, headers, URL validation และ Discord errors → `quest/api/*`
+- Schema parsing, ID normalization และ numeric validation → `quest/schema/*`
+- Executor selection และ progress behavior → `quest/executors/*`
+- Durable state และ mutation checkpoint → `quest/runner-state-store.js`
 - Fresh verification → `quest/durable-mutation-verifier.js`
 - Retry classification ของ Claim → `quest/claim-retry-policy.js`
-- Queue, Rate limit, Circuit และ Mutation barrier → `quest/rate-limit-coordinator.js`
+- Queue, scoped rate limit, circuit และ mutation barrier → `quest/rate-limit-coordinator.js`
 - All-in-one delayed recovery → `quest/all-mode-recovery.js`
-- Completion lifecycle persistence → `quest/runner-completion-observer.js`
+- Completion settlement → `quest/runner-completion-observer.js`
 - Safe execution-context release → `quest/runner-completion-release.js`
 
-Architecture tests ห้าม API/Header/Schema/Video/Desktop implementation กลับไปซ้ำใน Runner และห้าม Production entrypoint เรียก Legacy restore โดยตรง
+## 3. API และ Schema boundary
 
-## 3. Executor contract
+API client ต้อง:
 
-Executor ทุกตัวต้องมี Method ครบ:
+- ใช้ `https://discord.com/api/v10`
+- ปฏิเสธ Authority, Query, Fragment, Backslash และ Path traversal
+- Encode External Quest ID เป็น path segment เดียว
+- ตรวจทั้ง `/quests/@me` และ `/users/@me/quests`
+- ไม่สรุปว่า Quest หายจาก Endpoint แรกที่คืนรายการว่าง
+- ไม่ Generic retry POST Mutation
+- ส่ง Abort และ Fatal authentication ต่ออย่างถูกต้อง
+- ส่ง Video progress timestamp เป็นจำนวนเต็มไม่ติดลบ
+
+Schema normalizer ต้อง:
+
+- รองรับ `task_config_v2` และ Legacy `task_config`
+- แปลง Quest ID เป็น String ตั้งแต่ Schema boundary
+- รองรับ Numeric string ที่ถูกต้อง
+- Reject Target ที่ Missing, non-finite, 0 หรือติดลบ
+- Reject Progress ที่ non-finite หรือติดลบ
+- ไม่ปล่อย `NaN` หรือ `Infinity` เข้า Executor, State หรือ Status
+- แยก Blocking compatibility issue ตามสาเหตุจริง
+
+Blocking issues:
+
+- `TASK_DEFINITIONS_MISSING`
+- `TASK_TARGET_INVALID`
+- `TASK_PROGRESS_INVALID`
+- `MULTI_TASK_AND`
+
+Quest ที่มี Blocking issue ยังคงปรากฏใน Diagnostics แต่ห้ามถูกนับเป็น Supported และห้ามส่ง Enroll, Progress, Heartbeat หรือ Claim
+
+## 4. Executor contract
+
+Executor ทุกตัวต้องมี:
 
 ```js
 {
@@ -82,64 +114,26 @@ Executor ทุกตัวต้องมี Method ครบ:
 }
 ```
 
-Registry เป็นผู้เลือก Executor:
+Registry:
 
 - `video` — `WATCH_VIDEO*`
 - `desktop` — `PLAY_ON_DESKTOP*`
-- `unsupported` — Event หรือ Schema ที่ระบบห้ามทำอัตโนมัติ
+- `unsupported` — Event หรือ Schema ที่ห้ามทำอัตโนมัติ
 - `unknown` — Event ใหม่ที่ยังไม่มี Contract
 
-Quest แบบ `join_operator=and` หลาย Task ไม่ถูกทำอัตโนมัติ เพราะต้องยืนยันทุก Task ไม่ใช่เพียง Task เดียว
+Unsupported executor ต้องรายงาน `compatibilityIssues[0].code` ก่อน fallback เป็น `MULTI_TASK_AND` เพื่อไม่ซ่อนสาเหตุ Schema จริง
 
-## 4. API และ Schema boundary
-
-API client รับผิดชอบ:
-
-- Header profile ที่สอดคล้องกันทั้ง Client/Chrome/Electron/Build
-- API v10 โดยตรง
-- URL boundary ที่ปฏิเสธ Authority, Query, Fragment, Backslash และ Traversal
-- Quest-list fallback จาก `/quests/@me` ไป `/users/@me/quests`
-- Enroll, Video progress, Heartbeat และ Claim request
-- Fatal authentication classification
-- Abort propagation โดยไม่เปลี่ยนเป็น Compatibility failure
-- POST Mutation ไม่ใช้ Generic blind retry
-- Video progress timestamp ต้องเป็นจำนวนเต็มไม่ติดลบ และส่งค่าที่ตรวจแล้วตรง ๆ
-
-ไม่มี Video timestamp jitter ปลอมใน Request path อีกต่อไป Schedule jitter สำหรับกระจายเวลาตรวจรอบยังคงเป็นระบบคนละส่วน
-
-Schema normalizer รับผิดชอบ:
-
-- รองรับ `task_config_v2` และ Legacy `task_config`
-- เลือก Progress key ให้ตรงกับ Task
-- คำนวณ `progressSecs`, `progress`, `secondsNeeded`
-- แยก `enrolled`, `completed`, `claimed`
-- Numeric string ที่เป็นค่าถูกต้องรับได้
-- Target ต้องเป็น Finite number มากกว่า 0
-- Progress ต้องเป็น Finite number และไม่ติดลบ
-- ห้าม `NaN`, `Infinity` หรือค่าติดลบไหลเข้า Executor, State หรือ Status
-- Progress มากกว่า Target ถูก Clamp เฉพาะเปอร์เซ็นต์ที่ 100
-- `TASK_TARGET_INVALID`, `TASK_PROGRESS_INVALID`, `TASK_DEFINITIONS_MISSING` และ `MULTI_TASK_AND` เป็น Blocking compatibility issues
-
-Quest ที่มี Blocking issue:
-
-- ยังนับในจำนวน Quest ทั้งหมดเพื่อการวินิจฉัย
-- ไม่ถูกนับใน `supportedCount`
-- ไม่เข้าสู่ One-shot session
-- ไม่ถูกส่ง Enrollment, Progress, Heartbeat หรือ Claim
-
-## 5. Durable runner state
+## 5. Durable state และ Mutation lifecycle
 
 Scheduled runner เก็บใน SQLite:
 
-- Runner state
+- State และ `state_source`
 - Quest ID/name/event
-- Progress percent และ Server progress seconds
-- Next action time
-- Retry count
-- Error category และ Last error
+- Progress และ Server progress seconds
+- `next_action_at`, Retry count, Last error และ Error category
 - Mutation kind/status/payload แบบ Sanitized
 - Mutation attempted/verified timestamps
-- State source และ Checkpoint version
+- Metadata และ Checkpoint version
 
 Mutation kind:
 
@@ -158,10 +152,6 @@ Mutation status:
 - `VERIFIED`
 - `FAILED`
 
-Payload ที่ Persist ต้องไม่มี Token, Cookie, CAPTCHA, Webhook URL หรือ Full response body
-
-## 6. Mutation safety lifecycle
-
 ลำดับบังคับ:
 
 1. ตรวจ Worker ownership
@@ -172,221 +162,204 @@ Payload ที่ Persist ต้องไม่มี Token, Cookie, CAPTCHA, We
 6. บันทึก `ACCEPTED`, `UNCERTAIN` หรือ `FAILED`
 7. Block Mutation ถัดไปของ `jobKey` เดิม
 8. Fetch Quest state ใหม่
-9. Await Fresh verification และบันทึกผล Durable
-10. ปลด Block เฉพาะเมื่อ `VERIFIED` หรือ Recovery ยืนยันว่า Retry ได้
+9. Await Fresh verification
+10. ปลด Barrier เฉพาะเมื่อ Verified หรือมีหลักฐานว่า Retry ได้
 
-Mutation barrier มีสองชั้น:
+Payload ที่ Persist ต้องไม่มี Token, Cookie, CAPTCHA, Webhook URL หรือ Full response body
 
-- In-memory barrier ป้องกันคำขอชนกันใน Process เดียว
-- Durable checkpoint barrier ป้องกันการเขียนทับ `PREPARED/IN_FLIGHT/ACCEPTED/UNCERTAIN` และทำงานต่อหลัง Restart
-
-ถ้า Fresh state ไม่มีหลักฐาน, Verification ล้ม, Storage เขียนไม่ได้ หรือ Ownership หาย ระบบต้องคง Block และเข้าสู่ Recovery แทนการส่ง Mutation ใหม่
-
-## 7. Recovery rules
+## 6. Recovery rules
 
 หลัง Process restart:
 
 | Durable evidence | Recovery action |
 |---|---|
-| Waiting state และ `next_action_at` อยู่อนาคต | รอจนถึงเวลานั้น |
-| Mutation เป็น `PREPARED/IN_FLIGHT/ACCEPTED/UNCERTAIN` | Fetch และ Verify ก่อนส่งซ้ำ |
-| State เป็น `VERIFYING_*` | ทำ Verification ต่อ |
-| Scheduled row Active แต่ Checkpoint Terminal | เริ่มจาก Fresh server state |
+| Waiting state และเวลาอยู่อนาคต | รอถึง `next_action_at` |
+| `PREPARED/IN_FLIGHT/ACCEPTED/UNCERTAIN` | Fetch และ Verify ก่อน Resend |
+| `VERIFYING_*` | ทำ Verification ต่อ |
+| Active schedule + Terminal checkpoint | เริ่มจาก Fresh server state |
 | One-shot ถูกขัดจังหวะ | `FAILED` เพราะ Token ไม่ Durable |
 
-กฎเพิ่มเติม:
+กฎสำคัญ:
 
-- Crash หลัง Mutation แต่ก่อน State เปลี่ยนยังต้องเข้า `VERIFY_MUTATION`
-- Endpoint แรกที่คืนรายการว่างไม่ใช่หลักฐานว่า Quest หาย ต้องตรวจ Fallback ให้ครบ
-- Missing, expired, incompatible, completed และ claimed Quest มี Decision แยกกัน
-- ห้าม Resend จาก `UNCERTAIN` โดยไม่มี Fresh evidence
+- Claim retry ห้ามเปลี่ยน `STOPPED`, `COMPLETED` หรือ `FAILED` กลับเป็น `WAITING_RETRY`
+- Recovery fetch ที่หยุดกลาง `VERIFY_MUTATION/VERIFY_COMPLETION` ต้องกลับ `WAITING_RETRY` พร้อม Backoff แม้ไม่มี Active mutation checkpoint
+- Restore ที่ Throw ต้อง Report และ Rearm
+- Restore summary ที่ `restored <= 0` ถือว่าล้มและต้อง Rearm
+- ก่อน Rearm/Restore ต้องตรวจ State, Schedule row, Schedule ID และ Replacement job ซ้ำ
+- Timer ต้องไม่เก็บ Raw user token
 
-### All-in-one recovery
-
-ค่าเริ่มต้น `QUEST_PROCESS_ROLE=all` ไม่มี Worker supervisor จึงใช้ `all-mode-recovery.js` รับผิดชอบ Runner ที่ Completion observer เปลี่ยนเป็น `WAITING_RETRY`
-
-ก่อนตั้ง Timer และก่อน Restore ต้องตรวจซ้ำว่า:
-
-- Mode ยังเป็น Scheduled
-- Process role เป็น `all`
-- Durable state ยังเป็น `WAITING_RETRY`
-- `schedule_id` ตรงกับ Context
-- Scheduled row ยังอยู่
-- ไม่มี Replacement job ทำงานอยู่
-- ถึง `next_action_at` แล้วจริง
-
-Recovery timer ไม่เก็บ User token ตัว Token ถูก Decrypt จาก Scheduled row ผ่าน Restore path มาตรฐานเมื่อถึงเวลาจริง Stop และ Shutdown ต้องยกเลิก Timer ทั้งหมด
-
-## 8. Completion and cleanup safety
-
-Execution context ต้องถูก Release ทั้งกรณี `job.done` Resolve และ Reject
-
-`runner-completion-release.js` ต้อง:
-
-- Consume Rejection ของ Derived promise
-- Release เพียงครั้งเดียว
-- จับ Error จาก Release callback
-- จับ Error แม้ Callback รายงาน Error จะโยนซ้ำ
-- ไม่สร้าง `unhandledRejection`
-- ไม่ทำให้ Runner หนึ่งบัญชีล้มแล้วพา Process ปิดทั้งตัว
+## 7. Completion และ Promise safety
 
 `runner-completion-observer.js` ต้อง:
 
-- บันทึก Completion หรือ Rejection ลง Durable state
-- จับ Error จาก Durable transition ภายใน Observer
-- Report Observer failure แบบไม่โยน Error ซ้ำ
-- ลบ Registration ของ Observer เสมอ
-- ไม่ปล่อย Derived promise หรือ `.finally()` chain เป็น `unhandledRejection`
+- แยก Resolved กับ Rejected runner promise
+- คง Mutation evidence ระหว่าง Recovery
+- เปลี่ยน Recovery exit เป็น `WAITING_RETRY`
+- เปลี่ยน Ordinary scheduled exit เป็น `FAILED`
+- เปลี่ยน Exit หลัง Scheduled row หายเป็น `STOPPED`
+- Contain Durable transition/reporting failures
+- ไม่สร้าง `unhandledRejection` จาก `.finally()` chain
 
-## 9. Claim retry durability
+`runner-completion-release.js` ต้อง:
 
-Retry classes:
+- Release execution context ทั้ง Resolve และ Reject
+- Release เพียงครั้งเดียว
+- Contain Release callback failure
+- Contain Error reporter ที่ Throw ซ้ำ
+- ไม่สร้าง Derived unhandled rejection
 
-- `CAPTCHA` — Long cooldown เมื่อมี CAPTCHA evidence จริง
-- `PLATFORM_AMBIGUOUS` — Long cooldown และไม่เดา Platform
-- `REQUEST_REJECTED` — HTTP 400 ไม่มี CAPTCHA ใช้ Standard cooldown
-- `RATE_LIMITED` — HTTP 429
-- `VERIFICATION_ABSENT` — Discord ยังไม่ยืนยัน `claimed_at`
-- `TEMPORARY_API_ERROR` — Network หรือ Server failure ชั่วคราว
+Rate-limit coordinator Promise chain ถูกตรวจแล้ว: Error ที่คาดหมายจาก Rate-limit bookkeeping, Circuit, Mutation checkpoint และ Schedule publishing ถูกแยก Catch ก่อน Resolve/Reject ปัจจุบันไม่มี Source/Test evidence ที่ต้องเพิ่ม Catch ใหม่
 
-HTTP 400 ทั่วไปห้ามถูกเหมารวมเป็น CAPTCHA และ Cooldown ต้อง Persist ผ่าน Restart
-
-## 10. Rate-limit coordinator
+## 8. Rate limit และ Circuit breaker
 
 Coordinator รองรับ:
 
 - Serialization ต่อบัญชี
 - Route-to-bucket mapping
 - Scope `user`, `shared`, `global`
-- `Retry-After` และ JSON `retry_after`
+- Header `Retry-After` และ JSON `retry_after`
+- Server delay เต็มจำนวนโดยไม่ Cap เหลือ 60 วินาที
+- Response ปกติที่มีโควตาไม่เข้าสู่ body parsing path
 - Global pause และ Request priority
-- Circuit breaker `CLOSED`, `OPEN`, `HALF_OPEN`
-- Source-aware schedule hints
+- Circuit states `CLOSED`, `OPEN`, `HALF_OPEN`
 - Mutation barrier ต่อ `jobKey`
-- Fresh Quest verification ที่ Await ก่อน Resolve Quest-list response
+- Fresh Quest verification ก่อนปลด Barrier
 
 Authorization ใน Queue เก็บเป็น SHA-256 fingerprint ไม่เก็บ Raw token
 
-## 11. Smart scheduling และ Smart wake
+## 9. Schedule hints และ Smart Wake
 
-Hint bus เก็บ Hint แยกตาม Source เพื่อไม่ให้ Baseline ลบงานเร่งด่วน
-
-Smart wake:
-
-- ใช้กับ Scheduled runner เท่านั้น
-- ไม่ปลุกซ้ำเมื่อ Fixed schedule เดิมมาก่อน Hint
-- รอ `job.done` ก่อน Restart
-- ไม่ลบ Scheduled row ระหว่าง Restart
-- ยกเลิกเมื่อ Scheduled row ถูกลบ
-- ยกเลิก Timer เก่าเมื่อ Effective hint กลับเป็น `baseline` หรือ `null`
-- ยกเลิก Timer เก่าเมื่อ Hint timestamp ไม่ถูกต้อง
-- ไม่ Restart ทับ Replacement job
-- Restart failure ถูก Persist เป็น Durable `FAILED`
+- Hint แยกตาม Source
+- `expiresAt` เป็นส่วนหนึ่งของ Equality เพื่อให้ต่ออายุ Hint ได้
+- Effective hint เป็น `baseline`, `null` หรือ timestamp ไม่ถูกต้อง → ล้าง Timer
+- Stop denied → ล้าง Wake attempt และไม่ Restart
+- Replacement job → ล้าง Attempt และไม่ Restart ทับ
+- Scheduled row หาย → ยกเลิก Smart Wake
 - Timer ระยะไกลแบ่งช่วงไม่เกิน 24 ชั่วโมง
+- Terminal observed status ต้องชนะ Waiting state
 
-## 12. Multi-worker ownership
-
-Topology rules:
+## 10. Multi-worker ownership
 
 - `all` ห้ามทำงานพร้อม `control` หรือ Worker
 - `control` อนุญาต Holder เดียว
 - Worker หลาย Holder ทำงานพร้อมกันได้
-- Scheduled row หนึ่งแถวมี Active claim ได้เพียง Holder เดียว
+- Scheduled row หนึ่งแถวมี Active claim ได้หนึ่ง Holder
 - Worker ต้อง Renew runtime lease และ Job claim
-- Worker ที่เสีย Claim ต้อง Abort local runner ก่อน Mutation ถัดไป
-- Worker อื่นรับช่วงได้เมื่อ Claim หมดอายุ
+- Worker ที่เสีย Claim ต้อง Abort ก่อน Mutation ถัดไป
+- Worker อื่น Takeover ได้หลัง Claim หมดอายุ
+- Control และ Workers ต้องใช้ SQLite ไฟล์เดียวกันจริง
 
 Shutdown order:
 
 1. Mark worker not-ready
 2. หยุด Supervisor
 3. Abort local runners
-4. รอ `job.done` settle
+4. รอ `job.done`
 5. ปล่อย Scheduled claims
 6. ปล่อย Runtime lease
 7. ปิด Database
 
-Control และ Workers ต้องใช้ SQLite ไฟล์เดียวกันจริง
+## 11. Checkpoint version decision
 
-## 13. State authority
+`checkpoint_version` เป็นข้อมูล Audit/Schema evolution ไม่ใช่ Runtime format switch ใน Source ปัจจุบัน
 
-Direct Business state เป็น Source of truth แต่ Status observer อนุญาตให้ข้อความ Runtime ที่ยืนยันการ Sleep อัปเดต State ที่ค้างเป็น:
+- กิ่งฐานไม่มี Mutation checkpoint columns
+- Additive migration เพิ่ม Fields พร้อม Defaults ที่อ่านได้โดย Source ปัจจุบัน
+- Recovery planner ตัดสินจาก State, Mutation kind และ Mutation status โดยตรง
+- ไม่มี Legacy v1 mutation payload ที่ต้อง Branch หรือ Migrate แยก
 
-- `NETWORK RETRY` → `WAITING_RETRY`
-- `NEXT CHECK` หรือ `AUTO DAILY ACTIVE` → `WAITING_SCHEDULE`
+ดังนั้นการ Backfill แถวเดิมเป็น Version 2 ไม่ทำให้ Recovery ตีความ Legacy mutation format ผิด และ Finding ที่ต้องบังคับ Version 1 สำหรับแถวเดิมถือเป็น False positive ภายใต้ Schema ปัจจุบัน
 
-Observer ห้ามเขียนทับ:
+## 12. Final automated evidence
 
-- Active mutation checkpoint
-- `WAITING_ENROLLMENT`
-- `WAITING_RATE_LIMIT`
-- State จาก `schedule-hint:*`
-- `STOPPING`, `STOPPED`, `COMPLETED`, `FAILED`
+Final HEAD:
 
-## 14. Legacy compatibility boundary
+`51af086d09a8a486d6fd39b4924387ad663c3b38`
 
-`discord-runner.js` ยังมี Compatibility exports สำหรับ Test/ผู้เรียกเดิม แต่ Production entrypoint, Commands และ Lifecycle ต้องผ่าน `quest/runner-service.js`
+GitHub Actions CI run:
 
-- ห้าม Production import Legacy restore โดยตรง
-- `speedMultiplier` ไม่มี Production caller และห้ามเพิ่ม Caller ใหม่
-- การทำความสะอาด Compatibility code ภายในไฟล์ใหญ่ต้องแยกเป็น Refactor PR ไม่ปนกับ Correctness patch
+`#1351` — Success
 
-## 15. Quality gates
+ผลจาก Artifact ของ HEAD เดียวกัน:
 
-CI บังคับ:
+- 381 tests passed
+- 0 failed
+- 0 cancelled
+- 0 skipped
+- 0 todo
+- Coverage: 93.38% lines / 84.32% branches / 88.70% functions
+- `discord-runner.js`: 85.18% lines
+- Mutation baseline passed
+- 26/26 critical mutations killed
+- Mutation scripts คืน Source ครบ
+- Repository shape ผ่าน
+- Sanitized Quest fixture ผ่าน
+- Backup destinations ผ่าน
+- Incident/storage boundaries ผ่าน
+- JS/MJS/Bash syntax ผ่าน
+- Production dependency audit ระดับ High ผ่าน
 
-- Repository shape และ Runtime data safety
-- Sanitized Quest fixture
-- Storage/Incident boundaries
-- Full tests แบบ SQLite-isolated order
-- Coverage gate
-- Lifecycle coverage
-- Architecture boundaries
-- Critical mutation gate 15 ตัว
-- Mutation gate คืน Source ด้วย `git diff --exit-code`
-- Syntax check JS/MJS/Bash
-- Production dependency audit ระดับ High
-
-Mutation gate ครอบคลุม:
+Mutation gates 26 จุด:
 
 1. Skip fresh verification หลัง Uncertain mutation
 2. Deadline comparison กลับด้าน
-3. Ignore uncertain Recovery checkpoint
-4. ยอมรับ Incompatible Quest โดย Automatic executor
-5. Ignore explicit Durable checkpoint update
+3. Ignore uncertain recovery checkpoint
+4. Incompatible Quest เข้า Automatic executor
+5. Ignore explicit durable update
 6. Bypass user-scoped bucket
 7. ยอมรับ Invalid target
 8. ยอมรับ Invalid progress
-9. Baseline ไม่ล้าง Smart Wake timer
-10. Rejected completion ไม่ Release execution context
+9. Baseline ไม่ล้าง Smart Wake
+10. Rejected completion ไม่ Release context
 11. All-mode recovery ทำงานนอก `WAITING_RETRY`
-12. Legacy observer เขียนทับ High-priority waiting state
-13. Malformed video timestamp ถึง Network boundary
-14. Completion observer transition failure หลุดออกจาก Promise chain
-15. Completion release error reporter สร้าง Rejection ซ้ำ
+12. Observer เขียนทับ High-priority wait
+13. Malformed video timestamp ถึง Network
+14. Completion observer transition failure หลุด Promise chain
+15. Completion release error reporter หลุด containment
+16. Claim retry ปลุก Terminal runner
+17. Unsupported executor ซ่อน Schema reason
+18. Failed all-mode restore ไม่ Rearm
+19. Empty restore summary ถูกยอมรับ
+20. Hint expiry refresh ถูก Ignore
+21. Header Retry-After ถูก Cap 60 วินาที
+22. Body retry_after ถูก Cap 60 วินาที
+23. Normal response เข้า Retry parsing path
+24. Terminal status ถูก Waiting state บัง
+25. Smart Wake denied attempt ไม่ถูกล้าง
+26. Numeric Quest ID ไม่ถูก Normalize
 
-## 16. Controlled UAT ที่ยังต้องทำ
+External status ที่ยืนยันบน HEAD นี้:
 
-CI ไม่ใช่หลักฐานว่า Discord Mutation จริงผ่าน Production API ครบ
+- Snyk: Success
+- CodeRabbit commit status: Success
+- Codacy: ยังไม่มี Current-head result ที่ยืนยัน
+- SonarCloud: ยังไม่มี Current-head result ที่ยืนยัน
 
-UAT ขั้นต่ำ:
+## 13. Controlled UAT ที่ยังต้องทำ
 
-1. Enroll Quest และตรวจ Durable lifecycle
-2. Video progress พร้อม Response loss
-3. Desktop heartbeat พร้อม Claim loss
-4. Claim reward พร้อม Verification absent/cooldown
-5. CAPTCHA และ Non-CAPTCHA HTTP 400
-6. All-mode transient recovery โดยไม่ Restart process
-7. สอง Workerแข่ง Scheduled row เดียวกัน
-8. Worker takeover หลัง Lease expiry
-9. Stop จาก Control ระหว่าง Mutation
-10. Restart ระหว่าง `PREPARED`, `IN_FLIGHT`, `UNCERTAIN`, `VERIFIED`
-11. Persistent storage restart/redeploy
-12. Panel ยังมีเพียง `START NOW / STOP ALL`
+1. Enroll Quest จริง
+2. Video progress จริง
+3. Desktop heartbeat จริง
+4. Claim reward จริง
+5. CAPTCHA HTTP 400
+6. Non-CAPTCHA HTTP 400
+7. HTTP 429 ที่ Retry-After มากกว่า 60 วินาที
+8. All-mode transient recovery โดยไม่ Restart process
+9. Restore summary `restored: 0`
+10. Restart ที่ `PREPARED`, `IN_FLIGHT`, `UNCERTAIN`, `VERIFIED`
+11. Worker ownership conflict
+12. Worker lease expiry และ Takeover
+13. Persistent SQLite หลัง Restart/Redeploy
+14. Stop ระหว่าง Mutation
+15. Token invalid ขณะอยู่ Waiting state
+16. Claim callback กลับมาหลัง Runner Terminal
+17. Panel ยังมีเพียง `START NOW / STOP ALL`
 
-## 17. Deployment limitations
+ใช้บัญชีและ Server ทดสอบ ห้ามเริ่มจากบัญชีหลัก
 
-- SQLite ต้องอยู่บน Storage ที่ทุก Process เข้าถึงไฟล์เดียวกันอย่างเชื่อถือได้
-- ไม่รองรับ Workers ที่มี Database คนละไฟล์
-- ไม่รับประกัน Production readiness จน Controlled UAT และ Persistent restart ผ่าน
-- PR ต้องคง Draft และห้าม Merge จน External analysis, Review และ UAT ครบ
+## 14. Deployment limitations
+
+- CI ผ่านไม่เท่ากับ Production ready
+- SQLite ต้องอยู่บน Shared/Persistent storage ที่ทุก Process เข้าถึงไฟล์เดียวกัน
+- ไม่รองรับ Workers ที่ใช้ Database คนละไฟล์
+- ห้าม Merge, Deploy, Auto-merge หรือเปลี่ยน PR ออกจาก Draft จน Review, External gates, Controlled UAT และการอนุมัติจากเจ้าของครบ
