@@ -277,4 +277,4 @@ if [[ "$survived" -gt 0 ]]; then
   exit 1
 fi
 
-echo 'All 25 critical mutations were killed'
+echo 'All 26 critical mutations were killed'
