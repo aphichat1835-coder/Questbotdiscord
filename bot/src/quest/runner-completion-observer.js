@@ -30,6 +30,19 @@ const UNVERIFIED_MUTATION_STATUSES = new Set([
 let readJob = legacyRunner.getJob;
 let readScheduledRunner = getScheduledRunner;
 let now = Date.now;
+let reportObserverFailure = (error, jobKey) => {
+  console.error(
+    `[RunnerCompletion:${String(jobKey).slice(0, 100)}] observer failed — ${error?.message ?? 'unknown error'}`,
+  );
+};
+
+function reportSafely(error, jobKey) {
+  try {
+    reportObserverFailure(error, jobKey);
+  } catch {
+    // Error reporting must never create another unhandled rejection.
+  }
+}
 
 function scheduleExists(scheduleId) {
   return scheduleId != null && Boolean(readScheduledRunner(scheduleId));
@@ -110,14 +123,28 @@ function handleRejected(jobKey, error) {
   clearSmartWake(jobKey);
 }
 
+function runObserverHandler(jobKey, handler) {
+  try {
+    handler();
+  } catch (error) {
+    reportSafely(error, jobKey);
+  }
+}
+
 export function configureRunnerCompletionObserver({
   getJob = legacyRunner.getJob,
   getScheduled = getScheduledRunner,
   currentTime = Date.now,
+  reportError = (error, jobKey) => {
+    console.error(
+      `[RunnerCompletion:${String(jobKey).slice(0, 100)}] observer failed — ${error?.message ?? 'unknown error'}`,
+    );
+  },
 } = {}) {
   readJob = getJob;
   readScheduledRunner = getScheduled;
   now = currentTime;
+  reportObserverFailure = reportError;
 }
 
 export function observeRunnerCompletion(jobKey, mode, scheduleId = null) {
@@ -127,10 +154,11 @@ export function observeRunnerCompletion(jobKey, mode, scheduleId = null) {
   observedCompletions.add(jobKey);
   void Promise.resolve(job.done)
     .then(
-      () => handleResolved(jobKey, mode, scheduleId),
-      (error) => handleRejected(jobKey, error),
+      () => runObserverHandler(jobKey, () => handleResolved(jobKey, mode, scheduleId)),
+      (error) => runObserverHandler(jobKey, () => handleRejected(jobKey, error)),
     )
-    .finally(() => observedCompletions.delete(jobKey));
+    .finally(() => observedCompletions.delete(jobKey))
+    .catch((error) => reportSafely(error, jobKey));
   return true;
 }
 
