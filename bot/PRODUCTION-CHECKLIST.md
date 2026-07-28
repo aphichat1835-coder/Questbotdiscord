@@ -273,7 +273,7 @@ npm audit --omit=dev --audit-level=high
 git diff --exit-code
 ```
 
-Final code evidence จาก CI #1351:
+Validated implementation evidence จาก commit `f49aa9cfbc6182c3a634bbd006afdb8dd3682320` และ CI #1355 ก่อนการ Sync เอกสารรอบนี้:
 
 - [x] Repository shape
 - [x] Sanitized Quest fixture
@@ -318,7 +318,7 @@ Mutation gate ครอบคลุม:
 
 ## 14. External gates
 
-บน Code evidence HEAD เดียวกัน:
+บน Validated implementation evidence HEAD เดียวกัน:
 
 - [x] Snyk status Success
 - [x] CodeRabbit commit status Success
@@ -327,7 +327,7 @@ Mutation gate ครอบคลุม:
 - [ ] Codacy current-head result
 - [ ] SonarCloud current-head result
 
-ห้ามใช้ผลจาก HEAD เก่าเป็น Final evidence
+Documentation-only commits หลัง Evidence นี้ต้องมี CI ผ่านของตัวเอง แต่ไม่เปลี่ยนผลทดสอบ Implementation ข้างต้น เว้นแต่ Source หรือ Test code ถูกแก้เพิ่ม
 
 ## 15. Controlled functional UAT
 
