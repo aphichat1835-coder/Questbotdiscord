@@ -1,0 +1,65 @@
+name: Apply Sonar re-export fix
+
+permissions:
+  contents: write
+
+on:
+  push:
+    branches: [aa.1]
+    paths:
+      - .github/workflows/apply-sonar-reexport-fix.yml
+
+jobs:
+  apply-fix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout aa.1
+        uses: actions/checkout@v6
+        with:
+          ref: aa.1
+          fetch-depth: 0
+
+      - name: Apply exact source transformation
+        shell: python
+        run: |
+          from pathlib import Path
+
+          path = Path('bot/src/discord-runner.js')
+          source = path.read_text(encoding='utf-8')
+
+          old_import = """  currentDiscordClientProfile,
+          DiscordApiError,
+          enrollQuestRequest,"""
+          new_import = """  currentDiscordClientProfile,
+          enrollQuestRequest,"""
+          old_export = "export { DiscordApiError, isFatalAuthError };"
+          new_export = """export { DiscordApiError } from './quest/api/discord-client.js';
+          export { isFatalAuthError };"""
+
+          if source.count(old_import) != 1:
+              raise SystemExit('Expected exactly one DiscordApiError import target')
+          if source.count(old_export) != 1:
+              raise SystemExit('Expected exactly one DiscordApiError export target')
+
+          source = source.replace(old_import, new_import)
+          source = source.replace(old_export, new_export)
+          path.write_text(source, encoding='utf-8')
+
+      - name: Validate source
+        run: |
+          git diff --check
+          node --check bot/src/discord-runner.js
+
+      - name: Commit fix
+        shell: bash
+        run: |
+          if git diff --quiet; then
+            echo "Source is already fixed"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add bot/src/discord-runner.js
+          git commit -m "refactor: re-export DiscordApiError directly"
+          git push origin HEAD:aa.1
