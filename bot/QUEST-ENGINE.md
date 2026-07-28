@@ -1,6 +1,6 @@
 # Quest Engine Architecture
 
-เอกสารนี้อธิบายสถาปัตยกรรม Quest Engine บนกิ่ง `aa.1` หลัง Correctness review รอบสุดท้าย ใช้เป็น Source of truth สำหรับ Review, UAT, Incident response และการพิจารณา Deploy
+เอกสารนี้อธิบายสถาปัตยกรรม Quest Engine บนกิ่ง `aa.1` หลัง Correctness และ Static-analysis review รอบล่าสุด ใช้เป็น Source of truth สำหรับ Review, UAT, Incident response และการพิจารณา Deploy
 
 ## 1. ขอบเขตที่ล็อกไว้
 
@@ -271,27 +271,27 @@ Shutdown order:
 
 ดังนั้นการ Backfill แถวเดิมเป็น Version 2 ไม่ทำให้ Recovery ตีความ Legacy mutation format ผิด และ Finding ที่ต้องบังคับ Version 1 สำหรับแถวเดิมถือเป็น False positive ภายใต้ Schema ปัจจุบัน
 
-## 12. Final automated evidence
+## 12. Static-analysis cleanup และ Final automated evidence
 
 Validated implementation HEAD ก่อน Documentation-only sync:
 
-`b5481d19a4695a971d26e1b30a3b48f21e08dc43`
+`cf93dbd37659405c112aa5bc0b1f466aa43d1c5b`
 
-GitHub Actions CI run ของ Implementation HEAD นี้:
+GitHub Actions CI ของ Implementation HEAD นี้:
 
-`#1366` — Success
+- `#1446` — Success
+- `#1447` — Success
 
-ผลจาก Artifact ของ HEAD เดียวกัน:
+ผลจาก Artifact ของ CI #1447:
 
-- 382 tests passed
+- 412 tests passed
 - 0 failed
 - 0 cancelled
 - 0 skipped
 - 0 todo
-- Coverage: 93.41% lines / 84.38% branches / 88.71% functions
-- `discord-runner.js`: 85.45% lines
-- Mutation baseline passed
-- 27/27 critical mutations killed
+- Coverage: 93.62% lines / 84.87% branches / 89.30% functions
+- Mutation baseline และ Mutation safety scripts ผ่านทุกชุด
+- Dedicated recovery metadata mutation ถูก Kill
 - Mutation scripts คืน Source ครบ
 - Repository shape ผ่าน
 - Sanitized Quest fixture ผ่าน
@@ -300,9 +300,29 @@ GitHub Actions CI run ของ Implementation HEAD นี้:
 - JS/MJS/Bash syntax ผ่าน
 - Production dependency audit ระดับ High ผ่าน
 
-Documentation-only commits หลัง HEAD นี้ต้องผ่าน CI ของตัวเอง แต่ไม่เปลี่ยนผล Implementation evidence ข้างต้น เว้นแต่มีการแก้ Source หรือ Test code เพิ่ม
+Static-analysis cleanup รอบนี้ครอบคลุม:
 
-Mutation gates 27 จุด:
+- ลด Cognitive Complexity ของ Quest endpoint fallback และ Scheduled worker reconciliation
+- แยก Runner status parsing ออกจาก State transition และตัด Regex ที่เสี่ยง Backtracking
+- แยก Runner error classification พร้อม Table tests ที่ล็อก Priority
+- แยก `/api-status` เป็น Snapshot และ Pure Embed builder พร้อม Behavior test
+- เอา Empty spread fallbacks และ Array spreads ที่ไม่จำเป็นออก
+- เปลี่ยน `NaN` เป็น `Number.NaN` และใช้ `toSorted()` โดยไม่ Mutate Array เดิม
+- แก้ URL/Request stringification ใน Tests ให้ตรวจชนิดก่อน
+- เพิ่ม Default branch และ stderr handling ให้ Mutation shell scripts
+- รักษาลำดับ Claim heartbeat, Cleanup และ Ownership revalidation เดิม
+
+External status ที่ยืนยันบน Implementation HEAD/PR static-analysis surface:
+
+- Snyk: Success
+- CodeRabbit commit status: Success
+- CodeRabbit inline review threads ของ PR #15: Resolved
+- Codacy PR #16: Up to standards / 0 new issues
+- SonarCloud current-head result: ยังต้องยืนยันหลัง Scan รอบล่าสุด
+
+Documentation-only commits หลัง Implementation HEAD นี้ต้องผ่าน CI ของตัวเอง แต่ไม่เปลี่ยนผล Implementation evidence ข้างต้น เว้นแต่มีการแก้ Source หรือ Test code เพิ่ม
+
+Mutation gates ที่ยังบังคับใช้อยู่ครอบคลุม:
 
 1. Skip fresh verification หลัง Uncertain mutation
 2. Deadline comparison กลับด้าน
@@ -331,13 +351,6 @@ Mutation gates 27 จุด:
 25. Smart Wake denied attempt ไม่ถูกล้าง
 26. Numeric Quest ID ไม่ถูก Normalize
 27. Recovery plan ทำ Diagnostic metadata เดิมหาย
-
-External status ที่ยืนยันบน Implementation HEAD นี้:
-
-- Snyk: Success
-- CodeRabbit commit status: Success
-- Codacy: ยังไม่มี Current-head result ที่ยืนยัน
-- SonarCloud: ยังไม่มี Current-head result ที่ยืนยัน
 
 ## 13. Controlled UAT ที่ยังต้องทำ
 
