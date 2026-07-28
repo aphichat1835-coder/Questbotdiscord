@@ -16,6 +16,13 @@ import {
 
 const originalFetch = globalThis.fetch;
 
+function fetchInputUrl(input) {
+  if (typeof input === 'string') return input;
+  if (input instanceof URL) return input.href;
+  if (input instanceof Request) return input.url;
+  throw new TypeError('Unsupported fetch input');
+}
+
 test.afterEach(() => {
   globalThis.fetch = originalFetch;
 });
@@ -41,7 +48,7 @@ test('Quest client source uses API v10 directly and builds coherent headers', ()
 test('discordFetch sends Quest traffic to v10 without relying on runtime rewriting', async () => {
   const calls = [];
   globalThis.fetch = async (url, options) => {
-    calls.push({ url: String(url), method: options.method ?? 'GET' });
+    calls.push({ url: fetchInputUrl(url), method: options.method ?? 'GET' });
     return new Response(JSON.stringify({ id: 'me' }), {
       status: 200,
       headers: { 'content-type': 'application/json' },
@@ -63,7 +70,7 @@ test('API URL builder rejects authority, query, fragment and traversal injection
     '/%2e%2e/users/@me',
     '/users/@me?redirect=https://attacker.example',
     '/users/@me#fragment',
-    '/users\\@me',
+    String.raw`/users\@me`,
   ]) {
     assert.throws(() => buildDiscordApiUrl(unsafePath), TypeError);
   }
@@ -72,7 +79,7 @@ test('API URL builder rejects authority, query, fragment and traversal injection
 test('external Quest identifiers are encoded as one URL path segment', async () => {
   let requestUrl = null;
   globalThis.fetch = async (url) => {
-    requestUrl = String(url);
+    requestUrl = fetchInputUrl(url);
     return new Response('{}', { status: 200 });
   };
 
@@ -86,8 +93,9 @@ test('external Quest identifiers are encoded as one URL path segment', async () 
 test('Quest endpoint fallback accepts an empty first endpoint and populated second endpoint', async () => {
   const calls = [];
   globalThis.fetch = async (url) => {
-    calls.push(String(url));
-    if (String(url).endsWith('/quests/@me')) {
+    const requestUrl = fetchInputUrl(url);
+    calls.push(requestUrl);
+    if (requestUrl.endsWith('/quests/@me')) {
       return new Response(JSON.stringify({ quests: [] }), { status: 200 });
     }
     return new Response(JSON.stringify({ quests: [{ id: 'quest-1' }] }), { status: 200 });
@@ -98,11 +106,51 @@ test('Quest endpoint fallback accepts an empty first endpoint and populated seco
   assert.equal(calls.length, 2);
 });
 
+test('Quest endpoint search stops immediately after a fatal 401', async () => {
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls++;
+    return new Response(JSON.stringify({ message: 'Unauthorized' }), { status: 401 });
+  };
+
+  await assert.rejects(
+    () => fetchQuestPayload('bad-token'),
+    (error) => error instanceof DiscordApiError && error.status === 401,
+  );
+  assert.equal(calls, 1);
+});
+
+test('Quest endpoint search keeps an earlier empty payload when a later endpoint is forbidden', async () => {
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls++;
+    if (calls === 1) return new Response(JSON.stringify({ quests: [] }), { status: 200 });
+    return new Response(JSON.stringify({ message: 'Forbidden' }), { status: 403 });
+  };
+
+  const payload = await fetchQuestPayload('fixture-token');
+  assert.equal(payload.path, '/quests/@me');
+  assert.deepEqual(payload.quests, []);
+  assert.equal(calls, 2);
+});
+
+test('Quest endpoint search propagates abort errors without trying another endpoint', async () => {
+  let calls = 0;
+  const abortError = Object.assign(new Error('aborted'), { name: 'AbortError' });
+  globalThis.fetch = async () => {
+    calls++;
+    throw abortError;
+  };
+
+  await assert.rejects(() => fetchQuestPayload('fixture-token'), (error) => error === abortError);
+  assert.equal(calls, 1);
+});
+
 test('enroll and video progress mutations are built by the authoritative API client', async () => {
   const calls = [];
   globalThis.fetch = async (url, options) => {
     calls.push({
-      url: String(url),
+      url: fetchInputUrl(url),
       method: options.method,
       body: JSON.parse(options.body),
     });
@@ -145,8 +193,9 @@ test('video progress rejects malformed timestamps before any network request', a
 test('claim falls back from claim-reward to the legacy claim endpoint only on 404', async () => {
   const calls = [];
   globalThis.fetch = async (url, options) => {
-    calls.push({ url: String(url), body: JSON.parse(options.body) });
-    if (String(url).endsWith('/claim-reward')) {
+    const requestUrl = fetchInputUrl(url);
+    calls.push({ url: requestUrl, body: JSON.parse(options.body) });
+    if (requestUrl.endsWith('/claim-reward')) {
       return new Response(JSON.stringify({ message: 'not found' }), { status: 404 });
     }
     return new Response('{}', { status: 200 });
@@ -167,7 +216,7 @@ test('claim falls back from claim-reward to the legacy claim endpoint only on 40
 
 test('desktop heartbeat falls back to application payload after stream-key 400', async () => {
   const calls = [];
-  globalThis.fetch = async (url, options) => {
+  globalThis.fetch = async (_url, options) => {
     const body = JSON.parse(options.body);
     calls.push(body);
     if (Object.hasOwn(body, 'stream_key')) {
