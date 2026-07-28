@@ -20,6 +20,10 @@ const RECOVERY_STATES = new Set([
   RUNNER_STATE.VERIFYING_COMPLETION,
   RUNNER_STATE.VERIFYING_CLAIM,
 ]);
+const RECOVERY_ACTIONS = new Set([
+  'VERIFY_MUTATION',
+  'VERIFY_COMPLETION',
+]);
 const UNVERIFIED_MUTATION_STATUSES = new Set([
   RUNNER_MUTATION_STATUS.PREPARED,
   RUNNER_MUTATION_STATUS.IN_FLIGHT,
@@ -48,6 +52,11 @@ function scheduleExists(scheduleId) {
   return scheduleId != null && Boolean(readScheduledRunner(scheduleId));
 }
 
+function recoveryFetchWasInterrupted(current) {
+  return current?.state === RUNNER_STATE.FETCHING_QUESTS
+    && RECOVERY_ACTIONS.has(current?.metadata?.recoveryAction);
+}
+
 function shouldDeferRecovery(current, mode, scheduleId) {
   return Boolean(
     current
@@ -56,6 +65,7 @@ function shouldDeferRecovery(current, mode, scheduleId) {
     && (
       RECOVERY_STATES.has(current.state)
       || UNVERIFIED_MUTATION_STATUSES.has(current.mutation_status)
+      || recoveryFetchWasInterrupted(current)
     )
   );
 }
