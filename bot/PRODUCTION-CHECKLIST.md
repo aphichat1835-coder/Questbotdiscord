@@ -191,6 +191,7 @@ PREPARED → IN_FLIGHT → ACCEPTED/UNCERTAIN → VERIFIED
 - [ ] `PREPARED/IN_FLIGHT/ACCEPTED/UNCERTAIN` → Verify ก่อน Resend
 - [ ] `VERIFYING_*` → Verification ต่อ
 - [ ] Recovery fetch ที่จบระหว่าง `FETCHING_QUESTS` → `WAITING_RETRY`
+- [ ] Recovery plan ต้องรักษา Diagnostic metadata เดิม
 - [ ] Claim retry ไม่ปลุก Terminal runner
 - [ ] Restore Throw → Report + Rearm
 - [ ] Restore summary `restored <= 0` → Failure + Rearm
@@ -273,16 +274,17 @@ npm audit --omit=dev --audit-level=high
 git diff --exit-code
 ```
 
-Validated implementation evidence จาก commit `f49aa9cfbc6182c3a634bbd006afdb8dd3682320` และ CI #1355 ก่อนการ Sync เอกสารรอบนี้:
+Validated implementation evidence จาก commit `b5481d19a4695a971d26e1b30a3b48f21e08dc43` และ CI #1366 ก่อนการ Sync เอกสารรอบนี้:
 
 - [x] Repository shape
 - [x] Sanitized Quest fixture
 - [x] Fixed backup destinations
 - [x] Incident/Storage boundaries
-- [x] 381/381 tests
+- [x] 382/382 tests
 - [x] 0 failed/cancelled/skipped/todo
-- [x] Coverage 93.38% lines / 84.32% branches / 88.70% functions
-- [x] 26/26 critical mutations killed
+- [x] Coverage 93.41% lines / 84.38% branches / 88.71% functions
+- [x] `discord-runner.js` 85.45% lines
+- [x] 27/27 critical mutations killed
 - [x] Mutation source restoration
 - [x] JS/MJS/Bash syntax
 - [x] Production dependency audit ระดับ High
@@ -315,6 +317,7 @@ Mutation gate ครอบคลุม:
 24. Terminal observer precedence
 25. Smart Wake denied-attempt cleanup
 26. Quest ID normalization
+27. Recovery metadata preservation
 
 ## 14. External gates
 
