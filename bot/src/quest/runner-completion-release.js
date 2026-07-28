@@ -1,8 +1,16 @@
+function reportSafely(onError, error) {
+  try {
+    onError(error);
+  } catch {
+    // Error reporting must never create another unhandled rejection.
+  }
+}
+
 function safeRelease(release, onError) {
   try {
     release();
   } catch (error) {
-    onError(error);
+    reportSafely(onError, error);
   }
 }
 
@@ -22,6 +30,6 @@ export function releaseRunnerExecutionWhenSettled(done, release, {
       () => safeRelease(release, onError),
       () => safeRelease(release, onError),
     )
-    .catch(onError);
+    .catch((error) => reportSafely(onError, error));
   return true;
 }
