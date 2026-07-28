@@ -10,6 +10,12 @@ import {
 export const CLAIM_RETRY_DELAY_MS = 15 * 60 * 1000;
 export const CLAIM_LONG_RETRY_DELAY_MS = 24 * 60 * 60 * 1000;
 
+const TERMINAL_RUNNER_STATES = new Set([
+  RUNNER_STATE.STOPPED,
+  RUNNER_STATE.COMPLETED,
+  RUNNER_STATE.FAILED,
+]);
+
 export const CLAIM_RETRY_REASON = Object.freeze({
   CAPTCHA: 'CAPTCHA',
   PLATFORM_AMBIGUOUS: 'PLATFORM_AMBIGUOUS',
@@ -103,7 +109,7 @@ export function persistClaimRetry(jobKey, quest, {
   now = new Date(),
 } = {}) {
   const current = getRunnerState(jobKey);
-  if (!current) return null;
+  if (!current || TERMINAL_RUNNER_STATES.has(current.state)) return current;
   const nextActionAt = new Date(now.getTime() + Math.max(1000, Number(delayMs) || 0)).toISOString();
   return transitionRunnerState(jobKey, RUNNER_STATE.WAITING_RETRY, {
     questId: quest?.id ?? current.quest_id,
