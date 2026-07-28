@@ -8,6 +8,16 @@ function retryTimestamp(state) {
   return Number.isFinite(value) ? value : null;
 }
 
+function assertRestoreResult(result) {
+  if (!result || typeof result !== 'object' || !Number.isFinite(Number(result.restored))) return;
+  if (Number(result.restored) > 0) return;
+  const error = new Error(
+    `All-mode recovery restored no runner (failed=${Number(result.failed) || 0}, skipped=${Number(result.skipped) || 0})`,
+  );
+  error.code = 'ALL_MODE_RESTORE_EMPTY';
+  throw error;
+}
+
 export function createAllModeRecoveryController({
   readState,
   readJob,
@@ -78,7 +88,8 @@ export function createAllModeRecoveryController({
     try {
       const fresh = eligible(context);
       if (!fresh || fresh.nextAt > currentTime()) return false;
-      await restore(fresh.row, context);
+      const result = await restore(fresh.row, context);
+      assertRestoreResult(result);
       return true;
     } catch (error) {
       reportError(error, context);
