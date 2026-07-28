@@ -13,6 +13,10 @@ const OBSERVED_WAITING_STATES = new Set([
   RUNNER_STATE.WAITING_RETRY,
   RUNNER_STATE.WAITING_SCHEDULE,
 ]);
+const HIGH_PRIORITY_WAITING_STATES = new Set([
+  RUNNER_STATE.WAITING_ENROLLMENT,
+  RUNNER_STATE.WAITING_RATE_LIMIT,
+]);
 const CONTROLLED_STATES = new Set([
   RUNNER_STATE.STOPPING,
   RUNNER_STATE.STOPPED,
@@ -61,6 +65,8 @@ function hasActiveMutationCheckpoint(current) {
 function hasAuthoritativeDirectState(current, observedState) {
   if (!current) return false;
   if (CONTROLLED_STATES.has(current.state)) return true;
+  if (HIGH_PRIORITY_WAITING_STATES.has(current.state)) return true;
+  if (String(current.state_source ?? '').startsWith('schedule-hint:')) return true;
   if (hasActiveMutationCheckpoint(current)) return true;
   if (OBSERVED_WAITING_STATES.has(observedState)) return false;
   return Boolean(current.state_source && current.state_source !== 'legacy-observer');
