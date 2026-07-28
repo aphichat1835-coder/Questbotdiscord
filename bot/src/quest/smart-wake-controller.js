@@ -117,17 +117,22 @@ function installWakeTimer(args, hint, existing) {
 
 function scheduleSmartWake(args, hint) {
   if (args.mode !== 'scheduled') return;
-  if (!hint) {
+  if (!hint || hint.reason === 'baseline') {
     clearWakeTimer(args.jobKey);
     return;
   }
-  if (hint.reason === 'baseline') return;
   const at = Date.parse(hint.nextActionAt);
-  if (!Number.isFinite(at)) return;
+  if (!Number.isFinite(at)) {
+    clearWakeTimer(args.jobKey);
+    return;
+  }
 
   const active = readActiveJob(args.jobKey);
   const currentNextAt = Date.parse(active?.summary?.().nextCheckAt);
-  if (Number.isFinite(currentNextAt) && currentNextAt <= at) return;
+  if (Number.isFinite(currentNextAt) && currentNextAt <= at) {
+    clearWakeTimer(args.jobKey);
+    return;
+  }
 
   const existing = smartWakeups.get(args.jobKey);
   if (existing?.timer) clearTimeout(existing.timer);
