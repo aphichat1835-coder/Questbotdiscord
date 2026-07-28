@@ -44,9 +44,13 @@ test('Discord API v10, client headers and compatibility errors have one source o
   assert.match(apiClient, /Number\.isInteger\(value\)/);
   assert.doesNotMatch(apiClient, /randomInt|Math\.random\(/);
 
-  assert.match(runner, /DiscordApiError,/);
+  assert.match(
+    runner,
+    /export \{ DiscordApiError \} from '\.\/quest\/api\/discord-client\.js';/,
+  );
   assert.match(runner, /isFatalAuthError,/);
-  assert.match(runner, /export \{ DiscordApiError, isFatalAuthError \}/);
+  assert.match(runner, /export \{ isFatalAuthError \};/);
+  assert.doesNotMatch(runner, /^\s*DiscordApiError,\s*$/m);
 });
 
 test('schema normalization and executor selection remain outside the runner', async () => {
