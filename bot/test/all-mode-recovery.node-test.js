@@ -4,7 +4,7 @@ import test from 'node:test';
 import { createAllModeRecoveryController } from '../src/quest/all-mode-recovery.js';
 import { RUNNER_STATE } from '../src/quest/runner-state-store.js';
 
-function fixture() {
+function fixture({ restore = null, restoreRetryDelayMs = 60_000 } = {}) {
   let now = Date.parse('2030-01-01T00:00:00.000Z');
   const jobs = new Map();
   const schedules = new Map([[41, { id: 41, owner_id: 'owner-41' }]]);
@@ -18,11 +18,15 @@ function fixture() {
   const restores = [];
   const errors = [];
 
+  const restoreFn = restore ?? (async (row, context) => restores.push({ row, context }));
   const controller = createAllModeRecoveryController({
     readState: (jobKey) => states.get(jobKey) ?? null,
     readJob: (jobKey) => jobs.get(jobKey) ?? null,
     readScheduled: (scheduleId) => schedules.get(scheduleId) ?? null,
-    restore: async (row, context) => restores.push({ row, context }),
+    restore: async (row, context) => {
+      restores.push({ row, context });
+      return restoreFn(row, context);
+    },
     currentTime: () => now,
     setTimer: (callback, delay) => {
       const timer = { callback, delay, cleared: false, unref() {} };
@@ -31,6 +35,7 @@ function fixture() {
     },
     clearTimer: (timer) => { timer.cleared = true; },
     reportError: (error) => errors.push(error.message),
+    restoreRetryDelayMs,
   });
 
   return {
@@ -64,6 +69,34 @@ test('all-mode recovery schedules from durable next_action_at and restores when 
   assert.equal(item.restores[0].row.id, 41);
   assert.equal(item.restores[0].context.userToken, undefined);
   assert.deepEqual(item.errors, []);
+});
+
+test('failed all-mode restore reports and rearms with a nonzero bounded delay', async () => {
+  const item = fixture({
+    restore: async () => { throw new Error('restore unavailable'); },
+    restoreRetryDelayMs: 60_000,
+  });
+  item.setNow(Date.parse('2030-01-01T00:00:05.000Z'));
+
+  assert.equal(await item.controller.run(item.context), false);
+  assert.deepEqual(item.errors, ['restore unavailable']);
+  assert.equal(item.controller.isScheduled(item.context.jobKey), true);
+  assert.equal(item.timers.length, 1);
+  assert.equal(item.timers[0].delay, 60_000);
+});
+
+test('failed restore is not rearmed after the durable state becomes terminal', async () => {
+  const item = fixture({
+    restore: async () => {
+      item.states.get(item.context.jobKey).state = RUNNER_STATE.FAILED;
+      throw new Error('terminal restore failure');
+    },
+  });
+  item.setNow(Date.parse('2030-01-01T00:00:05.000Z'));
+
+  assert.equal(await item.controller.run(item.context), false);
+  assert.equal(item.controller.isScheduled(item.context.jobKey), false);
+  assert.equal(item.timers.length, 0);
 });
 
 test('all-mode recovery refuses stale state, removed schedules and replacement jobs', async () => {
