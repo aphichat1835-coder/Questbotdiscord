@@ -17,7 +17,7 @@
 - [ ] ไม่มี Persistent analytics/history เพิ่ม
 - [ ] ไม่มี Encryption key rotation
 - [ ] ไม่มี Blind retry Mutation
-- [ ] PR ยังคง Draft
+- [x] PR ยังคง Draft
 
 ## 2. Environment และ Secrets
 
@@ -77,7 +77,7 @@ QUEST_WORKER_POLL_MS=5000
 - [ ] HTTP process ใช้ Port ไม่ซ้ำ
 - [ ] One-shot อยู่ Control และไม่ Delegate
 - [ ] Worker ใช้ REST v10 และไม่ Login Gateway
-- [ ] Scheduled row ถูก Worker รับภายใน Poll interval
+- [ ] Scheduled row ถูก Workerรับภายใน Poll interval
 - [ ] Worker แต่ละตัวมี Holder จาก PID + UUID
 - [ ] Worker หลาย Holder ทำงานพร้อมกันได้
 - [ ] Scheduled row มี Active claim หนึ่ง Holder
@@ -274,17 +274,17 @@ npm audit --omit=dev --audit-level=high
 git diff --exit-code
 ```
 
-Validated implementation evidence จาก commit `b5481d19a4695a971d26e1b30a3b48f21e08dc43` และ CI #1366 ก่อนการ Sync เอกสารรอบนี้:
+Validated implementation evidence จาก commit `cf93dbd37659405c112aa5bc0b1f466aa43d1c5b` และ CI #1447 ก่อนการ Sync เอกสารรอบนี้:
 
 - [x] Repository shape
 - [x] Sanitized Quest fixture
 - [x] Fixed backup destinations
 - [x] Incident/Storage boundaries
-- [x] 382/382 tests
+- [x] 412/412 tests
 - [x] 0 failed/cancelled/skipped/todo
-- [x] Coverage 93.41% lines / 84.38% branches / 88.71% functions
-- [x] `discord-runner.js` 85.45% lines
-- [x] 27/27 critical mutations killed
+- [x] Coverage 93.62% lines / 84.87% branches / 89.30% functions
+- [x] Mutation baseline และ Mutation safety scripts ผ่านทุกชุด
+- [x] Dedicated recovery metadata mutation ถูก Kill
 - [x] Mutation source restoration
 - [x] JS/MJS/Bash syntax
 - [x] Production dependency audit ระดับ High
@@ -321,14 +321,15 @@ Mutation gate ครอบคลุม:
 
 ## 14. External gates
 
-บน Validated implementation evidence HEAD เดียวกัน:
+บน Validated implementation evidence HEAD และ Static-analysis PR surface:
 
 - [x] Snyk status Success
 - [x] CodeRabbit commit status Success
-- [ ] CodeRabbit current review threads ถูกตอบและ Resolve ครบ
-- [ ] CodeRabbit Full review หลังเอกสารรอบสุดท้าย
-- [ ] Codacy current-head result
+- [x] CodeRabbit current review threads ถูกตอบและ Resolve ครบ
+- [x] Codacy: Up to standards / 0 new issues
+- [ ] CodeFactor current-head result
 - [ ] SonarCloud current-head result
+- [ ] CodeRabbit Full review หลังเอกสารรอบสุดท้าย
 
 Documentation-only commits หลัง Evidence นี้ต้องมี CI ผ่านของตัวเอง แต่ไม่เปลี่ยนผลทดสอบ Implementation ข้างต้น เว้นแต่ Source หรือ Test code ถูกแก้เพิ่ม
 
@@ -381,7 +382,7 @@ Documentation-only commits หลัง Evidence นี้ต้องมี CI 
 Production อนุมัติได้เมื่อ:
 
 - [ ] CI ของ HEAD ล่าสุดผ่านทั้งหมด
-- [ ] Snyk, Codacy, SonarCloud และ CodeRabbit ตรวจบน HEAD เดียวกัน
+- [ ] Snyk, Codacy, CodeFactor, SonarCloud และ CodeRabbit ตรวจบน HEAD เดียวกัน
 - [ ] ไม่มี Current review thread ค้าง
 - [ ] Persistent storage ผ่าน Controlled restart
 - [ ] Discord Mutation UAT ผ่าน
