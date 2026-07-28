@@ -2,23 +2,24 @@
 
 เอกสารนี้ใช้ตรวจรับ Pull Request หรือกิ่ง Release ก่อน Merge หรือ Deploy ระบบ NeverDie Quest Bot
 
-> CI ที่ผ่านไม่เท่ากับ Production UAT ผ่าน โดยเฉพาะ Discord Quest Mutation, All-in-one recovery และ Multi-worker failover
+> Automated CI ผ่านไม่เท่ากับ Discord UAT, Persistent storage UAT หรือ Multi-worker failover ผ่าน
 
 ## 1. ขอบเขตที่ต้องไม่เปลี่ยน
 
-- Repository ยังเป็น Bot-only
-- Panel มีเพียง `START NOW` และ `STOP ALL`
-- Runner สูงสุด 10 บัญชีต่อ Owner
-- One-shot ไม่ Persist token เพิ่ม
-- Auto Daily ใช้รอบ 00:00 / 08:00 / 16:00 ตาม Timezone
-- ไม่เพิ่ม Control Panel V2
-- ไม่เพิ่ม Persistent analytics/history
-- ไม่เพิ่ม Encryption key rotation
-- Discord HTTP API ใช้ v10 โดยตรง
-- ห้าม Blind retry Mutation
-- Production lifecycle ต้องผ่าน `quest/runner-service.js`
+- [ ] Repository ยังเป็น Bot-only
+- [ ] Panel มีเพียง `START NOW` และ `STOP ALL`
+- [ ] Runner สูงสุด 10 บัญชีต่อ Owner
+- [ ] One-shot ไม่ Persist token เพิ่ม
+- [ ] Auto Daily ใช้รอบตาม Timezone ที่กำหนด
+- [ ] Discord HTTP API ใช้ v10 โดยตรง
+- [ ] Production lifecycle ผ่าน `quest/runner-service.js`
+- [ ] ไม่มี Control Panel V2
+- [ ] ไม่มี Persistent analytics/history เพิ่ม
+- [ ] ไม่มี Encryption key rotation
+- [ ] ไม่มี Blind retry Mutation
+- [ ] PR ยังคง Draft
 
-## 2. Environment
+## 2. Environment และ Secrets
 
 ค่าหลัก:
 
@@ -50,136 +51,119 @@ QUEST_WORKER_POLL_MS=5000
 
 ตรวจว่า:
 
-- `RUNNER_TOKEN_SECRET` ยาวอย่างน้อย 16 ตัวอักษรและไม่ถูก Commit
-- `LOG_WEBHOOK_URL` เป็น Webhook ส่วนตัว
-- `HEALTH_STATUS_TOKEN` เป็น Secret คนละค่ากับ Token อื่น
-- `QUEST_PROCESS_ROLE` รับเฉพาะ `all`, `control`, `worker`
-- `QUEST_WORKER_POLL_MS` อยู่ระหว่าง 1000–60000 ms
-- Discord profile อัปเดตพร้อมกันทั้ง Client/Chrome/Electron/Build
-- Runtime ไม่เขียน `DATABASE_PATH` กลับเข้า Environment
-- ไม่มี `DATABASE_BACKUP_DIR`
+- [ ] `RUNNER_TOKEN_SECRET` ยาวอย่างน้อย 16 ตัวอักษรและไม่ถูก Commit
+- [ ] `LOG_WEBHOOK_URL` เป็น Webhook ส่วนตัว
+- [ ] `HEALTH_STATUS_TOKEN` เป็น Secret คนละค่ากับ Token อื่น
+- [ ] `QUEST_PROCESS_ROLE` รับเฉพาะ `all`, `control`, `worker`
+- [ ] `QUEST_WORKER_POLL_MS` อยู่ระหว่าง 1000–60000 ms
+- [ ] Runtime ไม่เขียน `DATABASE_PATH` กลับ Environment
+- [ ] ไม่มี `DATABASE_BACKUP_DIR`
+- [ ] Client/Chrome/Electron/Build profile อัปเดตเป็นชุดเดียวกัน
 
 ## 3. Process topology
 
 ### All-in-one
 
-- `QUEST_PROCESS_ROLE=all`
-- เปิด Gateway, Commands, One-shot และ Scheduled runner ใน Process เดียว
-- ห้ามทำงานพร้อม Control หรือ Worker
-- Scheduled runner ที่ออกระหว่าง Transient recovery ต้องถูกปลุกจาก Durable `WAITING_RETRY`
-- Recovery timer ห้ามเก็บ Raw user token
+- [ ] `QUEST_PROCESS_ROLE=all`
+- [ ] ไม่ทำงานพร้อม Control หรือ Worker
+- [ ] Scheduled runner ที่เข้า `WAITING_RETRY` ถูกปลุกโดย `all-mode-recovery.js`
+- [ ] Restore Throw หรือ `restored <= 0` ถูก Rearm ด้วย Backoff
+- [ ] Recovery timer ไม่เก็บ Raw user token
 
 ### Split Control + Workers
 
-ต้องยืนยัน:
+- [ ] Control และ Workers ใช้ `DATABASE_PATH` เดียวกันจริง
+- [ ] ทุก Process ใช้ `RUNNER_TOKEN_SECRET` เดียวกัน
+- [ ] HTTP process ใช้ Port ไม่ซ้ำ
+- [ ] One-shot อยู่ Control และไม่ Delegate
+- [ ] Worker ใช้ REST v10 และไม่ Login Gateway
+- [ ] Scheduled row ถูก Worker รับภายใน Poll interval
+- [ ] Worker แต่ละตัวมี Holder จาก PID + UUID
+- [ ] Worker หลาย Holder ทำงานพร้อมกันได้
+- [ ] Scheduled row มี Active claim หนึ่ง Holder
+- [ ] Worker เสีย Claim แล้ว Abort local runner
+- [ ] Worker อื่น Takeover ได้หลัง Claim หมดอายุ
+- [ ] ไม่ใช้ Local disk แยกกันเป็น Shared topology
 
-1. Control และ Workers ใช้ `DATABASE_PATH` เดียวกันจริง
-2. ทุก Process ใช้ `RUNNER_TOKEN_SECRET` เดียวกัน
-3. HTTP process ใช้ Port ไม่ซ้ำ
-4. One-shot อยู่ Control และไม่ Delegate
-5. Worker ใช้ REST v10 และไม่ Login Gateway
-6. Scheduled row ถูก Worker รับภายใน Poll interval
-7. Worker แต่ละตัวมี Holder จาก PID + UUID
-8. Worker หลาย Holder ทำงานพร้อมกันได้
-9. Scheduled row มี Active claim ได้หนึ่ง Holder
-10. Worker เสีย Claim แล้ว Abort local runner
-11. Worker อื่น Takeover ได้หลัง Claim หมดอายุ
-12. Local disk แยกกันห้ามใช้เป็น Shared topology
+## 4. Bootstrap, Completion และ Shutdown
 
-## 4. Safe bootstrap, completion และ Shutdown
-
-ตรวจว่า:
-
-1. Bootstrap handlers ติดตั้งก่อน Dynamic import
-2. Config/Module import failure รายงานได้โดยไม่พึ่ง SQLite/Discord Client
-3. Entrypoint เลือก App ตาม Process role
-4. Database open/migration failure ใช้ Incident code ถูกต้อง
-5. Runtime lease conflict/lost ทำให้ Process ปิดอย่างปลอดภัย
-6. Dashboard bind failure Reject startup
-7. Login failure ส่ง Incident แล้ว Shutdown
-8. Fatal report มี Time budget
-9. Fatal/Shutdown promise ไม่ทำงานซ้อน
-10. Worker Mark not-ready ก่อน Shutdown
-11. Worker หยุด Supervisor ก่อนรับงานใหม่
-12. Abort runners และรอ `job.done` ก่อนปล่อย Claims
-13. Execution context ถูก Release ทั้งเมื่อ `job.done` Resolve และ Reject
-14. Derived completion promise ไม่มี `unhandledRejection`
-15. Release callback failure ถูกจับและไม่ปิด Process
-16. Release error reporter ที่โยนซ้ำต้องถูก Contain
-17. Completion observer transition failure ถูก Report และไม่หลุดจาก Promise chain
-18. Observer cleanup `.finally()` ไม่สร้าง `unhandledRejection`
-19. Stop/Shutdown ยกเลิก Smart Wake และ All-mode recovery timers
-20. Dashboard และ Database ถูกปิดตามลำดับ
+- [ ] Bootstrap handlers ติดตั้งก่อน Dynamic import
+- [ ] Config/Module import failure รายงานได้โดยไม่พึ่ง SQLite/Discord Client
+- [ ] Entrypoint เลือก App ตาม Process role
+- [ ] Database open/migration failure ใช้ Incident code ถูกต้อง
+- [ ] Runtime lease conflict/lost ทำให้ Process ปิดอย่างปลอดภัย
+- [ ] Dashboard bind failure Reject startup
+- [ ] Login failure ส่ง Incident แล้ว Shutdown
+- [ ] Fatal/Shutdown promise ไม่ทำงานซ้อน
+- [ ] Worker Mark not-ready ก่อน Shutdown
+- [ ] Worker หยุด Supervisor ก่อนรับงานใหม่
+- [ ] Abort runners และรอ `job.done` ก่อนปล่อย Claims
+- [ ] Execution context Release ทั้ง Resolve และ Reject
+- [ ] Completion observer ไม่มี Derived `unhandledRejection`
+- [ ] Release callback/reporting failure ถูก Contain
+- [ ] Stop/Shutdown ยกเลิก Smart Wake และ All-mode timers
+- [ ] Dashboard และ Database ปิดตามลำดับ
 
 ## 5. Quest API boundary
 
-ตรวจว่า:
+- [ ] ใช้ `https://discord.com/api/v10`
+- [ ] URL ภายนอกและ Webhook ไม่ถูก Rewrite
+- [ ] Path ปฏิเสธ Authority, Query, Fragment, Backslash และ Traversal
+- [ ] External Quest ID ถูก Encode เป็น segment เดียว
+- [ ] Quest list ตรวจทั้งสอง Endpoint
+- [ ] Endpoint แรกคืนว่างไม่ถูกสรุปทันทีว่าไม่มี Quest
+- [ ] POST Mutation ไม่ Generic retry
+- [ ] Abort ไม่กลายเป็น Compatibility error
+- [ ] Fatal auth ถูกจัดประเภทถูกต้อง
+- [ ] Video timestamp เป็นจำนวนเต็มไม่ติดลบ
+- [ ] Response ปกติไม่ถูก Clone/Parse เพื่อหา Rate limit
 
-- ใช้ `https://discord.com/api/v10` โดยตรง
-- URL ภายนอกและ Webhook ไม่ถูก Rewrite
-- URL path ปฏิเสธ Authority, Query, Fragment, Backslash และ Traversal
-- External Quest ID ถูก Encode เป็น Path segment เดียว
-- Quest list ตรวจ `/quests/@me` และ `/users/@me/quests`
-- รายการว่างจาก Endpoint แรกไม่ถูกสรุปทันทีว่าไม่มี Quest
-- POST Mutation ไม่ Generic retry
-- Abort ไม่กลายเป็น Compatibility error
-- `DiscordApiError` และ `QuestCompatibilityError` มี Source เดียว
-- Video timestamp ต้องเป็นจำนวนเต็มไม่ติดลบ
-- Video timestamp ที่ผิดถูก Reject ก่อน Network
-- ไม่มี Video timestamp jitter ที่ไม่มีผลจริง
+## 6. Schema และ Executor
 
-## 6. Schema และ Executor boundary
+Target:
 
-ตรวจ Target:
+- [ ] Numeric string ที่ถูกต้องรับได้
+- [ ] Target ต้อง Finite และมากกว่า 0
+- [ ] Missing, 0, negative, `NaN`, `Infinity` → `TASK_TARGET_INVALID`
 
-- Numeric string ที่ถูกต้องรับได้
-- Target ต้อง Finite และมากกว่า 0
-- Missing, 0, negative, `NaN`, `Infinity` → `TASK_TARGET_INVALID`
+Progress:
 
-ตรวจ Progress:
+- [ ] Numeric string ที่ถูกต้องรับได้
+- [ ] Progress ต้อง Finite และไม่ติดลบ
+- [ ] Invalid/negative/Infinity → `TASK_PROGRESS_INVALID`
+- [ ] Progress มากกว่า Target → Percent Clamp 100
+- [ ] ไม่มี `NaN` เข้า Executor, Database หรือ Status
 
-- Numeric string ที่ถูกต้องรับได้
-- Progress ต้อง Finite และไม่ติดลบ
-- Invalid/negative/Infinity → `TASK_PROGRESS_INVALID`
-- Progress มากกว่า Target → Percent Clamp 100
-- ห้าม `NaN` เข้า Executor, Database หรือ Status
+Quest ID และ Compatibility:
 
-Blocking compatibility issues:
+- [ ] Numeric Quest ID ถูก Normalize เป็น String
+- [ ] `TASK_DEFINITIONS_MISSING`, `TASK_TARGET_INVALID`, `TASK_PROGRESS_INVALID`, `MULTI_TASK_AND` เป็น Blocking
+- [ ] Blocking Quest ไม่ถูกนับใน `supportedCount`
+- [ ] Blocking Quest ไม่เข้าสู่ One-shot session
+- [ ] Blocking Quest ไม่ส่ง Enroll, Progress, Heartbeat หรือ Claim
+- [ ] Unsupported diagnostics รายงาน Compatibility code จริง
 
-- `TASK_DEFINITIONS_MISSING`
-- `TASK_TARGET_INVALID`
-- `TASK_PROGRESS_INVALID`
-- `MULTI_TASK_AND`
+Executor ทุกตัวมี:
 
-Quest ที่มี Blocking issue ต้อง:
-
-- ไม่ถูกนับใน `supportedCount`
-- ไม่เข้าสู่ One-shot session
-- ไม่ถูก Automatic executor เลือก
-- ไม่ส่ง Enroll, Progress, Heartbeat หรือ Claim
-- ยังปรากฏใน Compatibility diagnostics
-
-Executor ทุกตัวต้องมี:
-
-- `matches`
-- `validate`
-- `estimateDuration`
-- `execute`
-- `verify`
-- `describeUnsupportedReason`
+- [ ] `matches`
+- [ ] `validate`
+- [ ] `estimateDuration`
+- [ ] `execute`
+- [ ] `verify`
+- [ ] `describeUnsupportedReason`
 
 ## 7. Durable state และ Mutation checkpoint
 
-Scheduled runner ต้อง Persist:
+Scheduled runner Persist:
 
-- State และ `state_source`
-- Quest ID/name/event
-- Progress และ Server progress seconds
-- `next_action_at`, Retry count
-- Error category และ Last error
-- Mutation kind/status/payload แบบ Sanitized
-- Attempted/verified timestamps
-- Checkpoint version
+- [ ] State และ `state_source`
+- [ ] Quest ID/name/event
+- [ ] Progress และ Server progress seconds
+- [ ] `next_action_at`, Retry count
+- [ ] Error category และ Last error
+- [ ] Mutation kind/status/payload แบบ Sanitized
+- [ ] Attempted/verified timestamps
+- [ ] Metadata และ Checkpoint version
 
 Mutation lifecycle:
 
@@ -189,142 +173,91 @@ PREPARED → IN_FLIGHT → ACCEPTED/UNCERTAIN → VERIFIED
 
 ตรวจว่า:
 
-1. `PREPARED` ก่อน Request
-2. `IN_FLIGHT` ก่อน Network execute
-3. Ownership ตรวจก่อน Queue และก่อน Execute
-4. Checkpoint write failure หยุด Mutation
-5. Payload ไม่มี Token, Cookie, CAPTCHA, Webhook หรือ Full response
-6. Active checkpoint เขียนทับด้วย Mutation ใหม่ไม่ได้
-7. Fresh verification ต้องจบก่อนปลด Barrier
-8. Server-confirmed Mutation ไม่ถูกลดเป็น FAILED เมื่อเขียน VERIFIED ล้ม
-9. `PREPARED` ไม่มี Mutation kind เกิดไม่ได้
+- [ ] `PREPARED` ก่อน Request
+- [ ] `IN_FLIGHT` ก่อน Network execute
+- [ ] Ownership ตรวจก่อน Queue และก่อน Execute
+- [ ] Checkpoint write failure หยุด Mutation
+- [ ] Payload ไม่มี Token, Cookie, CAPTCHA, Webhook หรือ Full response
+- [ ] Active checkpoint เขียนทับด้วย Mutation ใหม่ไม่ได้
+- [ ] Fresh verification ต้องจบก่อนปลด Barrier
+- [ ] Server-confirmed Mutation ไม่ถูกลดเป็น FAILED เมื่อ Persist VERIFIED ล้ม
+- [ ] `PREPARED` ไม่มี Mutation kind เกิดไม่ได้
 
 ## 8. Recovery และ Stop
 
-ตรวจว่า:
-
-- Scheduled interruption → Recovery plan
-- One-shot interruption → `FAILED`
-- Waiting state อนาคต → รอตาม `next_action_at`
-- `PREPARED/IN_FLIGHT/ACCEPTED/UNCERTAIN` → Verify ก่อน Resend
-- `VERIFYING_*` → Verification ต่อ
-- Active schedule + Terminal checkpoint → Fresh start
-- Claim cooldown อยู่รอดหลัง Restart
-- Control stop ตั้ง `STOPPING` เมื่อ Worker อาจยังทำงาน
-- Worker Abort เมื่อ Row หายหรือ Ownership หลุด
-- `STOPPING` คงอยู่จน `job.done` settle
-- Detached STOPPING → STOPPED เมื่อไม่มี Row/Job จริง
-
-### All-mode delayed recovery
-
-ก่อน Restore ต้องตรวจซ้ำ:
-
-1. Process role ยังเป็น `all`
-2. Mode เป็น Scheduled
-3. Durable state ยัง `WAITING_RETRY`
-4. `schedule_id` ตรงกัน
-5. Scheduled row ยังอยู่
-6. ไม่มี Replacement job
-7. ถึง `next_action_at` แล้ว
-8. Token ถูก Decrypt จาก Store ตอน Restore ไม่ถูกเก็บใน Timer
+- [ ] Scheduled interruption → Recovery plan
+- [ ] One-shot interruption → `FAILED`
+- [ ] Future waiting state → รอตาม `next_action_at`
+- [ ] `PREPARED/IN_FLIGHT/ACCEPTED/UNCERTAIN` → Verify ก่อน Resend
+- [ ] `VERIFYING_*` → Verification ต่อ
+- [ ] Recovery fetch ที่จบระหว่าง `FETCHING_QUESTS` → `WAITING_RETRY`
+- [ ] Claim retry ไม่ปลุก Terminal runner
+- [ ] Restore Throw → Report + Rearm
+- [ ] Restore summary `restored <= 0` → Failure + Rearm
+- [ ] Active schedule + Terminal checkpoint → Fresh start
+- [ ] Control stop ใช้ `STOPPING` เมื่อ Worker อาจยังทำงาน
+- [ ] Detached STOPPING → STOPPED เมื่อ Row/Job หายจริง
 
 ## 9. Scheduler และ Smart Wake
 
-ตรวจว่า:
-
-- Hint แยกตาม Source
-- Baseline ลบ Urgent source ไม่ได้
-- Effective hint กลับเป็น `baseline` → ล้าง Timer เก่า
-- Effective hint เป็น `null` → ล้าง Timer
-- Invalid `nextActionAt` → ล้าง Timer เก่า
-- Urgent A ถูกแทนด้วย Urgent B → ทำงานเฉพาะ B
-- Fixed schedule ที่เร็วกว่า Hint ไม่ถูกปลุกซ้ำ
-- Stop denied → ไม่ Restart
-- Replacement job ระหว่าง Cleanup → ไม่ Restart ทับ
-- Scheduled row ถูกลบ → ยกเลิก Wake
-- Timer ระยะไกลแบ่งช่วงไม่เกิน 24 ชั่วโมง
+- [ ] Hint แยกตาม Source
+- [ ] `expiresAt` ต่ออายุ Stored hint ได้
+- [ ] Effective hint เป็น `baseline` → ล้าง Timer
+- [ ] Effective hint เป็น `null` → ล้าง Timer
+- [ ] Invalid `nextActionAt` → ล้าง Timer
+- [ ] Urgent hint ใหม่แทน hint เก่าได้
+- [ ] Fixed schedule ที่เร็วกว่า Hint ไม่ถูกปลุกซ้ำ
+- [ ] Stop denied → ล้าง Attempt และไม่ Restart
+- [ ] Replacement job → ไม่ Restart ทับ
+- [ ] Scheduled row ถูกลบ → ยกเลิก Wake
+- [ ] Timer ระยะไกลแบ่งช่วงไม่เกิน 24 ชั่วโมง
 
 ## 10. Durable state authority
 
 Status observer อนุญาต:
 
-- `NETWORK RETRY` → `WAITING_RETRY`
-- `NEXT CHECK`/`AUTO DAILY ACTIVE` → `WAITING_SCHEDULE`
+- [ ] `NETWORK RETRY` → `WAITING_RETRY`
+- [ ] `NEXT CHECK`/`AUTO DAILY ACTIVE` → `WAITING_SCHEDULE`
 
 Status observer ห้ามเขียนทับ:
 
-- Active mutation checkpoint
-- `WAITING_ENROLLMENT`
-- `WAITING_RATE_LIMIT`
-- State จาก `schedule-hint:*`
-- `STOPPING`, `STOPPED`, `COMPLETED`, `FAILED`
+- [ ] Active mutation checkpoint
+- [ ] `WAITING_ENROLLMENT`
+- [ ] `WAITING_RATE_LIMIT`
+- [ ] State จาก `schedule-hint:*`
+- [ ] `STOPPING`, `STOPPED`, `COMPLETED`, `FAILED`
 
-`next_action_at` ต้องตรงกับเวลาที่ Runner กำลัง Sleep จริง
+Terminal status ที่สังเกตได้ต้องชนะ Waiting state ที่ยังไม่ Terminal
 
 ## 11. Rate limit และ Circuit breaker
 
-ตรวจว่า:
+- [ ] บัญชีเดียวไม่ยิงพร้อมกันเกินหนึ่ง Request
+- [ ] รองรับ Scope `user`, `shared`, `global`
+- [ ] อ่าน Header และ JSON `retry_after`
+- [ ] Server delay มากกว่า 60 วินาทีถูกเคารพเต็มจำนวน
+- [ ] Response ปกติไม่เข้า Retry parsing path
+- [ ] Global 429 หยุด Queue ทั้งหมด
+- [ ] Authorization เป็น Fingerprint ไม่ใช่ Raw token
+- [ ] Circuit มี `CLOSED`, `OPEN`, `HALF_OPEN`
+- [ ] Mutation ถูก Block จน Fresh verification
+- [ ] Bookkeeping failure ไม่ข้าม Circuit accounting
+- [ ] Missing execution context/ownership ทำ Mutation ต่อไม่ได้
 
-- บัญชีเดียวไม่ยิงพร้อมกันเกินหนึ่ง Request
-- รองรับ Scope `user`, `shared`, `global`
-- อ่าน Header และ JSON `retry_after`
-- Global 429 หยุด Queue ทั้งหมด
-- Authorization เป็น Fingerprint ไม่ใช่ Raw token
-- Circuit มี `CLOSED`, `OPEN`, `HALF_OPEN`
-- Mutation ถูก Block จน Fresh verification
-- Bookkeeping failure ไม่ข้าม Circuit accounting
-- Missing execution context/ownership ทำ Mutation ต่อไม่ได้
+## 12. Storage, Backup และ Incident
 
-## 12. Claim retry
+- [ ] Storage mode รายงานตามจริง
+- [ ] Backup path อยู่เฉพาะ Fixed local/persistent roots
+- [ ] Retention ไม่เกิน 7 Slot
+- [ ] Backup failure threshold เปิด Incident หนึ่งรายการ
+- [ ] Recovery ใช้ Incident ID เดิม
+- [ ] Incident ไม่ Spam Webhook
+- [ ] Payload ปิด Mentions
+- [ ] Context ใช้ Allowlist
+- [ ] Token, Webhook, CAPTCHA และ Secret ถูก Redact
+- [ ] `/api/status` ไม่แสดง Full path หรือ Secret
+- [ ] Controlled restart แล้วยังพบ Database, Backup และ Scheduled rows
 
-ตรวจ Class:
-
-- CAPTCHA evidence จริง → Long cooldown
-- Ambiguous platform → Long cooldown
-- Generic HTTP 400 → `REQUEST_REJECTED`
-- HTTP 429 → `RATE_LIMITED`
-- Verification absent → Standard cooldown
-- Network/5xx → Temporary error
-
-ห้าม Generic HTTP 400 ถูกเหมารวมเป็น CAPTCHA
-
-## 13. Storage, Backup และ Incident
-
-ตรวจว่า:
-
-- Storage mode รายงานตามจริง
-- Backup path อยู่เฉพาะ Fixed local/persistent roots
-- Retention ไม่เกิน 7 Slot
-- Backup failure threshold เปิด Incident หนึ่งรายการ
-- Recovery ใช้ Incident ID เดิม
-- Incident ไม่ Spam Webhook
-- Payload ปิด Mentions
-- Context ใช้ Allowlist
-- Token, Webhook, CAPTCHA และ Secret ถูก Redact
-- `/api/status` ไม่แสดง Full path หรือ Secret
-- Controlled restart แล้วยังพบ Database, Backup และ Scheduled rows
-
-## 14. API status และ Health
-
-ตรวจว่า:
-
-- `/api-status` ใช้ได้เฉพาะ Owner/Admin/Manager
-- HTTP `/api/status` ปิดเมื่อไม่มี `HEALTH_STATUS_TOKEN`
-- ใช้ Exact Bearer token
-- Public `/healthz` เปิดเผยเฉพาะ `{ ok }`
-- Worker 503 ระหว่าง Bootstrap และ 200 เมื่อ Supervisor พร้อม
-- Status แสดง Queue, Scope, Circuit, Checkpoint, Workers และ Claims
-- Status ไม่แสดง Identifier/Token/Ciphertext/Full path
-
-## 15. Legacy compatibility boundary
-
-- Production entrypoint และ Commands Import `quest/runner-service.js`
-- ห้าม Production import Legacy `restoreScheduledRunners` จาก `discord-runner.js`
-- `speedMultiplier` ไม่มี Production caller
-- ห้ามเพิ่ม Caller ใหม่
-- Compatibility cleanup ภายใน Runner ใหญ่ต้องแยก Refactor ไม่ปนกับ Correctness release
-
-## 16. Quality gates
+## 13. Automated quality gates
 
 รันจากโฟลเดอร์ `bot`:
 
@@ -340,66 +273,95 @@ npm audit --omit=dev --audit-level=high
 git diff --exit-code
 ```
 
-GitHub Actions ต้องผ่านบน HEAD ล่าสุด:
+Final code evidence จาก CI #1351:
 
-- Repository shape
-- Sanitized Quest fixture
-- Fixed backup destinations
-- Incident/Storage boundaries
-- Full recursive tests
-- Coverage gate
-- Critical mutation gate 15 ตัว
-- Source restoration หลัง Mutation
-- JS/MJS/Bash syntax
-- Production dependency audit ระดับ High
+- [x] Repository shape
+- [x] Sanitized Quest fixture
+- [x] Fixed backup destinations
+- [x] Incident/Storage boundaries
+- [x] 381/381 tests
+- [x] 0 failed/cancelled/skipped/todo
+- [x] Coverage 93.38% lines / 84.32% branches / 88.70% functions
+- [x] 26/26 critical mutations killed
+- [x] Mutation source restoration
+- [x] JS/MJS/Bash syntax
+- [x] Production dependency audit ระดับ High
 
-Mutation gate ต้องฆ่าครบ:
+Mutation gate ครอบคลุม:
 
-1. Uncertain mutation skips verification
-2. Expired deadline comparison กลับด้าน
-3. Recovery ignores uncertain checkpoint
-4. Incompatible Quest เข้า Automatic executor
-5. Explicit checkpoint update ถูก Ignore
-6. User-scoped bucket ถูก Bypass
-7. Invalid target ถูกยอมรับ
-8. Invalid progress ถูกยอมรับ
-9. Baseline ไม่ล้าง Smart Wake
-10. Rejected completion ไม่ Release context
-11. All-mode recovery ทำงานนอก WAITING_RETRY
-12. Observer เขียนทับ High-priority wait
-13. Malformed video timestamp ถึง Network
-14. Completion observer transition failure หลุดจาก Promise chain
-15. Completion release error reporter สร้าง Rejection ซ้ำ
+1. Fresh verification หลัง Uncertain mutation
+2. Deadline ordering
+3. Recovery checkpoint
+4. Executor compatibility
+5. Durable update enforcement
+6. User-scoped bucket
+7. Target validation
+8. Progress validation
+9. Baseline wake cleanup
+10. Rejected completion release
+11. All-mode state eligibility
+12. Observer wait priority
+13. Video timestamp validation
+14. Completion observer containment
+15. Completion release reporter containment
+16. Terminal claim retry guard
+17. Unsupported reason precedence
+18. All-mode restore rearm
+19. Empty restore summary
+20. Hint expiry refresh
+21. Header Retry-After duration
+22. Body retry_after duration
+23. Normal response parsing guard
+24. Terminal observer precedence
+25. Smart Wake denied-attempt cleanup
+26. Quest ID normalization
 
-## 17. Controlled functional UAT
+## 14. External gates
+
+บน Code evidence HEAD เดียวกัน:
+
+- [x] Snyk status Success
+- [x] CodeRabbit commit status Success
+- [ ] CodeRabbit current review threads ถูกตอบและ Resolve ครบ
+- [ ] CodeRabbit Full review หลังเอกสารรอบสุดท้าย
+- [ ] Codacy current-head result
+- [ ] SonarCloud current-head result
+
+ห้ามใช้ผลจาก HEAD เก่าเป็น Final evidence
+
+## 15. Controlled functional UAT
 
 ใช้ Server และบัญชีทดสอบ:
 
-1. Permission ของ `/api-status`
-2. Start พร้อมกันไม่เกิน 10 Runner
-3. Stop ระหว่างทำงานและรอ Terminal จริง
-4. Auto Daily Restart/Restore
-5. All-mode transient recovery โดยไม่ Restart Process
-6. Enroll lifecycle
-7. Video progress พร้อม Response loss
-8. Desktop heartbeat พร้อม Worker claim loss
-9. Claim reward พร้อม Durable cooldown
-10. CAPTCHA และ Non-CAPTCHA HTTP 400
-11. Restart ที่ `PREPARED`, `IN_FLIGHT`, `UNCERTAIN`, `VERIFIED`
-12. ไม่มี Blind duplicate mutation
-13. Worker claim conflict และ Takeover
-14. Persistent storage restart/redeploy
-15. Backup/Incident recovery
-16. Panel ยังมีเพียง `START NOW / STOP ALL`
+- [ ] Permission ของ `/api-status`
+- [ ] Start พร้อมกันไม่เกิน 10 Runner
+- [ ] Stop ระหว่างทำงานและรอ Terminal จริง
+- [ ] Auto Daily Restart/Restore
+- [ ] All-mode transient recovery โดยไม่ Restart Process
+- [ ] Restore summary `restored: 0`
+- [ ] Enroll lifecycle
+- [ ] Video progress พร้อม Response loss
+- [ ] Desktop heartbeat พร้อม Worker claim loss
+- [ ] Claim reward พร้อม Durable cooldown
+- [ ] CAPTCHA และ Non-CAPTCHA HTTP 400
+- [ ] HTTP 429 ที่ Retry-After มากกว่า 60 วินาที
+- [ ] Restart ที่ `PREPARED`, `IN_FLIGHT`, `UNCERTAIN`, `VERIFIED`
+- [ ] ไม่มี Blind duplicate mutation
+- [ ] Worker claim conflict และ Takeover
+- [ ] Persistent storage restart/redeploy
+- [ ] Backup/Incident recovery
+- [ ] Token invalid ขณะ Waiting
+- [ ] Claim callback หลัง Runner Terminal
+- [ ] Panel ยังมีเพียง `START NOW / STOP ALL`
 
-## 18. Rollback
+## 16. Rollback
 
 ก่อน Deploy:
 
-- บันทึก Commit SHA
-- ตรวจ Backup ล่าสุดเปิดอ่านได้
-- เก็บ Environment เดิมอย่างปลอดภัย
-- Split mode ใช้ SHA เดียวกันทุก Process
+- [ ] บันทึก Commit SHA
+- [ ] ตรวจ Backup ล่าสุดเปิดอ่านได้
+- [ ] เก็บ Environment เดิมอย่างปลอดภัย
+- [ ] Split mode ใช้ SHA เดียวกันทุก Process
 
 เมื่อพบปัญหา:
 
@@ -411,18 +373,18 @@ Mutation gate ต้องฆ่าครบ:
 6. หมุน Secret หากสงสัยว่ารั่ว
 7. เพิ่ม Regression test ก่อน Deploy ใหม่
 
-## 19. เกณฑ์อนุมัติ
+## 17. เกณฑ์อนุมัติ
 
-อนุมัติ Production ได้เมื่อ:
+Production อนุมัติได้เมื่อ:
 
-- CI ของ HEAD ล่าสุดผ่านทั้งหมด
-- Snyk, Codacy, SonarCloud และ CodeRabbit ถูกตรวจบน HEAD เดียวกัน
-- ไม่มี Review thread ที่ยังใช้ได้ค้าง
-- Persistent storage ผ่าน Controlled restart
-- Discord Mutation UAT ผ่าน
-- Multi-worker Shared store และ Failover UAT ผ่าน
-- Backup/Incident/Recovery ผ่าน
-- Rollback path ถูกยืนยัน
-- ผู้ดูแลอนุมัติ Explicitly
+- [ ] CI ของ HEAD ล่าสุดผ่านทั้งหมด
+- [ ] Snyk, Codacy, SonarCloud และ CodeRabbit ตรวจบน HEAD เดียวกัน
+- [ ] ไม่มี Current review thread ค้าง
+- [ ] Persistent storage ผ่าน Controlled restart
+- [ ] Discord Mutation UAT ผ่าน
+- [ ] Multi-worker Shared storage และ Failover UAT ผ่าน
+- [ ] Backup/Incident/Recovery ผ่าน
+- [ ] Rollback path ถูกยืนยัน
+- [ ] เจ้าของอนุมัติ Explicitly
 
-PR ต้องคง Draft และห้าม Merge/Deploy จนข้อกำหนดนี้ครบ
+PR ต้องคง Draft และห้าม Merge, Deploy, Auto-merge หรือ Ready-for-review จนข้อกำหนดครบ
