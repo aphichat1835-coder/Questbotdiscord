@@ -57,7 +57,7 @@ test('completion rejection exits before state mutation during a smart-wake resta
     observer.indexOf('function handleRejected'),
     observer.indexOf('export function observeRunnerCompletion'),
   );
-  assert.ok(rejectedHandler.indexOf('isSmartWakeRestarting(jobKey)') >= 0);
+  assert.ok(rejectedHandler.includes('isSmartWakeRestarting(jobKey)'));
   assert.ok(
     rejectedHandler.indexOf('isSmartWakeRestarting(jobKey)')
       < rejectedHandler.indexOf('getRunnerState(jobKey)'),
