@@ -12,7 +12,7 @@ function notifyListener(listener, hint) {
 }
 
 function timestamp(value) {
-  const time = value == null ? NaN : Date.parse(value);
+  const time = value == null ? Number.NaN : Date.parse(value);
   return Number.isFinite(time) ? time : null;
 }
 
@@ -45,21 +45,25 @@ function validHints(accountKey, now = Date.now()) {
   return [...hints.values()].filter((hint) => timestamp(hint.nextActionAt) != null);
 }
 
+function compareUrgentHints(left, right) {
+  return Number(right.priority ?? 0) - Number(left.priority ?? 0)
+    || timestamp(left.nextActionAt) - timestamp(right.nextActionAt)
+    || Number(right.publishedAtMs ?? 0) - Number(left.publishedAtMs ?? 0);
+}
+
+function compareNextHints(left, right) {
+  return timestamp(left.nextActionAt) - timestamp(right.nextActionAt)
+    || Number(right.priority ?? 0) - Number(left.priority ?? 0)
+    || Number(right.publishedAtMs ?? 0) - Number(left.publishedAtMs ?? 0);
+}
+
 export function selectEffectiveScheduleHint(accountKey, now = Date.now()) {
   const hints = validHints(accountKey, now);
   if (!hints.length) return null;
   const urgent = hints
     .filter((hint) => timestamp(hint.nextActionAt) <= now + URGENT_WINDOW_MS)
-    .sort((left, right) => (
-      Number(right.priority ?? 0) - Number(left.priority ?? 0)
-      || timestamp(left.nextActionAt) - timestamp(right.nextActionAt)
-      || Number(right.publishedAtMs ?? 0) - Number(left.publishedAtMs ?? 0)
-    ));
-  const selected = urgent[0] ?? hints.sort((left, right) => (
-    timestamp(left.nextActionAt) - timestamp(right.nextActionAt)
-    || Number(right.priority ?? 0) - Number(left.priority ?? 0)
-    || Number(right.publishedAtMs ?? 0) - Number(left.publishedAtMs ?? 0)
-  ))[0];
+    .toSorted(compareUrgentHints);
+  const selected = urgent[0] ?? hints.toSorted(compareNextHints)[0];
   return selected ? { ...selected } : null;
 }
 
