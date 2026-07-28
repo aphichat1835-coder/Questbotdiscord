@@ -11,9 +11,11 @@ export const UNSUPPORTED_EVENTS = new Set([
 ]);
 
 function reasonForQuest(quest) {
-  if (quest?.autoSupported === false) return 'MULTI_TASK_AND';
   if (!quest?.eventName) return 'UNKNOWN_SCHEMA';
   if (UNSUPPORTED_EVENTS.has(quest.eventName)) return 'UNSUPPORTED_EVENT';
+  const recordedIssue = quest?.compatibilityIssues?.[0]?.code;
+  if (recordedIssue) return recordedIssue;
+  if (quest?.autoSupported === false) return 'MULTI_TASK_AND';
   return 'UNKNOWN_EVENT';
 }
 
