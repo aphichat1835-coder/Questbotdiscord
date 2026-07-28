@@ -37,22 +37,18 @@ jobs:
           path = Path('bot/src/discord-runner.js')
           source = path.read_text(encoding='utf-8')
 
-          old_import = """  currentDiscordClientProfile,
-          DiscordApiError,
-          enrollQuestRequest,"""
-          new_import = """  currentDiscordClientProfile,
-          enrollQuestRequest,"""
-          old_export = "export { DiscordApiError, isFatalAuthError };"
+          old_import_line = '  DiscordApiError,\n'
+          old_export = 'export { DiscordApiError, isFatalAuthError };'
           new_export = """export { DiscordApiError } from './quest/api/discord-client.js';
           export { isFatalAuthError };"""
 
-          import_count = source.count(old_import)
+          import_count = source.count(old_import_line)
           export_count = source.count(old_export)
           if import_count == 0 and export_count == 0:
               print('Source is already fixed')
           elif import_count == 1 and export_count == 1:
-              source = source.replace(old_import, new_import)
-              source = source.replace(old_export, new_export)
+              source = source.replace(old_import_line, '', 1)
+              source = source.replace(old_export, new_export, 1)
               path.write_text(source, encoding='utf-8')
           else:
               raise SystemExit(
