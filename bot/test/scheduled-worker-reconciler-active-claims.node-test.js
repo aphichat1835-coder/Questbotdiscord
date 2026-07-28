@@ -123,6 +123,51 @@ test('slow cleanup cannot delay renewal of unrelated active claims', async () =>
   assert.equal(result.claimLost, 0);
 });
 
+test('worker stops a survivor that loses ownership during slow cleanup', async () => {
+  let finishCleanup;
+  const done = new Promise((resolve) => { finishCleanup = resolve; });
+  const stops = [];
+  let heartbeat = null;
+  let survivorOwned = true;
+
+  const reconciliation = reconcileScheduledWorker({}, {
+    rows: [row(9508)],
+    jobs: [job(9507), job(9508)],
+    holder: 'active-worker-ownership-lost-during-cleanup',
+    claimTtlMs: 3_000,
+    now: Date.parse('2030-01-01T00:00:00.000Z'),
+    setInterval: (callback) => {
+      heartbeat = callback;
+      return { unref() {} };
+    },
+    clearInterval: () => {},
+    renewClaim: (scheduleId) => scheduleId === 9508 && survivorOwned,
+    acquireClaim: () => false,
+    releaseClaim: () => true,
+    getJob: (jobKey) => jobKey === 'scheduled:9507' ? { done } : null,
+    stop: (_ownerId, jobKey) => {
+      stops.push(jobKey);
+      return true;
+    },
+    startRunner: async () => assert.fail('ownership-lost survivor must not restart locally'),
+  });
+
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(stops, ['scheduled:9507']);
+  assert.equal(typeof heartbeat, 'function');
+
+  survivorOwned = false;
+  heartbeat();
+  finishCleanup();
+
+  const result = await reconciliation;
+  assert.deepEqual(stops, ['scheduled:9507', 'scheduled:9508']);
+  assert.equal(result.claimLost, 1);
+  assert.equal(result.claimsRenewed, 1);
+  assert.equal(result.stopRequested, 2);
+  assert.equal(result.restore.restored, 0);
+});
+
 test('restore claim acquisition uses a fresh clock after slow cleanup', async () => {
   let finishCleanup;
   const done = new Promise((resolve) => { finishCleanup = resolve; });
