@@ -42,5 +42,5 @@ if [[ "$status" -eq 0 ]]; then
   exit 1
 fi
 
-echo 'KILLED: completion release error reporter escapes its containment'
-echo 'All 15 critical mutations were killed'
+echo 'KILLED: completion release error reporter escapes its containment' >&2
+echo 'All 15 critical mutations were killed' >&2
