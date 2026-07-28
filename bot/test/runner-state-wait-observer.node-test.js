@@ -65,7 +65,7 @@ test('daily sleep status persists waiting schedule and its exact wake time', () 
   const state = getRunnerState(jobKey);
   assert.equal(state.state, RUNNER_STATE.WAITING_SCHEDULE);
   assert.equal(state.next_action_at, nextCheckAt);
-  assert.equal(state.metadata.scheduleReason, 'scheduled-check');
+  assert.equal(state.metadata.scheduleReason, 'baseline');
 });
 
 test('an active mutation checkpoint cannot be overwritten by observed sleep text', () => {
