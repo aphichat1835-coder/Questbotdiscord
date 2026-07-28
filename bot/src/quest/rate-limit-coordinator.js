@@ -65,10 +65,10 @@ function routeKey(url, method) {
 
 function requestPriority(url, method) {
   const path = new URL(url).pathname;
-  if (/\/claim(?:-reward)?$/.test(path)) return 100;
-  if (method === 'GET' && /\/quests\//.test(path)) return 90;
-  if (/\/video-progress$|\/heartbeat$/.test(path)) return 80;
-  if (/\/enroll$/.test(path)) return 70;
+  if (path.endsWith('/claim') || path.endsWith('/claim-reward')) return 100;
+  if (method === 'GET' && path.includes('/quests/')) return 90;
+  if (path.endsWith('/video-progress') || path.endsWith('/heartbeat')) return 80;
+  if (path.endsWith('/enroll')) return 70;
   return method === 'GET' ? 60 : 50;
 }
 
@@ -343,7 +343,7 @@ export class DiscordRateLimitCoordinator {
   }
 
   setBucketReset(task, bucket, delay, scope) {
-    if (!(delay > 0)) return;
+    if (delay <= 0) return;
     const resetAt = this.now() + delay;
     if (scope === 'user') {
       this.accountBucketResetAt.set(`${task.account}:${bucket}`, resetAt);
@@ -414,7 +414,7 @@ export class DiscordRateLimitCoordinator {
   enterHalfOpen(task) {
     const key = this.circuitKey(task);
     const circuit = this.circuits.get(key);
-    if (!circuit || circuit.state !== CIRCUIT_STATE.OPEN || circuit.openUntil > this.now()) return;
+    if (circuit?.state !== CIRCUIT_STATE.OPEN || circuit.openUntil > this.now()) return;
     circuit.state = CIRCUIT_STATE.HALF_OPEN;
     circuit.probeActive = true;
   }
