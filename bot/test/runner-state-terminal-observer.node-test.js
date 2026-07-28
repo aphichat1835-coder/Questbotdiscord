@@ -7,6 +7,7 @@ import {
   clearRunnerStatesForTests,
   getRunnerState,
   RUNNER_STATE,
+  transitionRunnerState,
 } from '../src/quest/runner-state-store.js';
 
 function observedJob(jobKey, status, lifecycle = 'running') {
@@ -71,7 +72,9 @@ test('an already terminal durable state remains authoritative over stale running
     ownerId: 'terminal-observer-owner',
     mode: 'scheduled',
     scheduleId: 930003,
-    state: RUNNER_STATE.FAILED,
+    state: RUNNER_STATE.RUNNING,
+  });
+  transitionRunnerState(jobKey, RUNNER_STATE.FAILED, {
     lastError: 'durable failure',
     stateSource: 'runner-completion-observer',
   });
