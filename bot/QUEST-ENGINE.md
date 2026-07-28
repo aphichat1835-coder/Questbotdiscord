@@ -272,13 +272,13 @@ Shutdown order:
 
 ## 12. Final automated evidence
 
-Final HEAD:
+Validated implementation HEAD ก่อน Documentation-only sync:
 
-`51af086d09a8a486d6fd39b4924387ad663c3b38`
+`f49aa9cfbc6182c3a634bbd006afdb8dd3682320`
 
-GitHub Actions CI run:
+GitHub Actions CI run ของ Implementation HEAD นี้:
 
-`#1351` — Success
+`#1355` — Success
 
 ผลจาก Artifact ของ HEAD เดียวกัน:
 
@@ -298,6 +298,8 @@ GitHub Actions CI run:
 - Incident/storage boundaries ผ่าน
 - JS/MJS/Bash syntax ผ่าน
 - Production dependency audit ระดับ High ผ่าน
+
+Documentation-only commits หลัง HEAD นี้ต้องผ่าน CI ของตัวเอง แต่ไม่เปลี่ยนผล Implementation evidence ข้างต้น เว้นแต่มีการแก้ Source หรือ Test code เพิ่ม
 
 Mutation gates 26 จุด:
 
@@ -328,7 +330,7 @@ Mutation gates 26 จุด:
 25. Smart Wake denied attempt ไม่ถูกล้าง
 26. Numeric Quest ID ไม่ถูก Normalize
 
-External status ที่ยืนยันบน HEAD นี้:
+External status ที่ยืนยันบน Implementation HEAD นี้:
 
 - Snyk: Success
 - CodeRabbit commit status: Success
