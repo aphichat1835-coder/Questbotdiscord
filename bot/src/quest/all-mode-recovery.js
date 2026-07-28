@@ -45,7 +45,7 @@ export function createAllModeRecoveryController({
   }
 
   function eligible(context) {
-    if (!context || context.mode !== 'scheduled' || context.processRole !== 'all') return null;
+    if (context?.mode !== 'scheduled' || context.processRole !== 'all') return null;
     if (readJob(context.jobKey)) return null;
     const state = readState(context.jobKey);
     if (state?.state !== RUNNER_STATE.WAITING_RETRY) return null;
@@ -103,7 +103,7 @@ export function createAllModeRecoveryController({
   }
 
   function clear() {
-    for (const jobKey of [...timers.keys()]) cancel(jobKey);
+    for (const jobKey of timers.keys()) cancel(jobKey);
   }
 
   return Object.freeze({
