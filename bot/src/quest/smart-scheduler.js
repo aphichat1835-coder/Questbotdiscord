@@ -3,7 +3,7 @@ const MINIMUM_DELAY_MS = 5_000;
 const DEADLINE_URGENCY_MS = 30 * 60 * 1000;
 
 function timestamp(value) {
-  const time = value == null ? NaN : new Date(value).getTime();
+  const time = value == null ? Number.NaN : new Date(value).getTime();
   return Number.isFinite(time) ? time : null;
 }
 
@@ -42,6 +42,14 @@ function addTimedCandidate(candidates, value, reason, priority, source = reason)
   if (at != null) candidates.push(candidate(at, reason, priority, source));
 }
 
+function compareCandidatePriority(left, right) {
+  return right.priority - left.priority || left.at - right.at;
+}
+
+function compareCandidateTime(left, right) {
+  return left.at - right.at;
+}
+
 export function chooseNextQuestAction({
   quests = [],
   now = new Date(),
@@ -73,12 +81,10 @@ export function chooseNextQuestAction({
       ...item,
       at: Math.max(nowMs + MINIMUM_DELAY_MS, item.at),
     }))
-    .sort((left, right) => (
-      right.priority - left.priority || left.at - right.at
-    ));
+    .toSorted(compareCandidatePriority);
 
   const urgent = normalized.find((item) => item.at <= nowMs + DEADLINE_URGENCY_MS);
-  const selected = urgent ?? normalized.sort((left, right) => left.at - right.at)[0];
+  const selected = urgent ?? normalized.toSorted(compareCandidateTime)[0];
   return {
     nextActionAt: new Date(selected.at).toISOString(),
     reason: selected.reason,
