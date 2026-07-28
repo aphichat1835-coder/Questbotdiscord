@@ -41,7 +41,7 @@ const TERMINAL_RUNNER_STATES = new Set([
 
 function recoveryMetadata(args, source, current = null) {
   return {
-    ...(current?.metadata ?? {}),
+    ...current?.metadata,
     source,
     recoveryAction: args.recoveryPlan?.action ?? null,
     recoveryReason: args.recoveryPlan?.reason ?? null,
@@ -126,6 +126,11 @@ function recoveryWakeContext(args) {
   };
 }
 
+function startedStateSource(args) {
+  if (args.recoveryPlan) return 'recovery-started';
+  return config.processRole === 'worker' ? 'worker' : 'runner-service';
+}
+
 function markStarted(args) {
   allModeRecovery.cancel(args.jobKey);
   const current = getRunnerState(args.jobKey);
@@ -138,9 +143,7 @@ function markStarted(args) {
     metadata: args.recoveryPlan
       ? recoveryMetadata(args, 'recovery-started', current)
       : current?.metadata ?? null,
-    stateSource: args.recoveryPlan
-      ? 'recovery-started'
-      : config.processRole === 'worker' ? 'worker' : 'runner-service',
+    stateSource: startedStateSource(args),
   });
   registerSmartWake(args);
   observeRunnerCompletion(args.jobKey, args.mode ?? 'oneshot', args.scheduleId ?? null);
@@ -164,7 +167,7 @@ function transitionOwnedRunner(jobKey, ownerId, state, metadata) {
   }
   return transitionRunnerState(jobKey, state, {
     nextActionAt: null,
-    metadata: { ...(current.metadata ?? {}), ...metadata },
+    metadata: { ...current.metadata, ...metadata },
     stateSource: 'runner-service-control',
   });
 }
@@ -338,5 +341,3 @@ export const getUserJobs = legacyRunner.getUserJobs;
 export const listJobs = legacyRunner.listJobs;
 export const listQuestEngineStatuses = legacyRunner.listQuestEngineStatuses;
 export const refreshBuildInfo = legacyRunner.refreshBuildInfo;
-export const selectQuestClaimPlatform = legacyRunner.selectQuestClaimPlatform;
-export const stopRunner = legacyRunner.stopRunner;
