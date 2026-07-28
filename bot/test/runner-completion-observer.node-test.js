@@ -71,6 +71,38 @@ test('transient recovery exit becomes WAITING_RETRY without losing mutation evid
   assert.equal(state.metadata.completion, 'recovery-deferred');
 });
 
+test('interrupted completion recovery fetch is deferred without mutation evidence', async () => {
+  const jobKey = 'scheduled:completion-fetch-deferred';
+  const scheduleId = 9956;
+  beginRunnerState({
+    jobKey,
+    ownerId: 'completion-owner',
+    mode: 'scheduled',
+    scheduleId,
+    state: RUNNER_STATE.FETCHING_QUESTS,
+    metadata: {
+      recoveryAction: 'VERIFY_COMPLETION',
+      recoveryReason: 'resume-verifying-completion',
+    },
+  });
+
+  configureRunnerCompletionObserver({
+    getJob: () => ({ done: Promise.resolve() }),
+    getScheduled: () => ({ id: scheduleId }),
+    currentTime: () => NOW,
+  });
+  assert.equal(observeRunnerCompletion(jobKey, 'scheduled', scheduleId), true);
+  await settleObserver();
+
+  const state = getRunnerState(jobKey);
+  assert.equal(state.state, RUNNER_STATE.WAITING_RETRY);
+  assert.equal(state.next_action_at, '2030-01-01T00:05:00.000Z');
+  assert.equal(state.mutation_status, RUNNER_MUTATION_STATUS.NONE);
+  assert.equal(state.state_source, 'runner-recovery-deferred');
+  assert.equal(state.metadata.recoveryAction, 'VERIFY_COMPLETION');
+  assert.equal(state.metadata.completion, 'recovery-deferred');
+});
+
 test('ordinary scheduled exit with an active schedule remains a FAILED lifecycle', async () => {
   const jobKey = 'scheduled:completion-unexpected-exit';
   const scheduleId = 9952;
