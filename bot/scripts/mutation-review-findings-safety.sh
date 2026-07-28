@@ -25,6 +25,7 @@ cleanup() {
       runner-state-observer.js) cp -- "$tmp_dir/$file" src/quest/runner-state-observer.js ;;
       smart-wake-controller.js) cp -- "$tmp_dir/$file" src/quest/smart-wake-controller.js ;;
       normalizer.js) cp -- "$tmp_dir/$file" src/quest/schema/normalizer.js ;;
+      *) echo "Unknown mutation backup file: $file" >&2; return 1 ;;
     esac
   done
   rm -rf -- "$tmp_dir"
