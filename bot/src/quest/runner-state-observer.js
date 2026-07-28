@@ -64,6 +64,7 @@ function hasActiveMutationCheckpoint(current) {
 
 function hasAuthoritativeDirectState(current, observedState) {
   if (!current) return false;
+  if (CONTROLLED_STATES.has(observedState) && !CONTROLLED_STATES.has(current.state)) return false;
   if (CONTROLLED_STATES.has(current.state)) return true;
   if (HIGH_PRIORITY_WAITING_STATES.has(current.state)) return true;
   if (String(current.state_source ?? '').startsWith('schedule-hint:')) return true;
