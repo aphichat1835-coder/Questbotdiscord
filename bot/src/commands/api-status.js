@@ -55,44 +55,22 @@ function selectStatusColor(dbOk, state) {
   return STATUS_COLORS.healthy;
 }
 
-export async function execute(interaction) {
-  if (!isManager(interaction)) {
-    return interaction.reply({
-      flags: 64,
-      content: '🔒 ต้องการสิทธิ์ **Manager** ขึ้นไปจึงจะดูสถานะระบบได้',
-    });
-  }
-
-  await interaction.deferReply({ flags: 64 });
-
+function databaseHealth() {
   const start = Date.now();
-  let dbOk = false;
-  let dbError = null;
   try {
     db.prepare('SELECT 1').get();
-    dbOk = true;
+    return { dbOk: true, dbError: null, latency: Date.now() - start };
   } catch (error) {
-    dbError = error.message;
+    return {
+      dbOk: false,
+      dbError: error?.message ?? String(error),
+      latency: Date.now() - start,
+    };
   }
+}
 
-  const latency = Date.now() - start;
-  const memory = process.memoryUsage();
-  const toMB = (value) => (value / 1024 / 1024).toFixed(1);
-  const aggregate = getQuestEngineStatus();
-  const accountStatuses = listQuestEngineStatuses({ ownerId: interaction.user.id });
-  const jobs = listJobs();
-  const persisted = listScheduledRunners();
-  const activeDurable = listRunnerStates({
-    ownerId: interaction.user.id,
-    activeOnly: true,
-    limit: 50,
-  });
-  const activeRoles = listActiveProcessRoles();
-  const workerHolders = new Set(listActiveWorkerHolders());
-  const activeClaims = listScheduledRunnerClaims({ activeOnly: true });
-  const transport = getDiscordApiRuntimeStatus();
-
-  const questDetails = [
+function questDetailLines(aggregate) {
+  const details = [
     '**สรุปรวมจากสถานะแยกของทุก Job/Account**',
     `สถานะ: ${stateLabels[aggregate.state] ?? aggregate.state}`,
     `บัญชีที่มีสถานะ: **${aggregate.accountCount ?? 0}**`,
@@ -102,91 +80,163 @@ export async function execute(interaction) {
     `Endpoint: \`${aggregate.questListPath ?? 'ยังไม่มี'}\``,
   ];
   if (aggregate.enrollmentBlockedUntil) {
-    questDetails.push(`รับ Quest ใหม่ได้: ${discordTime(aggregate.enrollmentBlockedUntil)}`);
+    details.push(`รับ Quest ใหม่ได้: ${discordTime(aggregate.enrollmentBlockedUntil)}`);
   }
   if (aggregate.unknownEvents.length) {
-    questDetails.push(`Event ใหม่: \`${aggregate.unknownEvents.join(', ').slice(0, 500)}\``);
+    details.push(`Event ใหม่: \`${aggregate.unknownEvents.join(', ').slice(0, 500)}\``);
   }
   if (aggregate.schemaIssues.length) {
-    questDetails.push(`Schema: \`${aggregate.schemaIssues.join('; ').slice(0, 500)}\``);
+    details.push(`Schema: \`${aggregate.schemaIssues.join('; ').slice(0, 500)}\``);
   }
+  return details;
+}
 
-  const accountDetails = accountStatuses.length
+function accountDetailText(accountStatuses) {
+  return accountStatuses.length
     ? accountStatuses.slice(0, 8).map(accountStatusLine).join('\n\n')
     : 'ยังไม่มีผลตรวจ Quest API ของบัญชีคุณ';
+}
 
+function runnerCounts(snapshot) {
+  const verifyingStates = new Set([
+    RUNNER_STATE.VERIFYING_ENROLLMENT,
+    RUNNER_STATE.VERIFYING_PROGRESS,
+    RUNNER_STATE.VERIFYING_CLAIM,
+  ]);
+  return {
+    oneShot: snapshot.jobs.filter((job) => job.mode === 'oneshot').length,
+    scheduled: snapshot.jobs.filter((job) => job.mode === 'scheduled').length,
+    persisted: snapshot.persisted.length,
+    durable: snapshot.activeDurable.length,
+    recovering: snapshot.activeDurable.filter((row) => row.state === RUNNER_STATE.RECOVERING).length,
+    stopping: snapshot.activeDurable.filter((row) => row.state === RUNNER_STATE.STOPPING).length,
+    verifying: snapshot.activeDurable.filter((row) => verifyingStates.has(row.state)).length,
+  };
+}
+
+function topologyField(snapshot) {
+  return {
+    name: 'Process Topology',
+    value: [
+      `Process นี้: **${config.processRole.toUpperCase()}**`,
+      `Role ที่ทำงาน: **${snapshot.activeRoles.length ? snapshot.activeRoles.join(' + ').toUpperCase() : 'NONE'}**`,
+      `Worker processes: **${snapshot.workerHolders.size}**`,
+      `Scheduled claims: **${snapshot.activeClaims.length}**`,
+      `Worker poll: **${config.workerPollIntervalMs}ms**`,
+    ].join('\n'),
+    inline: false,
+  };
+}
+
+function transportField(transport) {
+  return {
+    name: `Discord HTTP API v${transport.apiVersion}`,
+    value: [
+      `Runtime: **${transport.installed ? 'ACTIVE' : 'INACTIVE'}**`,
+      `Queue: **${transport.rateLimit.queued}** · Active: **${transport.rateLimit.active}**`,
+      `429: **${transport.rateLimit.rateLimited}** · Global: **${transport.rateLimit.globalRateLimits}**`,
+      `Routes/Scopes: **${transport.rateLimit.knownRoutes ?? 0}/${transport.rateLimit.knownScopes ?? 0}**`,
+      `Blocked buckets: **${transport.rateLimit.blockedBuckets}**`,
+      `Circuits: **${transport.rateLimit.openCircuits ?? 0} open / ${transport.rateLimit.halfOpenCircuits ?? 0} probe**`,
+      `Checkpoint errors: **${transport.rateLimit.checkpointErrors ?? 0}** · Hint errors: **${transport.rateLimit.scheduleHintErrors ?? 0}**`,
+    ].join('\n'),
+    inline: false,
+  };
+}
+
+function runnerField(snapshot) {
+  const counts = runnerCounts(snapshot);
+  return {
+    name: 'Runner',
+    value: [
+      `One-shot ใน Process นี้: **${counts.oneShot}**`,
+      `Auto Daily ใน Process นี้: **${counts.scheduled}**`,
+      `Auto Daily ที่บันทึก: **${counts.persisted}**`,
+      `Durable state ที่ยังทำงาน: **${counts.durable}**`,
+      `Recovering: **${counts.recovering}**`,
+      `Stopping: **${counts.stopping}**`,
+      `Verifying mutation: **${counts.verifying}**`,
+    ].join('\n'),
+    inline: false,
+  };
+}
+
+export function buildApiStatusEmbed(snapshot) {
+  const toMB = (value) => (value / 1024 / 1024).toFixed(1);
+  const questDetails = questDetailLines(snapshot.aggregate);
+  const accountDetails = accountDetailText(snapshot.accountStatuses);
   const embed = new EmbedBuilder()
     .setTitle('🔌 NeverDie System Status')
-    .setColor(selectStatusColor(dbOk, aggregate.state))
+    .setColor(selectStatusColor(snapshot.dbOk, snapshot.aggregate.state))
     .addFields(
-      { name: 'Database', value: dbOk ? '🟢 OK' : '🔴 Error', inline: true },
-      { name: 'Query Latency', value: `${latency}ms`, inline: true },
-      { name: 'Bot Ping', value: `${interaction.client.ws.ping}ms`, inline: true },
-      { name: 'RAM (RSS)', value: `${toMB(memory.rss)} MB`, inline: true },
-      { name: 'Heap ที่ใช้', value: `${toMB(memory.heapUsed)} MB`, inline: true },
-      { name: 'Heap ทั้งหมด', value: `${toMB(memory.heapTotal)} MB`, inline: true },
-      {
-        name: 'Process Topology',
-        value: [
-          `Process นี้: **${config.processRole.toUpperCase()}**`,
-          `Role ที่ทำงาน: **${activeRoles.length ? activeRoles.join(' + ').toUpperCase() : 'NONE'}**`,
-          `Worker processes: **${workerHolders.size}**`,
-          `Scheduled claims: **${activeClaims.length}**`,
-          `Worker poll: **${config.workerPollIntervalMs}ms**`,
-        ].join('\n'),
-        inline: false,
-      },
-      {
-        name: `Discord HTTP API v${transport.apiVersion}`,
-        value: [
-          `Runtime: **${transport.installed ? 'ACTIVE' : 'INACTIVE'}**`,
-          `Queue: **${transport.rateLimit.queued}** · Active: **${transport.rateLimit.active}**`,
-          `429: **${transport.rateLimit.rateLimited}** · Global: **${transport.rateLimit.globalRateLimits}**`,
-          `Routes/Scopes: **${transport.rateLimit.knownRoutes ?? 0}/${transport.rateLimit.knownScopes ?? 0}**`,
-          `Blocked buckets: **${transport.rateLimit.blockedBuckets}**`,
-          `Circuits: **${transport.rateLimit.openCircuits ?? 0} open / ${transport.rateLimit.halfOpenCircuits ?? 0} probe**`,
-          `Checkpoint errors: **${transport.rateLimit.checkpointErrors ?? 0}** · Hint errors: **${transport.rateLimit.scheduleHintErrors ?? 0}**`,
-        ].join('\n'),
-        inline: false,
-      },
-      {
-        name: 'Runner',
-        value: [
-          `One-shot ใน Process นี้: **${jobs.filter((job) => job.mode === 'oneshot').length}**`,
-          `Auto Daily ใน Process นี้: **${jobs.filter((job) => job.mode === 'scheduled').length}**`,
-          `Auto Daily ที่บันทึก: **${persisted.length}**`,
-          `Durable state ที่ยังทำงาน: **${activeDurable.length}**`,
-          `Recovering: **${activeDurable.filter((row) => row.state === RUNNER_STATE.RECOVERING).length}**`,
-          `Stopping: **${activeDurable.filter((row) => row.state === RUNNER_STATE.STOPPING).length}**`,
-          `Verifying mutation: **${activeDurable.filter((row) => [
-            RUNNER_STATE.VERIFYING_ENROLLMENT,
-            RUNNER_STATE.VERIFYING_PROGRESS,
-            RUNNER_STATE.VERIFYING_CLAIM,
-          ].includes(row.state)).length}**`,
-        ].join('\n'),
-        inline: false,
-      },
+      { name: 'Database', value: snapshot.dbOk ? '🟢 OK' : '🔴 Error', inline: true },
+      { name: 'Query Latency', value: `${snapshot.latency}ms`, inline: true },
+      { name: 'Bot Ping', value: `${snapshot.ping}ms`, inline: true },
+      { name: 'RAM (RSS)', value: `${toMB(snapshot.memory.rss)} MB`, inline: true },
+      { name: 'Heap ที่ใช้', value: `${toMB(snapshot.memory.heapUsed)} MB`, inline: true },
+      { name: 'Heap ทั้งหมด', value: `${toMB(snapshot.memory.heapTotal)} MB`, inline: true },
+      topologyField(snapshot),
+      transportField(snapshot.transport),
+      runnerField(snapshot),
       { name: 'Discord Quest API — สรุปรวม', value: questDetails.join('\n').slice(0, 1024) },
       { name: 'สถานะบัญชีของคุณ', value: accountDetails.slice(0, 1024) },
       {
         name: 'หลักฐานจาก Discord — รวม',
         value: [
-          `ยืนยัน progress: ${discordTime(aggregate.lastVerifiedProgressAt)}`,
-          `ยืนยัน completed_at: ${discordTime(aggregate.lastVerifiedCompletionAt)}`,
-          `ยืนยัน claimed_at: ${discordTime(aggregate.lastVerifiedClaimAt)}`,
+          `ยืนยัน progress: ${discordTime(snapshot.aggregate.lastVerifiedProgressAt)}`,
+          `ยืนยัน completed_at: ${discordTime(snapshot.aggregate.lastVerifiedCompletionAt)}`,
+          `ยืนยัน claimed_at: ${discordTime(snapshot.aggregate.lastVerifiedClaimAt)}`,
         ].join('\n'),
       },
     )
     .setTimestamp();
 
-  if (dbError) {
+  if (snapshot.dbError) {
     embed.addFields({
       name: '❌ Database Error',
-      value: `\`${redactSensitive(dbError).slice(0, 900)}\``,
+      value: `\`${redactSensitive(snapshot.dbError).slice(0, 900)}\``,
     });
   }
-  if (aggregate.lastError) {
-    embed.addFields({ name: '❌ Quest API Error ล่าสุด', value: `\`${aggregate.lastError.slice(0, 900)}\`` });
+  if (snapshot.aggregate.lastError) {
+    embed.addFields({
+      name: '❌ Quest API Error ล่าสุด',
+      value: `\`${snapshot.aggregate.lastError.slice(0, 900)}\``,
+    });
   }
-  return interaction.editReply({ embeds: [embed] });
+  return embed;
+}
+
+function collectStatusSnapshot(interaction) {
+  const health = databaseHealth();
+  return {
+    ...health,
+    ping: interaction.client.ws.ping,
+    memory: process.memoryUsage(),
+    aggregate: getQuestEngineStatus(),
+    accountStatuses: listQuestEngineStatuses({ ownerId: interaction.user.id }),
+    jobs: listJobs(),
+    persisted: listScheduledRunners(),
+    activeDurable: listRunnerStates({
+      ownerId: interaction.user.id,
+      activeOnly: true,
+      limit: 50,
+    }),
+    activeRoles: listActiveProcessRoles(),
+    workerHolders: new Set(listActiveWorkerHolders()),
+    activeClaims: listScheduledRunnerClaims({ activeOnly: true }),
+    transport: getDiscordApiRuntimeStatus(),
+  };
+}
+
+export async function execute(interaction) {
+  if (!isManager(interaction)) {
+    return interaction.reply({
+      flags: 64,
+      content: '🔒 ต้องการสิทธิ์ **Manager** ขึ้นไปจึงจะดูสถานะระบบได้',
+    });
+  }
+
+  await interaction.deferReply({ flags: 64 });
+  const snapshot = collectStatusSnapshot(interaction);
+  return interaction.editReply({ embeds: [buildApiStatusEmbed(snapshot)] });
 }
