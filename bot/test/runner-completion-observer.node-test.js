@@ -1,6 +1,7 @@
 import './setup-env.js';
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { db } from '../src/db.js';
 import {
   clearRunnerCompletionObserversForTests,
   configureRunnerCompletionObserver,
@@ -15,7 +16,6 @@ import {
   RUNNER_MUTATION_KIND,
   RUNNER_MUTATION_STATUS,
   RUNNER_STATE,
-  transitionRunnerState,
 } from '../src/quest/runner-state-store.js';
 
 const NOW = Date.parse('2030-01-01T00:00:00.000Z');
@@ -137,4 +137,52 @@ test('rejected runner promises remain terminal failures', async () => {
   assert.equal(state.state, RUNNER_STATE.FAILED);
   assert.equal(state.last_error, 'cleanup exploded');
   assert.equal(state.metadata.completion, 'runner-promise-rejected');
+});
+
+test('durable transition failure is reported without an unhandled rejection', async () => {
+  const jobKey = 'scheduled:completion-transition-failure';
+  const scheduleId = 9955;
+  const trigger = 'fail_completion_observer_transition';
+  beginRunnerState({
+    jobKey,
+    ownerId: 'completion-owner',
+    mode: 'scheduled',
+    scheduleId,
+    state: RUNNER_STATE.RUNNING,
+  });
+  db.exec(`
+    CREATE TRIGGER ${trigger}
+    BEFORE UPDATE OF state ON runner_states
+    WHEN NEW.job_key = '${jobKey}'
+    BEGIN
+      SELECT RAISE(FAIL, 'completion state unavailable');
+    END;
+  `);
+
+  const reported = [];
+  const unhandled = [];
+  const onUnhandled = (reason) => unhandled.push(reason);
+  process.on('unhandledRejection', onUnhandled);
+  try {
+    configureRunnerCompletionObserver({
+      getJob: () => ({ done: Promise.resolve() }),
+      getScheduled: () => ({ id: scheduleId }),
+      currentTime: () => NOW,
+      reportError: (error, observedJobKey) => {
+        reported.push({ message: error.message, jobKey: observedJobKey });
+      },
+    });
+
+    assert.equal(observeRunnerCompletion(jobKey, 'scheduled', scheduleId), true);
+    await settleObserver();
+    assert.deepEqual(reported, [{
+      message: 'completion state unavailable',
+      jobKey,
+    }]);
+    assert.deepEqual(unhandled, []);
+    assert.equal(getRunnerState(jobKey).state, RUNNER_STATE.RUNNING);
+  } finally {
+    process.off('unhandledRejection', onUnhandled);
+    db.exec(`DROP TRIGGER IF EXISTS ${trigger}`);
+  }
 });
