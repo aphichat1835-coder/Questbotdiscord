@@ -1,4 +1,3 @@
-import { randomInt } from 'node:crypto';
 import { config } from '../../config.js';
 import { fetchWithRetry } from '../../http-retry.js';
 import {
@@ -206,9 +205,16 @@ export async function claimQuestRequest(token, questId, platform, signal) {
   }
 }
 
+function requireVideoTimestamp(timestamp) {
+  const value = Number(timestamp);
+  if (!Number.isInteger(value) || value < 0) {
+    throw new TypeError('Video progress timestamp must be a non-negative integer');
+  }
+  return value;
+}
+
 export function sendVideoProgressRequest(token, questId, timestamp, signal) {
-  const jitter = randomInt(0, 500_000) / 1_000_000;
-  const submittedTimestamp = Math.round(Number(timestamp) + jitter);
+  const submittedTimestamp = requireVideoTimestamp(timestamp);
   return discordFetch(token, QUEST_ENDPOINT.videoProgress(questId), {
     method: 'POST',
     body: JSON.stringify({ timestamp: submittedTimestamp }),
