@@ -14,8 +14,8 @@
     "dev": "node --watch src/index.js",
     "register": "node src/register-commands.js",
     "test": "node --import ./test/setup-env.js --test --test-concurrency=1",
-    "test:mutation-safety": "bash scripts/mutation-safety.sh && bash scripts/mutation-completion-reporter-safety.sh",
-    "check": "find src scripts \\( -name '*.js' -o -name '*.mjs' \\) -print0 | xargs -0 -n1 node --check && bash -n scripts/mutation-safety.sh scripts/mutation-completion-reporter-safety.sh",
+    "test:mutation-safety": "bash scripts/mutation-baseline.sh && bash scripts/mutation-safety.sh && bash scripts/mutation-completion-reporter-safety.sh",
+    "check": "find src scripts \\( -name '*.js' -o -name '*.mjs' \\) -print0 | xargs -0 -n1 node --check && bash -n scripts/mutation-baseline.sh scripts/mutation-safety.sh scripts/mutation-completion-reporter-safety.sh",
     "validate:quest-fixture": "node scripts/validate-quest-fixture.mjs",
     "smoke:quest": "node scripts/smoke-quest-api.mjs",
     "test:coverage": "node --import ./test/setup-env.js --test --test-concurrency=1 --experimental-test-coverage --test-coverage-lines=60"
