@@ -42,7 +42,6 @@ import {
 import {
   claimQuestRequest,
   currentDiscordClientProfile,
-  DiscordApiError,
   enrollQuestRequest,
   fetchCurrentUser,
   fetchQuestPayload,
@@ -75,7 +74,8 @@ import {
   transitionRunnerState,
 } from './quest/runner-state-store.js';
 
-export { DiscordApiError, isFatalAuthError };
+export { DiscordApiError } from './quest/api/discord-client.js';
+export { isFatalAuthError };
 
 /**
  * Keep one coherent client profile for the whole process. Override all related
