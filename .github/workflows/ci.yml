@@ -15,60 +15,6 @@ on:
     branches: [main, ss, aa, aa.1]
 
 jobs:
-  apply-sonar-reexport-fix:
-    name: Apply one-shot Sonar re-export fix
-    if: github.event_name == 'pull_request' && github.base_ref == 'aa' && github.head_ref == 'aa.1'
-    permissions:
-      contents: write
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - name: Checkout aa.1
-        uses: actions/checkout@v6
-        with:
-          ref: aa.1
-          fetch-depth: 0
-
-      - name: Apply exact source transformation
-        shell: python
-        run: |
-          from pathlib import Path
-
-          path = Path('bot/src/discord-runner.js')
-          source = path.read_text(encoding='utf-8')
-
-          old_import_line = '  DiscordApiError,\n'
-          old_export = 'export { DiscordApiError, isFatalAuthError };'
-          new_export = """export { DiscordApiError } from './quest/api/discord-client.js';
-          export { isFatalAuthError };"""
-
-          import_count = source.count(old_import_line)
-          export_count = source.count(old_export)
-          if import_count == 0 and export_count == 0:
-              print('Source is already fixed')
-          elif import_count == 1 and export_count == 1:
-              source = source.replace(old_import_line, '', 1)
-              source = source.replace(old_export, new_export, 1)
-              path.write_text(source, encoding='utf-8')
-          else:
-              raise SystemExit(
-                  f'Unexpected targets: import={import_count}, export={export_count}'
-              )
-
-      - name: Validate and commit fix
-        shell: bash
-        run: |
-          git diff --check
-          node --check bot/src/discord-runner.js
-          if git diff --quiet; then
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add bot/src/discord-runner.js
-          git commit -m "refactor: re-export DiscordApiError directly"
-          git push origin HEAD:aa.1
-
   repository-shape:
     name: Repository shape
     runs-on: ubuntu-latest
