@@ -183,6 +183,7 @@ Payload ที่ Persist ต้องไม่มี Token, Cookie, CAPTCHA, We
 
 - Claim retry ห้ามเปลี่ยน `STOPPED`, `COMPLETED` หรือ `FAILED` กลับเป็น `WAITING_RETRY`
 - Recovery fetch ที่หยุดกลาง `VERIFY_MUTATION/VERIFY_COMPLETION` ต้องกลับ `WAITING_RETRY` พร้อม Backoff แม้ไม่มี Active mutation checkpoint
+- `applyRunnerRecoveryPlan()` ต้องรักษา Diagnostic metadata เดิมก่อนเขียน Recovery fields ล่าสุด
 - Restore ที่ Throw ต้อง Report และ Rearm
 - Restore summary ที่ `restored <= 0` ถือว่าล้มและต้อง Rearm
 - ก่อน Rearm/Restore ต้องตรวจ State, Schedule row, Schedule ID และ Replacement job ซ้ำ
@@ -274,23 +275,23 @@ Shutdown order:
 
 Validated implementation HEAD ก่อน Documentation-only sync:
 
-`f49aa9cfbc6182c3a634bbd006afdb8dd3682320`
+`b5481d19a4695a971d26e1b30a3b48f21e08dc43`
 
 GitHub Actions CI run ของ Implementation HEAD นี้:
 
-`#1355` — Success
+`#1366` — Success
 
 ผลจาก Artifact ของ HEAD เดียวกัน:
 
-- 381 tests passed
+- 382 tests passed
 - 0 failed
 - 0 cancelled
 - 0 skipped
 - 0 todo
-- Coverage: 93.38% lines / 84.32% branches / 88.70% functions
-- `discord-runner.js`: 85.18% lines
+- Coverage: 93.41% lines / 84.38% branches / 88.71% functions
+- `discord-runner.js`: 85.45% lines
 - Mutation baseline passed
-- 26/26 critical mutations killed
+- 27/27 critical mutations killed
 - Mutation scripts คืน Source ครบ
 - Repository shape ผ่าน
 - Sanitized Quest fixture ผ่าน
@@ -301,7 +302,7 @@ GitHub Actions CI run ของ Implementation HEAD นี้:
 
 Documentation-only commits หลัง HEAD นี้ต้องผ่าน CI ของตัวเอง แต่ไม่เปลี่ยนผล Implementation evidence ข้างต้น เว้นแต่มีการแก้ Source หรือ Test code เพิ่ม
 
-Mutation gates 26 จุด:
+Mutation gates 27 จุด:
 
 1. Skip fresh verification หลัง Uncertain mutation
 2. Deadline comparison กลับด้าน
@@ -329,6 +330,7 @@ Mutation gates 26 จุด:
 24. Terminal status ถูก Waiting state บัง
 25. Smart Wake denied attempt ไม่ถูกล้าง
 26. Numeric Quest ID ไม่ถูก Normalize
+27. Recovery plan ทำ Diagnostic metadata เดิมหาย
 
 External status ที่ยืนยันบน Implementation HEAD นี้:
 
