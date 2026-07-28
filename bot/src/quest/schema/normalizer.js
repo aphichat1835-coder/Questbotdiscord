@@ -115,13 +115,14 @@ function questProgressPercent(completedSeconds, secondsNeeded) {
 
 export function normalizeQuest(raw) {
   assertQuestObject(raw);
+  const id = String(raw.id);
   const config = raw.config ?? {};
   const userStatus = raw.user_status ?? {};
   const taskConfig = config.task_config_v2 ?? config.task_config;
   const taskEntries = questTaskEntries(taskConfig);
   const normalizedEntries = normalizeTaskEntries(taskEntries);
   const selectedTask = selectQuestTask(normalizedEntries, progressMapFromStatus(userStatus));
-  const validation = validateQuestTask(raw.id, taskConfig, taskEntries, selectedTask);
+  const validation = validateQuestTask(id, taskConfig, taskEntries, selectedTask);
   const progress = progressSeconds(
     userStatus,
     selectedTask.key,
@@ -131,14 +132,14 @@ export function normalizeQuest(raw) {
   if (!progress.valid) {
     validation.schemaIssues.push(questCompatibilityIssue(
       'TASK_PROGRESS_INVALID',
-      `quest ${raw.id}: invalid progress for ${selectedTask.type}`,
+      `quest ${id}: invalid progress for ${selectedTask.type}`,
     ));
     validation.autoSupported = false;
   }
 
   return {
-    id: raw.id,
-    name: config.messages?.quest_name ?? raw.id,
+    id,
+    name: config.messages?.quest_name ?? id,
     applicationId: config.application?.id ?? null,
     rewardPlatforms: rewardPlatforms(config),
     startsAt: config.starts_at ?? null,
