@@ -44,6 +44,14 @@ function selectQuestTask(entries, progressMap) {
   return { key: 'UNKNOWN_SCHEMA', type: 'UNKNOWN_SCHEMA', definition: { target: 0 } };
 }
 
+function finiteNonNegativeNumber(value) {
+  if (value == null || value === '') return { value: 0, valid: true };
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0
+    ? { value: number, valid: true }
+    : { value: 0, valid: false };
+}
+
 function validateQuestTask(rawId, taskConfig, entries, selectedTask) {
   const schemaIssues = [];
   if (!entries.length) {
@@ -52,23 +60,28 @@ function validateQuestTask(rawId, taskConfig, entries, selectedTask) {
       `quest ${rawId}: missing task definitions`,
     ));
   }
-  const secondsNeeded = Number(selectedTask.definition?.target ?? 0);
-  const autoSupported = !(
+  const parsedTarget = Number(selectedTask.definition?.target ?? 0);
+  const targetValid = Number.isFinite(parsedTarget) && parsedTarget > 0;
+  const multiTaskSupported = !(
     (taskConfig?.join_operator ?? 'or') === 'and' && entries.length > 1
   );
-  if (!autoSupported) {
+  if (!multiTaskSupported) {
     schemaIssues.push(questCompatibilityIssue(
       'MULTI_TASK_AND',
       `quest ${rawId}: multi-task join_operator=and requires every task`,
     ));
   }
-  if (!Number.isFinite(secondsNeeded) || secondsNeeded <= 0) {
+  if (!targetValid) {
     schemaIssues.push(questCompatibilityIssue(
       'TASK_TARGET_INVALID',
       `quest ${rawId}: invalid target for ${selectedTask.type}`,
     ));
   }
-  return { autoSupported, schemaIssues, secondsNeeded };
+  return {
+    autoSupported: multiTaskSupported && targetValid && entries.length > 0,
+    schemaIssues,
+    secondsNeeded: targetValid ? parsedTarget : 0,
+  };
 }
 
 function progressSeconds(userStatus, progressKey, eventName, secondsNeeded) {
@@ -76,15 +89,17 @@ function progressSeconds(userStatus, progressKey, eventName, secondsNeeded) {
   if (rawProgress && typeof rawProgress === 'object' && !Array.isArray(rawProgress)) {
     const eventProgress = rawProgress[progressKey] ?? rawProgress[eventName];
     if (eventProgress && typeof eventProgress === 'object') {
-      return Number(eventProgress.value ?? 0);
+      return finiteNonNegativeNumber(eventProgress.value);
     }
-    return Number(eventProgress ?? 0);
+    return finiteNonNegativeNumber(eventProgress);
   }
   if (typeof rawProgress === 'string' || typeof rawProgress === 'number') {
-    return (Number.parseFloat(rawProgress) / 100) * secondsNeeded;
+    const percentage = finiteNonNegativeNumber(rawProgress);
+    return percentage.valid
+      ? { value: (percentage.value / 100) * secondsNeeded, valid: true }
+      : percentage;
   }
-  const streamProgress = Number(userStatus.stream_progress_seconds);
-  return Number.isFinite(streamProgress) ? streamProgress : 0;
+  return finiteNonNegativeNumber(userStatus.stream_progress_seconds);
 }
 
 function rewardPlatforms(config) {
@@ -94,7 +109,7 @@ function rewardPlatforms(config) {
 }
 
 function questProgressPercent(completedSeconds, secondsNeeded) {
-  if (secondsNeeded <= 0) return 0;
+  if (!Number.isFinite(completedSeconds) || completedSeconds < 0 || secondsNeeded <= 0) return 0;
   return Math.min(100, (completedSeconds / secondsNeeded) * 100);
 }
 
@@ -107,12 +122,19 @@ export function normalizeQuest(raw) {
   const normalizedEntries = normalizeTaskEntries(taskEntries);
   const selectedTask = selectQuestTask(normalizedEntries, progressMapFromStatus(userStatus));
   const validation = validateQuestTask(raw.id, taskConfig, taskEntries, selectedTask);
-  const completedSeconds = progressSeconds(
+  const progress = progressSeconds(
     userStatus,
     selectedTask.key,
     selectedTask.type,
     validation.secondsNeeded,
   );
+  if (!progress.valid) {
+    validation.schemaIssues.push(questCompatibilityIssue(
+      'TASK_PROGRESS_INVALID',
+      `quest ${raw.id}: invalid progress for ${selectedTask.type}`,
+    ));
+    validation.autoSupported = false;
+  }
 
   return {
     id: raw.id,
@@ -122,9 +144,9 @@ export function normalizeQuest(raw) {
     startsAt: config.starts_at ?? null,
     expiresAt: config.expires_at ?? null,
     eventName: selectedTask.type,
-    progress: questProgressPercent(completedSeconds, validation.secondsNeeded),
+    progress: questProgressPercent(progress.value, validation.secondsNeeded),
     secondsNeeded: validation.secondsNeeded,
-    progressSecs: completedSeconds,
+    progressSecs: progress.value,
     progressKey: selectedTask.key,
     autoSupported: validation.autoSupported,
     enrolledAt: userStatus.enrolled_at ?? null,
