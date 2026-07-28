@@ -15,8 +15,12 @@ function task(overrides = {}) {
 test('successful responses with remaining quota never clone or parse their body', async () => {
   const coordinator = new DiscordRateLimitCoordinator({ now: () => 1_000 });
   let clones = 0;
+  let statusReads = 0;
   await coordinator.updateRateLimitState(task(), {
-    status: 200,
+    get status() {
+      statusReads++;
+      return 200;
+    },
     headers: new Headers({
       'x-ratelimit-bucket': 'normal-bucket',
       'x-ratelimit-remaining': '4',
@@ -27,6 +31,7 @@ test('successful responses with remaining quota never clone or parse their body'
     },
   });
 
+  assert.equal(statusReads, 2);
   assert.equal(clones, 0);
   assert.equal(coordinator.bucketResetAt.size, 0);
 });
