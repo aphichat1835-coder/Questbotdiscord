@@ -133,47 +133,69 @@ export async function discordFetch(token, path, options = {}, policy = {}) {
   return data;
 }
 
-export async function fetchCurrentUser(token, signal) {
+export function fetchCurrentUser(token, signal) {
   return discordFetch(token, QUEST_ENDPOINT.me(), { signal });
 }
 
+function buildQuestPayload(candidate, path) {
+  return {
+    path,
+    quests: extractQuestArray(candidate, path),
+    excludedCount: Array.isArray(candidate?.excluded_quests)
+      ? candidate.excluded_quests.length
+      : 0,
+    enrollmentBlockedUntil: candidate?.quest_enrollment_blocked_until ?? null,
+  };
+}
+
+function requestWasAborted(error, signal) {
+  return Boolean(
+    signal?.aborted
+    || error?.name === 'AbortError'
+    || error?.message === 'aborted',
+  );
+}
+
+function rememberQuestEndpointFailure(failures, error) {
+  if (!isFatalAuthError(error)) {
+    failures.lastError = error;
+    return false;
+  }
+
+  failures.fatalError = error;
+  return error.status === 401 || Boolean(failures.emptyCandidate);
+}
+
+function resolveQuestPayloadSearch(failures) {
+  if (failures.emptyCandidate) return failures.emptyCandidate;
+  if (failures.fatalError) throw failures.fatalError;
+  if (failures.lastError instanceof QuestCompatibilityError) throw failures.lastError;
+  throw new QuestCompatibilityError(
+    `Quest API endpoints unavailable: ${failures.lastError?.message ?? 'unknown error'}`,
+    { code: 'QUEST_ENDPOINTS_UNAVAILABLE' },
+  );
+}
+
 export async function fetchQuestPayload(token, signal) {
-  let emptyCandidate = null;
-  let lastError = null;
-  let fatalError = null;
+  const failures = {
+    emptyCandidate: null,
+    fatalError: null,
+    lastError: null,
+  };
 
   for (const path of QUEST_LIST_PATHS) {
     try {
       const candidate = await discordFetch(token, path, { signal });
-      const quests = extractQuestArray(candidate, path);
-      const payload = {
-        path,
-        quests,
-        excludedCount: Array.isArray(candidate?.excluded_quests)
-          ? candidate.excluded_quests.length
-          : 0,
-        enrollmentBlockedUntil: candidate?.quest_enrollment_blocked_until ?? null,
-      };
-      if (quests.length > 0) return payload;
-      emptyCandidate ??= payload;
+      const payload = buildQuestPayload(candidate, path);
+      if (payload.quests.length > 0) return payload;
+      failures.emptyCandidate ??= payload;
     } catch (error) {
-      if (signal?.aborted || error?.name === 'AbortError' || error?.message === 'aborted') throw error;
-      if (isFatalAuthError(error)) {
-        fatalError = error;
-        if (error.status === 401 || emptyCandidate) break;
-      } else {
-        lastError = error;
-      }
+      if (requestWasAborted(error, signal)) throw error;
+      if (rememberQuestEndpointFailure(failures, error)) break;
     }
   }
 
-  if (emptyCandidate) return emptyCandidate;
-  if (fatalError) throw fatalError;
-  if (lastError instanceof QuestCompatibilityError) throw lastError;
-  throw new QuestCompatibilityError(
-    `Quest API endpoints unavailable: ${lastError?.message ?? 'unknown error'}`,
-    { code: 'QUEST_ENDPOINTS_UNAVAILABLE' },
-  );
+  return resolveQuestPayloadSearch(failures);
 }
 
 export function enrollQuestRequest(token, questId, signal) {
