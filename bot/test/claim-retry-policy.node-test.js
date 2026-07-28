@@ -99,3 +99,34 @@ test('rejected claim persists an API 4xx error category', () => {
   assert.equal(state.metadata.claimRetryReason, CLAIM_RETRY_REASON.REQUEST_REJECTED);
   assert.equal(state.error_category, RUNNER_ERROR_CATEGORY.API_4XX);
 });
+
+for (const terminalState of [
+  RUNNER_STATE.STOPPED,
+  RUNNER_STATE.COMPLETED,
+  RUNNER_STATE.FAILED,
+]) {
+  test(`claim retry cannot revive a ${terminalState} runner`, () => {
+    const jobKey = `scheduled:claim-retry-terminal-${terminalState.toLowerCase()}`;
+    beginRunnerState({
+      jobKey,
+      ownerId: 'claim-retry-owner',
+      mode: 'scheduled',
+      scheduleId: 920100 + terminalState.length,
+      state: terminalState,
+      nextActionAt: null,
+      metadata: { terminalMarker: terminalState },
+    });
+    const before = getRunnerState(jobKey);
+    const retry = classifyClaimRetry({ status: 503, message: 'late claim failure' });
+
+    const result = persistClaimRetry(jobKey, { id: 'late-claim' }, { ...retry });
+    const after = getRunnerState(jobKey);
+
+    assert.equal(result.state, terminalState);
+    assert.equal(after.state, terminalState);
+    assert.equal(after.next_action_at, before.next_action_at);
+    assert.equal(after.mutation_kind, before.mutation_kind);
+    assert.deepEqual(after.metadata, before.metadata);
+    assert.equal(claimRetryAt(jobKey), null);
+  });
+}
