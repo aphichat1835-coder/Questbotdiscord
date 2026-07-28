@@ -50,6 +50,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
         with:
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Setup Node.js
@@ -161,6 +162,7 @@ jobs:
           path: |
             bot/test-output.log
             bot/mutation-output.log
+            bot/coverage/lcov.info
           if-no-files-found: error
           retention-days: 7
 
@@ -169,3 +171,22 @@ jobs:
 
       - name: Production dependency audit
         run: npm audit --omit=dev --audit-level=high
+
+      - name: Detect Sonar token
+        id: sonar-token
+        shell: bash
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          if [ -n "$SONAR_TOKEN" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "SONAR_TOKEN is not configured; skipping CI-based Sonar scan"
+          fi
+
+      - name: SonarQube Cloud scan
+        if: steps.sonar-token.outputs.available == 'true'
+        uses: SonarSource/sonarqube-scan-action@v7
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
