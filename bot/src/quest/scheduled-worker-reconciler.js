@@ -109,15 +109,13 @@ function ownsActiveClaim(job, options, now = currentTime(options)) {
     || options.acquireClaim(id, options.holder, options.claimTtlMs, now);
 }
 
-async function reconcileActive(rows, jobs, options) {
+function partitionActiveJobs(rows, jobs, options) {
   const rowIds = new Set(rows.map((row) => Number(row.id)));
-  let surviving = [];
+  const surviving = [];
   const stopCandidates = [];
   const renewedJobs = new Set();
-  const result = { stopRequested: 0, stopFailures: 0, claimLost: 0 };
+  let claimLost = 0;
 
-  // Renew every healthy local job before awaiting cleanup for any removed/lost job.
-  // This prevents one slow shutdown from starving unrelated ownership leases.
   for (const job of jobs) {
     const rowExists = rowIds.has(Number(job.scheduleId));
     const ownsClaim = rowExists && ownsActiveClaim(job, options);
@@ -126,10 +124,19 @@ async function reconcileActive(rows, jobs, options) {
       if (options.holder) renewedJobs.add(job.key);
       continue;
     }
-    if (rowExists && !ownsClaim) result.claimLost++;
+    if (rowExists) claimLost++;
     stopCandidates.push(job);
   }
 
+  return { claimLost, renewedJobs, stopCandidates, surviving };
+}
+
+function addStopResult(result, stopped) {
+  result.stopRequested += stopped.requested;
+  result.stopFailures += stopped.failed;
+}
+
+async function stopCandidatesWithHeartbeat(stopCandidates, surviving, options, renewedJobs) {
   const ownershipLost = new Set();
   const stopHeartbeat = startClaimHeartbeat(
     surviving,
@@ -137,36 +144,87 @@ async function reconcileActive(rows, jobs, options) {
     renewedJobs,
     ownershipLost,
   );
-  let stopped;
+
   try {
-    stopped = await stopJobsSafely(stopCandidates, options);
+    const stopped = await stopJobsSafely(stopCandidates, options);
+    return { ownershipLost, stopped };
   } finally {
     stopHeartbeat();
   }
-  result.stopRequested += stopped.requested;
-  result.stopFailures += stopped.failed;
+}
+
+function shouldRevalidateOwnership(options, stopCandidates, surviving) {
+  return Boolean(options.holder && stopCandidates.length > 0 && surviving.length > 0);
+}
+
+async function revalidateSurvivingClaims(
+  surviving,
+  stopCandidates,
+  options,
+  renewedJobs,
+  ownershipLost,
+) {
+  if (!shouldRevalidateOwnership(options, stopCandidates, surviving)) {
+    return {
+      claimLost: 0,
+      stopped: { requested: 0, failed: 0 },
+      surviving,
+    };
+  }
+
+  const confirmed = [];
+  const lostDuringCleanup = [];
+  for (const job of surviving) {
+    if (!ownershipLost.has(job.key) && ownsActiveClaim(job, options)) {
+      confirmed.push(job);
+      renewedJobs.add(job.key);
+    } else {
+      lostDuringCleanup.push(job);
+    }
+  }
+
+  return {
+    claimLost: lostDuringCleanup.length,
+    stopped: await stopJobsSafely(lostDuringCleanup, options),
+    surviving: confirmed,
+  };
+}
+
+async function reconcileActive(rows, jobs, options) {
+  const partition = partitionActiveJobs(rows, jobs, options);
+  const result = {
+    claimLost: partition.claimLost,
+    stopFailures: 0,
+    stopRequested: 0,
+  };
+
+  // Renew every healthy local job before awaiting cleanup for any removed/lost job.
+  // This prevents one slow shutdown from starving unrelated ownership leases.
+  const cleanup = await stopCandidatesWithHeartbeat(
+    partition.stopCandidates,
+    partition.surviving,
+    options,
+    partition.renewedJobs,
+  );
+  addStopResult(result, cleanup.stopped);
 
   // Verify ownership again before the restore phase. The heartbeat prevents a
   // long cleanup from allowing unrelated leases to expire mid-reconciliation.
-  if (options.holder && stopCandidates.length > 0 && surviving.length > 0) {
-    const confirmed = [];
-    const lostDuringCleanup = [];
-    for (const job of surviving) {
-      if (!ownershipLost.has(job.key) && ownsActiveClaim(job, options)) {
-        confirmed.push(job);
-        renewedJobs.add(job.key);
-      } else {
-        result.claimLost++;
-        lostDuringCleanup.push(job);
-      }
-    }
-    const lostStops = await stopJobsSafely(lostDuringCleanup, options);
-    result.stopRequested += lostStops.requested;
-    result.stopFailures += lostStops.failed;
-    surviving = confirmed;
-  }
+  const revalidated = await revalidateSurvivingClaims(
+    partition.surviving,
+    partition.stopCandidates,
+    options,
+    partition.renewedJobs,
+    cleanup.ownershipLost,
+  );
+  result.claimLost += revalidated.claimLost;
+  addStopResult(result, revalidated.stopped);
 
-  return { ...result, claimsRenewed: renewedJobs.size, surviving };
+  return {
+    ...result,
+    claimsRenewed: partition.renewedJobs.size,
+    surviving: revalidated.surviving,
+  };
 }
 
 async function restoreMissing(client, rows, surviving, options) {
@@ -217,7 +275,7 @@ function finalizeStops(rows, active, options) {
     transitionRunnerState(state.job_key, RUNNER_STATE.STOPPED, {
       nextActionAt: null,
       lastError: null,
-      metadata: { ...(state.metadata ?? {}), stopConfirmedBy: 'worker-supervisor' },
+      metadata: { ...state.metadata, stopConfirmedBy: 'worker-supervisor' },
       stateSource: 'worker-supervisor',
     });
     finalized++;
