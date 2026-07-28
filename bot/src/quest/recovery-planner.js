@@ -38,7 +38,7 @@ const TERMINAL_STATES = new Set([
 ]);
 
 function timestamp(value) {
-  const parsed = value == null ? NaN : Date.parse(value);
+  const parsed = value == null ? Number.NaN : Date.parse(value);
   return Number.isFinite(parsed) ? parsed : null;
 }
 
@@ -126,7 +126,7 @@ export function applyRunnerRecoveryPlan(jobKey, recoveryPlan) {
   return transitionRunnerState(jobKey, recoveryPlan.targetState, {
     nextActionAt: recoveryPlan.initialNextCheckAt,
     metadata: {
-      ...(current?.metadata ?? {}),
+      ...current?.metadata,
       recoveryAction: recoveryPlan.action,
       recoveryReason: recoveryPlan.reason,
       mutationKind: recoveryPlan.mutationKind ?? null,
