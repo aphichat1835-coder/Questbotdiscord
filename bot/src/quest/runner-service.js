@@ -1,8 +1,13 @@
 import { config } from '../config.js';
 import * as legacyRunner from '../discord-runner.js';
 import { isProcessRoleActive } from '../process-topology.js';
-import { listScheduledRunners } from '../scheduled-runner-store.js';
+import {
+  getScheduledRunner,
+  listScheduledRunners,
+} from '../scheduled-runner-store.js';
+import { createAllModeRecoveryController } from './all-mode-recovery.js';
 import { observeRunnerCompletion } from './runner-completion-observer.js';
+import { releaseRunnerExecutionWhenSettled } from './runner-completion-release.js';
 import {
   registerRunnerExecution,
   runWithRunnerExecutionContext,
@@ -73,7 +78,56 @@ function beginDurableStart(args, source = 'runner-service') {
   });
 }
 
+function activeScheduledInventory() {
+  const jobs = legacyRunner.listJobs().filter((job) => (
+    job.mode === 'scheduled' && job.lifecycle !== 'stopping'
+  ));
+  const existingAccountIds = jobs.map((job) => job.accountId).filter(Boolean);
+  const existingOwnerCounts = new Map();
+  for (const job of jobs) {
+    existingOwnerCounts.set(
+      job.ownerId,
+      (existingOwnerCounts.get(job.ownerId) ?? 0) + 1,
+    );
+  }
+  return { existingAccountIds, existingOwnerCounts };
+}
+
+async function restoreAllModeRow(row, context) {
+  const inventory = activeScheduledInventory();
+  return restoreScheduledRunnerRows(context.client, startLocalRunner, {
+    rows: [row],
+    reconciliationRows: listScheduledRunners(),
+    existingAccountIds: inventory.existingAccountIds,
+    existingOwnerCounts: inventory.existingOwnerCounts,
+    now: new Date(),
+  });
+}
+
+const allModeRecovery = createAllModeRecoveryController({
+  readState: getRunnerState,
+  readJob: legacyRunner.getJob,
+  readScheduled: getScheduledRunner,
+  restore: restoreAllModeRow,
+  reportError: (error, context) => {
+    console.error(
+      `[RunnerRecovery:${String(context?.jobKey ?? 'unknown').slice(0, 100)}] restart failed — ${error?.message ?? 'unknown error'}`,
+    );
+  },
+});
+
+function recoveryWakeContext(args) {
+  return {
+    jobKey: args.jobKey,
+    mode: args.mode ?? 'oneshot',
+    processRole: config.processRole,
+    scheduleId: args.scheduleId ?? null,
+    client: args.client,
+  };
+}
+
 function markStarted(args) {
+  allModeRecovery.cancel(args.jobKey);
   const current = getRunnerState(args.jobKey);
   const targetState = args.recoveryPlan?.targetState ?? RUNNER_STATE.RUNNING;
   transitionRunnerState(args.jobKey, targetState, {
@@ -94,6 +148,7 @@ function markStarted(args) {
 }
 
 function markStartFailure(args, error) {
+  allModeRecovery.cancel(args.jobKey);
   transitionRunnerState(args.jobKey, RUNNER_STATE.FAILED, {
     lastError: error?.message ?? String(error),
     metadata: { stage: 'start' },
@@ -114,13 +169,25 @@ function transitionOwnedRunner(jobKey, ownerId, state, metadata) {
   });
 }
 
-function releaseExecutionWhenSettled(jobKey, registration) {
-  const job = legacyRunner.getJob(jobKey);
-  if (!job?.done) {
+function releaseExecutionWhenSettled(args, registration) {
+  const job = legacyRunner.getJob(args.jobKey);
+  const done = job?.done;
+  const scheduleRecovery = () => {
+    queueMicrotask(() => allModeRecovery.schedule(recoveryWakeContext(args)));
+  };
+  if (!done) {
     registration.release();
     return;
   }
-  void Promise.resolve(job.done).finally(() => registration.release());
+
+  releaseRunnerExecutionWhenSettled(done, () => registration.release(), {
+    onError: (error) => {
+      console.error(
+        `[RunnerExecution:${String(args.jobKey).slice(0, 100)}] release failed — ${error?.message ?? 'unknown error'}`,
+      );
+    },
+  });
+  void Promise.resolve(done).then(scheduleRecovery, () => undefined);
 }
 
 export function shouldDelegateScheduledRunner(processRole, mode) {
@@ -137,7 +204,7 @@ export async function startLocalRunner(args) {
       () => legacyRunner.startRunner(args),
     );
     markStarted(args);
-    releaseExecutionWhenSettled(args.jobKey, registration);
+    releaseExecutionWhenSettled(args, registration);
     return result;
   } catch (error) {
     registration?.release();
@@ -203,6 +270,7 @@ export async function shutdownRunners(timeoutMs = null) {
       });
     }
   }
+  allModeRecovery.clear();
   clearAllSmartWakes();
   const result = await legacyRunner.shutdownRunners(timeoutMs);
   syncAllRunnerStates();
@@ -213,6 +281,7 @@ export async function shutdownRunners(timeoutMs = null) {
 export function stopJob(ownerId, jobKey, options = {}) {
   const stopped = legacyRunner.stopJob(ownerId, jobKey, options);
   if (stopped) {
+    allModeRecovery.cancel(jobKey);
     transitionOwnedRunner(jobKey, ownerId, RUNNER_STATE.STOPPING, {
       stopSource: config.processRole,
     });
@@ -227,6 +296,7 @@ export function stopScheduledJob(ownerId, scheduleId) {
   const stopped = legacyRunner.stopScheduledJob(ownerId, scheduleId);
   if (!stopped) return false;
 
+  allModeRecovery.cancel(jobKey);
   clearSmartWake(jobKey);
   const workerMayStillBeRunning = config.processRole === 'control'
     && isProcessRoleActive('worker');
@@ -248,6 +318,7 @@ export function stopAllForUser(ownerId, options = {}) {
   const stopped = legacyRunner.stopAllForUser(ownerId, options);
   if (stopped > 0) {
     for (const job of jobs) {
+      allModeRecovery.cancel(job.key);
       transitionOwnedRunner(job.key, ownerId, RUNNER_STATE.STOPPING, {
         stopSource: config.processRole,
       });
