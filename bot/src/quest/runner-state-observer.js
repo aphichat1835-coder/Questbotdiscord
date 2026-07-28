@@ -9,6 +9,7 @@ import {
 import { stateScheduleReason } from './smart-scheduler.js';
 
 const OBSERVER_INTERVAL_MS = 1000;
+const PROGRESS_PATTERN = /\b(\d{1,3})%/;
 const OBSERVED_WAITING_STATES = new Set([
   RUNNER_STATE.WAITING_RETRY,
   RUNNER_STATE.WAITING_SCHEDULE,
@@ -33,24 +34,48 @@ function stateFromStatus(job) {
   if (/NETWORK RETRY/.test(status)) return RUNNER_STATE.WAITING_RETRY;
   if (/NEXT CHECK|AUTO DAILY ACTIVE/.test(status)) return RUNNER_STATE.WAITING_SCHEDULE;
   if (/VERIFY/.test(status)) return RUNNER_STATE.VERIFYING_COMPLETION;
-  if (/กำลังเตรียมทำ/.test(status)) return RUNNER_STATE.ENROLLING;
-  if (/กำลังทำ|\b\d{1,3}%/.test(status)) return RUNNER_STATE.RUNNING_PROGRESS;
+  if (status.includes('กำลังเตรียมทำ')) return RUNNER_STATE.ENROLLING;
+  if (status.includes('กำลังทำ') || PROGRESS_PATTERN.test(status)) {
+    return RUNNER_STATE.RUNNING_PROGRESS;
+  }
   if (/LOGIN/.test(status)) return RUNNER_STATE.AUTHENTICATING;
   return RUNNER_STATE.RUNNING;
 }
 
+function progressMatch(status) {
+  PROGRESS_PATTERN.lastIndex = 0;
+  return PROGRESS_PATTERN.exec(String(status ?? ''));
+}
+
 function progressFromStatus(status) {
-  const match = String(status ?? '').match(/\b(\d{1,3})%/);
+  const match = progressMatch(status);
   if (!match) return null;
   return Math.min(100, Math.max(0, Number(match[1])));
 }
 
+function runningQuestName(value) {
+  for (const marker of ['กำลังเตรียมทำ', 'กำลังทำ']) {
+    const markerIndex = value.indexOf(marker);
+    if (markerIndex < 0) continue;
+    const name = value.slice(markerIndex + marker.length).trim();
+    if (name) return name.slice(0, 160);
+  }
+  return null;
+}
+
+function progressQuestName(value) {
+  const match = progressMatch(value);
+  if (!match) return null;
+  const prefix = value.slice(0, match.index).trim();
+  if (!prefix) return null;
+  const colonIndex = prefix.indexOf(':');
+  const name = (colonIndex >= 0 ? prefix.slice(colonIndex + 1) : prefix).trim();
+  return name ? name.slice(0, 160) : null;
+}
+
 function questNameFromStatus(status) {
   const value = String(status ?? '');
-  const running = value.match(/กำลัง(?:เตรียม)?ทำ\s+(.+)$/);
-  if (running) return running[1].trim().slice(0, 160);
-  const progress = value.match(/^[^:]*:?\s*(.+?)\s+\d{1,3}%$/);
-  return progress?.[1]?.trim().slice(0, 160) ?? null;
+  return runningQuestName(value) ?? progressQuestName(value);
 }
 
 function hasActiveMutationCheckpoint(current) {
@@ -73,34 +98,43 @@ function hasAuthoritativeDirectState(current, observedState) {
   return Boolean(current.state_source && current.state_source !== 'legacy-observer');
 }
 
+function observedMetadata(job, current, preserve, state) {
+  const metadata = {
+    ...(preserve ? current.metadata : null),
+    lifecycle: job.lifecycle,
+    status: String(job.status ?? '').slice(0, 500),
+  };
+  if (!preserve) metadata.scheduleReason = stateScheduleReason(state);
+  return metadata;
+}
+
+function observedLastError(job, current, preserve, state) {
+  if (preserve) return current.last_error;
+  if (state === RUNNER_STATE.FAILED) return String(job.status ?? '').slice(0, 500);
+  return null;
+}
+
+function observedValues(job, current, preserve, state) {
+  const questName = questNameFromStatus(job.status);
+  const progress = progressFromStatus(job.status);
+  return {
+    ...(job.accountId != null ? { accountId: job.accountId } : {}),
+    ...(job.username != null ? { username: job.username } : {}),
+    ...(!preserve && questName != null ? { questName } : {}),
+    ...(!preserve && progress != null ? { progress } : {}),
+    nextActionAt: preserve ? current.next_action_at : job.nextCheckAt,
+    lastError: observedLastError(job, current, preserve, state),
+    metadata: observedMetadata(job, current, preserve, state),
+    stateSource: preserve ? current.state_source : 'legacy-observer',
+  };
+}
+
 function observedTransition(job, current, observedState) {
   const preserve = hasAuthoritativeDirectState(current, observedState);
   const state = preserve ? current.state : observedState;
-  const questName = questNameFromStatus(job.status);
-  const progress = progressFromStatus(job.status);
-  const metadata = {
-    ...(preserve ? current.metadata ?? {} : {}),
-    lifecycle: job.lifecycle,
-    status: String(job.status ?? '').slice(0, 500),
-    ...(preserve ? {} : { scheduleReason: stateScheduleReason(state) }),
-  };
-
   return {
     state,
-    values: {
-      ...(job.accountId != null ? { accountId: job.accountId } : {}),
-      ...(job.username != null ? { username: job.username } : {}),
-      ...(!preserve && questName != null ? { questName } : {}),
-      ...(!preserve && progress != null ? { progress } : {}),
-      nextActionAt: preserve ? current.next_action_at : job.nextCheckAt,
-      lastError: preserve
-        ? current.last_error
-        : state === RUNNER_STATE.FAILED
-          ? String(job.status ?? '').slice(0, 500)
-          : null,
-      metadata,
-      stateSource: preserve ? current.state_source : 'legacy-observer',
-    },
+    values: observedValues(job, current, preserve, state),
   };
 }
 
