@@ -54,7 +54,7 @@ export function smartWakeTimerDelay(nextActionAt, now = Date.now()) {
 
 async function restartSleepingRunner(args) {
   if (typeof restartRunner !== 'function') {
-    throw new Error('Smart wake restart handler is not configured');
+    throw new TypeError('Smart wake restart handler is not configured');
   }
   const active = readActiveJob(args.jobKey);
   if (!active || !runnerIsSleeping(active)) {
