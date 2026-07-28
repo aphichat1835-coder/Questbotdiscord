@@ -1,6 +1,7 @@
 import { RUNNER_STATE } from './runner-state-store.js';
 
 export const MAX_ALL_MODE_RECOVERY_TIMER_MS = 24 * 60 * 60 * 1000;
+export const ALL_MODE_RESTORE_RETRY_DELAY_MS = 5 * 60 * 1000;
 
 function retryTimestamp(state) {
   const value = Date.parse(state?.next_action_at);
@@ -16,6 +17,7 @@ export function createAllModeRecoveryController({
   setTimer = setTimeout,
   clearTimer = clearTimeout,
   reportError = () => {},
+  restoreRetryDelayMs = ALL_MODE_RESTORE_RETRY_DELAY_MS,
 } = {}) {
   for (const [name, value] of Object.entries({ readState, readJob, readScheduled, restore })) {
     if (typeof value !== 'function') throw new TypeError(`${name} callback is required`);
@@ -45,6 +47,24 @@ export function createAllModeRecoveryController({
     return { state, row, nextAt };
   }
 
+  function schedule(context, { notBefore = null } = {}) {
+    cancel(context?.jobKey);
+    const candidate = eligible(context);
+    if (!candidate) return false;
+    const minimumAt = Number.isFinite(Number(notBefore)) ? Number(notBefore) : candidate.nextAt;
+    const targetAt = Math.max(candidate.nextAt, minimumAt);
+    const delay = Math.max(
+      0,
+      Math.min(MAX_ALL_MODE_RECOVERY_TIMER_MS, targetAt - currentTime()),
+    );
+    const timer = setTimer(() => {
+      void run(context);
+    }, delay);
+    timer?.unref?.();
+    timers.set(context.jobKey, { timer, context, targetAt });
+    return true;
+  }
+
   async function run(context) {
     timers.delete(context.jobKey);
     const candidate = eligible(context);
@@ -62,26 +82,13 @@ export function createAllModeRecoveryController({
       return true;
     } catch (error) {
       reportError(error, context);
+      schedule(context, {
+        notBefore: currentTime() + Math.max(1000, Number(restoreRetryDelayMs) || 0),
+      });
       return false;
     } finally {
       restoring.delete(context.jobKey);
     }
-  }
-
-  function schedule(context) {
-    cancel(context?.jobKey);
-    const candidate = eligible(context);
-    if (!candidate) return false;
-    const delay = Math.max(
-      0,
-      Math.min(MAX_ALL_MODE_RECOVERY_TIMER_MS, candidate.nextAt - currentTime()),
-    );
-    const timer = setTimer(() => {
-      void run(context);
-    }, delay);
-    timer?.unref?.();
-    timers.set(context.jobKey, { timer, context });
-    return true;
   }
 
   function clear() {
