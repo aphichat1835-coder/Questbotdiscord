@@ -68,6 +68,41 @@ test('uncertain mutation restarts in verification state before any resend', () =
   assert.equal(state.metadata.recoveryAction, RUNNER_RECOVERY_ACTION.VERIFY_MUTATION);
 });
 
+test('applying recovery plan preserves existing diagnostic metadata', () => {
+  const jobKey = 'scheduled:recovery-metadata-preserved';
+  beginRunnerState({
+    jobKey,
+    ownerId: 'owner-1',
+    mode: 'scheduled',
+    scheduleId: 9105,
+    metadata: {
+      source: 'worker',
+      claimRetryReason: 'rate-limited',
+      claimRetryAt: '2030-01-01T00:05:00.000Z',
+      customDiagnostic: 'keep-me',
+      recoveryAction: 'STALE_ACTION',
+      questId: 'stale-quest',
+    },
+  });
+
+  applyRunnerRecoveryPlan(jobKey, {
+    action: RUNNER_RECOVERY_ACTION.VERIFY_COMPLETION,
+    reason: 'resume-verifying-completion',
+    questId: 'fresh-quest',
+    initialNextCheckAt: null,
+    targetState: RUNNER_STATE.VERIFYING_COMPLETION,
+  });
+
+  const state = getRunnerState(jobKey);
+  assert.equal(state.metadata.source, 'worker');
+  assert.equal(state.metadata.claimRetryReason, 'rate-limited');
+  assert.equal(state.metadata.claimRetryAt, '2030-01-01T00:05:00.000Z');
+  assert.equal(state.metadata.customDiagnostic, 'keep-me');
+  assert.equal(state.metadata.recoveryAction, RUNNER_RECOVERY_ACTION.VERIFY_COMPLETION);
+  assert.equal(state.metadata.recoveryReason, 'resume-verifying-completion');
+  assert.equal(state.metadata.questId, 'fresh-quest');
+});
+
 test('uncertain checkpoint is verified even when the persisted runner state is still running', () => {
   const plan = planRunnerRecovery({
     mode: 'scheduled',
