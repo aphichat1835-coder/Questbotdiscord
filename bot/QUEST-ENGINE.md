@@ -30,6 +30,7 @@ src/quest/
 │  ├─ desktop-executor.js
 │  └─ unsupported-executor.js
 ├─ all-mode-recovery.js
+├─ runner-completion-observer.js
 ├─ runner-completion-release.js
 ├─ durable-mutation-verifier.js
 ├─ recovery-planner.js
@@ -60,6 +61,7 @@ Source of truth:
 - Retry classification ของ Claim → `quest/claim-retry-policy.js`
 - Queue, Rate limit, Circuit และ Mutation barrier → `quest/rate-limit-coordinator.js`
 - All-in-one delayed recovery → `quest/all-mode-recovery.js`
+- Completion lifecycle persistence → `quest/runner-completion-observer.js`
 - Safe execution-context release → `quest/runner-completion-release.js`
 
 Architecture tests ห้าม API/Header/Schema/Video/Desktop implementation กลับไปซ้ำใน Runner และห้าม Production entrypoint เรียก Legacy restore โดยตรง
@@ -227,7 +229,13 @@ Execution context ต้องถูก Release ทั้งกรณี `job.do
 - ไม่สร้าง `unhandledRejection`
 - ไม่ทำให้ Runner หนึ่งบัญชีล้มแล้วพา Process ปิดทั้งตัว
 
-Completion observer ยังคงเป็นผู้บันทึก Business failure ลง Durable state
+`runner-completion-observer.js` ต้อง:
+
+- บันทึก Completion หรือ Rejection ลง Durable state
+- จับ Error จาก Durable transition ภายใน Observer
+- Report Observer failure แบบไม่โยน Error ซ้ำ
+- ลบ Registration ของ Observer เสมอ
+- ไม่ปล่อย Derived promise หรือ `.finally()` chain เป็น `unhandledRejection`
 
 ## 9. Claim retry durability
 
@@ -333,7 +341,7 @@ CI บังคับ:
 - Coverage gate
 - Lifecycle coverage
 - Architecture boundaries
-- Critical mutation gate 13 ตัว
+- Critical mutation gate 14 ตัว
 - Mutation gate คืน Source ด้วย `git diff --exit-code`
 - Syntax check JS/MJS/Bash
 - Production dependency audit ระดับ High
@@ -353,6 +361,7 @@ Mutation gate ครอบคลุม:
 11. All-mode recovery ทำงานนอก `WAITING_RETRY`
 12. Legacy observer เขียนทับ High-priority waiting state
 13. Malformed video timestamp ถึง Network boundary
+14. Completion observer transition failure หลุดออกจาก Promise chain
 
 ## 16. Controlled UAT ที่ยังต้องทำ
 
