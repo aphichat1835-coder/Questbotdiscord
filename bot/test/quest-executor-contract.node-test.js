@@ -116,4 +116,14 @@ test('unsupported and unknown Quests expose structured reasons and cannot execut
   assert.equal(describeUnsupportedQuest({ eventName: 'PLAY_ON_XBOX' }), 'UNSUPPORTED_EVENT');
   assert.equal(describeUnsupportedQuest({ eventName: 'NEW_EVENT' }), 'UNKNOWN_EVENT');
   assert.equal(describeUnsupportedQuest({ eventName: 'WATCH_VIDEO', autoSupported: false }), 'MULTI_TASK_AND');
+  assert.equal(describeUnsupportedQuest({
+    eventName: 'WATCH_VIDEO',
+    autoSupported: false,
+    compatibilityIssues: [{ code: 'TASK_TARGET_INVALID' }],
+  }), 'TASK_TARGET_INVALID');
+  assert.equal(describeUnsupportedQuest({
+    eventName: 'PLAY_ON_DESKTOP',
+    autoSupported: false,
+    compatibilityIssues: [{ code: 'TASK_PROGRESS_INVALID' }],
+  }), 'TASK_PROGRESS_INVALID');
 });
