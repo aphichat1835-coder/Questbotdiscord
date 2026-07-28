@@ -19,7 +19,7 @@ from pathlib import Path
 
 path = Path('src/quest/recovery-planner.js')
 source = path.read_text(encoding='utf-8')
-old = '      ...(current?.metadata ?? {}),'
+old = '      ...current?.metadata,'
 new = '      ...{},'
 if source.count(old) != 1:
     raise SystemExit('mutation target not found: recovery metadata preservation')
