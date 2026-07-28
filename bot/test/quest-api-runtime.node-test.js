@@ -19,11 +19,18 @@ function response(status = 200, headers = {}) {
   return new Response('{}', { status, headers });
 }
 
+function fetchInputUrl(input) {
+  if (typeof input === 'string') return input;
+  if (input instanceof URL) return input.href;
+  if (input instanceof Request) return input.url;
+  throw new TypeError('Unsupported fetch input');
+}
+
 test('Discord API runtime rewrites older versioned URLs to v10 only', async () => {
   const calls = [];
   installDiscordApiRuntime({
     fetchFn: async (input) => {
-      calls.push(String(input));
+      calls.push(fetchInputUrl(input));
       return response();
     },
   });
@@ -80,7 +87,7 @@ test('non-Discord traffic is not rewritten or coordinated', async () => {
   const calls = [];
   installDiscordApiRuntime({
     fetchFn: async (input) => {
-      calls.push(String(input));
+      calls.push(fetchInputUrl(input));
       return response();
     },
   });
