@@ -226,6 +226,7 @@ Execution context ต้องถูก Release ทั้งกรณี `job.do
 - Consume Rejection ของ Derived promise
 - Release เพียงครั้งเดียว
 - จับ Error จาก Release callback
+- จับ Error แม้ Callback รายงาน Error จะโยนซ้ำ
 - ไม่สร้าง `unhandledRejection`
 - ไม่ทำให้ Runner หนึ่งบัญชีล้มแล้วพา Process ปิดทั้งตัว
 
@@ -341,7 +342,7 @@ CI บังคับ:
 - Coverage gate
 - Lifecycle coverage
 - Architecture boundaries
-- Critical mutation gate 14 ตัว
+- Critical mutation gate 15 ตัว
 - Mutation gate คืน Source ด้วย `git diff --exit-code`
 - Syntax check JS/MJS/Bash
 - Production dependency audit ระดับ High
@@ -362,6 +363,7 @@ Mutation gate ครอบคลุม:
 12. Legacy observer เขียนทับ High-priority waiting state
 13. Malformed video timestamp ถึง Network boundary
 14. Completion observer transition failure หลุดออกจาก Promise chain
+15. Completion release error reporter สร้าง Rejection ซ้ำ
 
 ## 16. Controlled UAT ที่ยังต้องทำ
 
@@ -375,7 +377,7 @@ UAT ขั้นต่ำ:
 4. Claim reward พร้อม Verification absent/cooldown
 5. CAPTCHA และ Non-CAPTCHA HTTP 400
 6. All-mode transient recovery โดยไม่ Restart process
-7. สอง Worker แข่ง Scheduled row เดียวกัน
+7. สอง Workerแข่ง Scheduled row เดียวกัน
 8. Worker takeover หลัง Lease expiry
 9. Stop จาก Control ระหว่าง Mutation
 10. Restart ระหว่าง `PREPARED`, `IN_FLIGHT`, `UNCERTAIN`, `VERIFIED`
