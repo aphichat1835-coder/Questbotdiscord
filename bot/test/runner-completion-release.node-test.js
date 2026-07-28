@@ -64,6 +64,28 @@ test('release callback failures are reported and do not escape the promise chain
   assert.deepEqual(reported, ['release failed']);
 });
 
+test('a failing error reporter cannot create another unhandled rejection', async () => {
+  const completion = deferred();
+  const unhandled = [];
+  const listener = (reason) => unhandled.push(reason);
+  process.on('unhandledRejection', listener);
+  try {
+    releaseRunnerExecutionWhenSettled(completion.promise, () => {
+      throw new Error('release failed');
+    }, {
+      onError: () => {
+        throw new Error('reporter failed');
+      },
+    });
+
+    completion.resolve();
+    await flushTasks();
+    assert.deepEqual(unhandled, []);
+  } finally {
+    process.off('unhandledRejection', listener);
+  }
+});
+
 test('missing completion promise releases synchronously', () => {
   let releases = 0;
   assert.equal(releaseRunnerExecutionWhenSettled(
