@@ -7,28 +7,28 @@ import {
 } from '../src/quest/runner-state-store.js';
 
 const cases = [
-  ['abort by name', { name: 'AbortError' }, RUNNER_ERROR_CATEGORY.ABORTED],
-  ['abort by message', { message: 'aborted' }, RUNNER_ERROR_CATEGORY.ABORTED],
-  ['schema compatibility', { name: 'QuestCompatibilityError' }, RUNNER_ERROR_CATEGORY.SCHEMA],
-  ['timeout by name', { name: 'RequestTimeoutError' }, RUNNER_ERROR_CATEGORY.TIMEOUT],
-  ['timeout by code', { code: 'ETIMEDOUT' }, RUNNER_ERROR_CATEGORY.TIMEOUT],
-  ['authentication 401', { status: 401 }, RUNNER_ERROR_CATEGORY.AUTH],
-  ['authentication 403', { status: 403 }, RUNNER_ERROR_CATEGORY.AUTH],
-  ['rate limit', { status: 429 }, RUNNER_ERROR_CATEGORY.RATE_LIMIT],
-  ['API 5xx', { status: 503 }, RUNNER_ERROR_CATEGORY.API_5XX],
-  ['API 4xx', { status: 404 }, RUNNER_ERROR_CATEGORY.API_4XX],
-  ['SQLite storage', { code: 'SQLITE_BUSY' }, RUNNER_ERROR_CATEGORY.STORAGE],
-  ['connection reset', { code: 'ECONNRESET' }, RUNNER_ERROR_CATEGORY.NETWORK],
-  ['connection refused', { code: 'ECONNREFUSED' }, RUNNER_ERROR_CATEGORY.NETWORK],
-  ['DNS not found', { code: 'ENOTFOUND' }, RUNNER_ERROR_CATEGORY.NETWORK],
-  ['temporary DNS failure', { code: 'EAI_AGAIN' }, RUNNER_ERROR_CATEGORY.NETWORK],
-  ['generic Error without HTTP status', new Error('socket closed'), RUNNER_ERROR_CATEGORY.NETWORK],
-  ['unknown plain value', { code: 'OTHER' }, RUNNER_ERROR_CATEGORY.UNKNOWN],
-  ['null', null, RUNNER_ERROR_CATEGORY.UNKNOWN],
+  { label: 'abort by name', error: { name: 'AbortError' }, expected: RUNNER_ERROR_CATEGORY.ABORTED },
+  { label: 'abort by message', error: { message: 'aborted' }, expected: RUNNER_ERROR_CATEGORY.ABORTED },
+  { label: 'schema compatibility', error: { name: 'QuestCompatibilityError' }, expected: RUNNER_ERROR_CATEGORY.SCHEMA },
+  { label: 'timeout by name', error: { name: 'RequestTimeoutError' }, expected: RUNNER_ERROR_CATEGORY.TIMEOUT },
+  { label: 'timeout by code', error: { code: 'ETIMEDOUT' }, expected: RUNNER_ERROR_CATEGORY.TIMEOUT },
+  { label: 'authentication 401', error: { status: 401 }, expected: RUNNER_ERROR_CATEGORY.AUTH },
+  { label: 'authentication 403', error: { status: 403 }, expected: RUNNER_ERROR_CATEGORY.AUTH },
+  { label: 'rate limit', error: { status: 429 }, expected: RUNNER_ERROR_CATEGORY.RATE_LIMIT },
+  { label: 'API 5xx', error: { status: 503 }, expected: RUNNER_ERROR_CATEGORY.API_5XX },
+  { label: 'API 4xx', error: { status: 404 }, expected: RUNNER_ERROR_CATEGORY.API_4XX },
+  { label: 'SQLite storage', error: { code: 'SQLITE_BUSY' }, expected: RUNNER_ERROR_CATEGORY.STORAGE },
+  { label: 'connection reset', error: { code: 'ECONNRESET' }, expected: RUNNER_ERROR_CATEGORY.NETWORK },
+  { label: 'connection refused', error: { code: 'ECONNREFUSED' }, expected: RUNNER_ERROR_CATEGORY.NETWORK },
+  { label: 'DNS not found', error: { code: 'ENOTFOUND' }, expected: RUNNER_ERROR_CATEGORY.NETWORK },
+  { label: 'temporary DNS failure', error: { code: 'EAI_AGAIN' }, expected: RUNNER_ERROR_CATEGORY.NETWORK },
+  { label: 'generic Error without HTTP status', error: new Error('socket closed'), expected: RUNNER_ERROR_CATEGORY.NETWORK },
+  { label: 'unknown plain value', error: { code: 'OTHER' }, expected: RUNNER_ERROR_CATEGORY.UNKNOWN },
+  { label: 'null', error: null, expected: RUNNER_ERROR_CATEGORY.UNKNOWN },
 ];
 
-for (const [name, error, expected] of cases) {
-  test(`runner error classification: ${name}`, () => {
+for (const { label, error, expected } of cases) {
+  test(`runner error classification: ${label}`, () => {
     assert.equal(classifyRunnerError(error), expected);
   });
 }
