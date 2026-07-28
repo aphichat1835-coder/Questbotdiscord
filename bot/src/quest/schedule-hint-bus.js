@@ -29,6 +29,7 @@ function sameHint(left, right) {
     && left.nextActionAt === right.nextActionAt
     && left.reason === right.reason
     && Number(left.priority ?? 0) === Number(right.priority ?? 0)
+    && (left.expiresAt ?? null) === (right.expiresAt ?? null)
     && left.source === right.source,
   );
 }
