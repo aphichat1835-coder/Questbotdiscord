@@ -1,4 +1,5 @@
 import {
+  getRunnerState,
   mutationVerificationState,
   RUNNER_MUTATION_STATUS,
   RUNNER_STATE,
@@ -121,9 +122,11 @@ export function planRunnerRecovery(state, now = new Date()) {
 
 export function applyRunnerRecoveryPlan(jobKey, recoveryPlan) {
   if (!recoveryPlan?.targetState) return null;
+  const current = getRunnerState(jobKey);
   return transitionRunnerState(jobKey, recoveryPlan.targetState, {
     nextActionAt: recoveryPlan.initialNextCheckAt,
     metadata: {
+      ...(current?.metadata ?? {}),
       recoveryAction: recoveryPlan.action,
       recoveryReason: recoveryPlan.reason,
       mutationKind: recoveryPlan.mutationKind ?? null,
