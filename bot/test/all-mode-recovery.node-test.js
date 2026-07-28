@@ -18,7 +18,7 @@ function fixture({ restore = null, restoreRetryDelayMs = 60_000 } = {}) {
   const restores = [];
   const errors = [];
 
-  const restoreFn = restore ?? (async (row, context) => restores.push({ row, context }));
+  const restoreFn = restore ?? (async () => undefined);
   const controller = createAllModeRecoveryController({
     readState: (jobKey) => states.get(jobKey) ?? null,
     readJob: (jobKey) => jobs.get(jobKey) ?? null,
