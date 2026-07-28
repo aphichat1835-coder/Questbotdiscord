@@ -1,11 +1,13 @@
 import { createHash } from 'node:crypto';
 
+function authorizationValue(value) {
+  if (typeof value === 'string') return value;
+  if (value == null) return null;
+  return new Headers(value).get('authorization');
+}
+
 export function authorizationFingerprint(value = null) {
-  const candidate = typeof value === 'string'
-    ? value
-    : value == null
-      ? null
-      : new Headers(value).get('authorization');
+  const candidate = authorizationValue(value);
   const authorization = typeof candidate === 'string' && candidate.length > 0
     ? candidate
     : 'anonymous';
