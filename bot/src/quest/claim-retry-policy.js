@@ -102,6 +102,14 @@ export function classifyClaimRetry(error, { platformAmbiguous = false } = {}) {
   };
 }
 
+function claimRetryErrorCategory(error) {
+  const status = Number(error?.status);
+  if (status === 429) return RUNNER_ERROR_CATEGORY.RATE_LIMIT;
+  if (status >= 500) return RUNNER_ERROR_CATEGORY.API_5XX;
+  if (status >= 400) return RUNNER_ERROR_CATEGORY.API_4XX;
+  return RUNNER_ERROR_CATEGORY.VERIFICATION;
+}
+
 export function persistClaimRetry(jobKey, quest, {
   reason,
   delayMs,
@@ -123,15 +131,9 @@ export function persistClaimRetry(jobKey, quest, {
     mutationKind: RUNNER_MUTATION_KIND.CLAIM,
     mutationStatus: RUNNER_MUTATION_STATUS.FAILED,
     lastError: error?.message ?? `Claim retry scheduled: ${reason}`,
-    errorCategory: Number(error?.status) === 429
-      ? RUNNER_ERROR_CATEGORY.RATE_LIMIT
-      : Number(error?.status) >= 500
-        ? RUNNER_ERROR_CATEGORY.API_5XX
-        : Number(error?.status) >= 400
-          ? RUNNER_ERROR_CATEGORY.API_4XX
-          : RUNNER_ERROR_CATEGORY.VERIFICATION,
+    errorCategory: claimRetryErrorCategory(error),
     metadata: {
-      ...(current.metadata ?? {}),
+      ...current.metadata,
       claimRetryReason: reason,
       claimRetryAt: nextActionAt,
     },
