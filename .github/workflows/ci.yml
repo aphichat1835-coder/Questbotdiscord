@@ -17,7 +17,7 @@ on:
 jobs:
   apply-sonar-reexport-fix:
     name: Apply one-shot Sonar re-export fix
-    if: github.event_name == 'push' && github.ref == 'refs/heads/aa.1'
+    if: github.event_name == 'pull_request' && github.base_ref == 'aa' && github.head_ref == 'aa.1'
     permissions:
       contents: write
     runs-on: ubuntu-latest
