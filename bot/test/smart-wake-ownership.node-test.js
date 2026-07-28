@@ -39,9 +39,9 @@ function sleepingJob(done = Promise.resolve()) {
   };
 }
 
-async function publishDue(token) {
+async function publishDue(token, offsetMs = -1) {
   publishScheduleHint(authorizationFingerprint(token), {
-    nextActionAt: new Date(Date.now() - 1).toISOString(),
+    nextActionAt: new Date(Date.now() + offsetMs).toISOString(),
     reason: 'recovery',
     source: 'recovery',
     priority: 99,
@@ -63,7 +63,7 @@ test.after(() => {
   configureSmartWakeController(null);
 });
 
-test('smart wake aborts when the ownership-aware stop returns false', async () => {
+test('smart wake clears a denied attempt and accepts a later changed hint', async () => {
   const jobKey = 'scheduled:smart-wake-stop-denied';
   const token = 'smart-wake-stop-denied-token';
   const scheduleId = 9961;
@@ -87,9 +87,13 @@ test('smart wake aborts when the ownership-aware stop returns false', async () =
   });
 
   registerSmartWake(args(jobKey, token, scheduleId));
-  await publishDue(token);
-
+  await publishDue(token, -1);
   assert.equal(stops, 1);
+  assert.equal(restarts, 0);
+  assert.equal(isSmartWakeRestarting(jobKey), false);
+
+  await publishDue(token, -2);
+  assert.equal(stops, 2);
   assert.equal(restarts, 0);
   assert.equal(isSmartWakeRestarting(jobKey), false);
 });
