@@ -105,8 +105,10 @@ QUEST_WORKER_POLL_MS=5000
 13. Execution context ถูก Release ทั้งเมื่อ `job.done` Resolve และ Reject
 14. Derived completion promise ไม่มี `unhandledRejection`
 15. Release callback failure ถูกจับและไม่ปิด Process
-16. Stop/Shutdown ยกเลิก Smart Wake และ All-mode recovery timers
-17. Dashboard และ Database ถูกปิดตามลำดับ
+16. Completion observer transition failure ถูก Report และไม่หลุดจาก Promise chain
+17. Observer cleanup `.finally()` ไม่สร้าง `unhandledRejection`
+18. Stop/Shutdown ยกเลิก Smart Wake และ All-mode recovery timers
+19. Dashboard และ Database ถูกปิดตามลำดับ
 
 ## 5. Quest API boundary
 
@@ -345,7 +347,7 @@ GitHub Actions ต้องผ่านบน HEAD ล่าสุด:
 - Incident/Storage boundaries
 - Full recursive tests
 - Coverage gate
-- Critical mutation gate 13 ตัว
+- Critical mutation gate 14 ตัว
 - Source restoration หลัง Mutation
 - JS/MJS/Bash syntax
 - Production dependency audit ระดับ High
@@ -365,6 +367,7 @@ Mutation gate ต้องฆ่าครบ:
 11. All-mode recovery ทำงานนอก WAITING_RETRY
 12. Observer เขียนทับ High-priority wait
 13. Malformed video timestamp ถึง Network
+14. Completion observer transition failure หลุดจาก Promise chain
 
 ## 17. Controlled functional UAT
 
