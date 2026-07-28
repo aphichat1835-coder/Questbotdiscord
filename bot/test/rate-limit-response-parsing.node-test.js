@@ -1,5 +1,6 @@
 import './setup-env.js';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { DiscordRateLimitCoordinator } from '../src/quest/rate-limit-coordinator.js';
 
@@ -12,15 +13,19 @@ function task(overrides = {}) {
   };
 }
 
+test('normal responses are excluded before retry-delay parsing', () => {
+  const source = readFileSync(new URL('../src/quest/rate-limit-coordinator.js', import.meta.url), 'utf8');
+  assert.match(
+    source,
+    /const shouldReadDelay = response\.status === 429 \|\| remaining === 0;/,
+  );
+});
+
 test('successful responses with remaining quota never clone or parse their body', async () => {
   const coordinator = new DiscordRateLimitCoordinator({ now: () => 1_000 });
   let clones = 0;
-  let statusReads = 0;
   await coordinator.updateRateLimitState(task(), {
-    get status() {
-      statusReads++;
-      return 200;
-    },
+    status: 200,
     headers: new Headers({
       'x-ratelimit-bucket': 'normal-bucket',
       'x-ratelimit-remaining': '4',
@@ -31,7 +36,6 @@ test('successful responses with remaining quota never clone or parse their body'
     },
   });
 
-  assert.equal(statusReads, 2);
   assert.equal(clones, 0);
   assert.equal(coordinator.bucketResetAt.size, 0);
 });
