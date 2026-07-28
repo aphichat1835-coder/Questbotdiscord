@@ -23,14 +23,10 @@ function relative(fileUrl) {
 
 test('production modules cannot import the legacy restore implementation directly', async () => {
   const violations = [];
+  const directLegacyRestoreImport = /import\s*\{[^}]*\brestoreScheduledRunners\b[^}]*\}\s*from\s*['"][^'"]*discord-runner\.js['"]/s;
   for (const file of await javascriptFiles()) {
     const source = await readFile(file, 'utf8');
-    if (
-      /restoreScheduledRunners/.test(source)
-      && /from ['"].*discord-runner\.js['"]/.test(source)
-    ) {
-      violations.push(relative(file));
-    }
+    if (directLegacyRestoreImport.test(source)) violations.push(relative(file));
   }
   assert.deepEqual(violations, []);
 });
