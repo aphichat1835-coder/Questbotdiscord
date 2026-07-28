@@ -9,6 +9,16 @@ import {
 import { stateScheduleReason } from './smart-scheduler.js';
 
 const OBSERVER_INTERVAL_MS = 1000;
+const OBSERVED_WAITING_STATES = new Set([
+  RUNNER_STATE.WAITING_RETRY,
+  RUNNER_STATE.WAITING_SCHEDULE,
+]);
+const CONTROLLED_STATES = new Set([
+  RUNNER_STATE.STOPPING,
+  RUNNER_STATE.STOPPED,
+  RUNNER_STATE.COMPLETED,
+  RUNNER_STATE.FAILED,
+]);
 let observerTimer = null;
 
 function stateFromStatus(job) {
@@ -48,14 +58,16 @@ function hasActiveMutationCheckpoint(current) {
   );
 }
 
-function hasAuthoritativeDirectState(current) {
+function hasAuthoritativeDirectState(current, observedState) {
   if (!current) return false;
+  if (CONTROLLED_STATES.has(current.state)) return true;
   if (hasActiveMutationCheckpoint(current)) return true;
+  if (OBSERVED_WAITING_STATES.has(observedState)) return false;
   return Boolean(current.state_source && current.state_source !== 'legacy-observer');
 }
 
 function observedTransition(job, current, observedState) {
-  const preserve = hasAuthoritativeDirectState(current);
+  const preserve = hasAuthoritativeDirectState(current, observedState);
   const state = preserve ? current.state : observedState;
   const questName = questNameFromStatus(job.status);
   const progress = progressFromStatus(job.status);
