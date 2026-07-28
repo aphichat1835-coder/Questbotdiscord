@@ -36,6 +36,7 @@ function runnerIsSleeping(job) {
 }
 
 function recordWakeFailure(jobKey, error) {
+  clearWakeTimer(jobKey);
   const current = getRunnerState(jobKey);
   if (!current) return;
   transitionRunnerState(jobKey, RUNNER_STATE.FAILED, {
@@ -56,7 +57,10 @@ async function restartSleepingRunner(args) {
     throw new Error('Smart wake restart handler is not configured');
   }
   const active = readActiveJob(args.jobKey);
-  if (!active || !runnerIsSleeping(active)) return false;
+  if (!active || !runnerIsSleeping(active)) {
+    clearWakeTimer(args.jobKey);
+    return false;
+  }
   if (!readScheduledRunner(args.scheduleId)) {
     clearSmartWake(args.jobKey);
     return false;
@@ -66,7 +70,10 @@ async function restartSleepingRunner(args) {
   try {
     const completion = active.done;
     const stopped = stopActiveJob(args.ownerId, args.jobKey, { removeSchedule: false });
-    if (!stopped) return false;
+    if (!stopped) {
+      clearWakeTimer(args.jobKey);
+      return false;
+    }
 
     transitionRunnerState(args.jobKey, RUNNER_STATE.RECOVERING, {
       nextActionAt: new Date().toISOString(),
@@ -76,8 +83,14 @@ async function restartSleepingRunner(args) {
     await Promise.resolve(completion).catch(() => undefined);
 
     const replacement = readActiveJob(args.jobKey);
-    if (replacement && replacement !== active) return false;
-    if (!readScheduledRunner(args.scheduleId)) return false;
+    if (replacement && replacement !== active) {
+      clearWakeTimer(args.jobKey);
+      return false;
+    }
+    if (!readScheduledRunner(args.scheduleId)) {
+      clearSmartWake(args.jobKey);
+      return false;
+    }
     await restartRunner({ ...args, initialNextCheckAt: null });
     return true;
   } finally {
