@@ -40,8 +40,9 @@ test('Discord API v10, client headers and compatibility errors have one source o
   assert.match(apiClient, /export class DiscordApiError extends Error/);
   assert.match(apiClient, /export function isFatalAuthError\(/);
   assert.match(apiClient, /export function buildDiscordUserHeaders\(/);
-  assert.match(apiClient, /import \{ randomInt \} from 'node:crypto'/);
-  assert.doesNotMatch(apiClient, /Math\.random\(/);
+  assert.match(apiClient, /function requireVideoTimestamp\(/);
+  assert.match(apiClient, /Number\.isInteger\(value\)/);
+  assert.doesNotMatch(apiClient, /randomInt|Math\.random\(/);
 
   assert.match(runner, /DiscordApiError,/);
   assert.match(runner, /isFatalAuthError,/);
