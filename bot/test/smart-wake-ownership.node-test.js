@@ -1,5 +1,6 @@
 import './setup-env.js';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { authorizationFingerprint } from '../src/quest/authorization-fingerprint.js';
 import {
@@ -61,6 +62,11 @@ test.after(() => {
   clearScheduleHintsForTests();
   clearRunnerStatesForTests();
   configureSmartWakeController(null);
+});
+
+test('a denied Smart Wake attempt explicitly clears its consumed hint', () => {
+  const source = readFileSync(new URL('../src/quest/smart-wake-controller.js', import.meta.url), 'utf8');
+  assert.match(source, /if \(!stopped\) \{\s*clearWakeTimer\(args\.jobKey\);\s*return false;\s*\}/);
 });
 
 test('smart wake clears a denied attempt and accepts a later changed hint', async () => {
