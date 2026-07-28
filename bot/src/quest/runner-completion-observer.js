@@ -89,7 +89,7 @@ function resolvedValues(current, state) {
       nextActionAt,
       lastError: 'Recovery verification was deferred after a transient runner exit',
       metadata: {
-        ...(current?.metadata ?? {}),
+        ...current?.metadata,
         completion: 'recovery-deferred',
       },
       stateSource: 'runner-recovery-deferred',
