@@ -13,6 +13,10 @@ def replace_once(path: str, old: str, new: str, label: str) -> None:
     print(f'patched {label}')
 
 
+def insert_after(path: str, marker: str, insertion: str, label: str) -> None:
+    replace_once(path, marker, marker + insertion, label)
+
+
 replace_once(
     'src/worker.js',
     """  } catch (error) {
@@ -25,7 +29,6 @@ replace_once(
     backupHealth.state = 'degraded';""",
     'backup recovery state preservation',
 )
-
 replace_once(
     'src/discord-runner.js',
     """import { verifyRunnerMutationFromQuests } from './quest/durable-mutation-verifier.js';
@@ -55,7 +58,6 @@ replace_once(
     if (recoveryPlan.action === 'VERIFY_MUTATION') {""",
     'recovery fetch deferral',
 )
-
 replace_once(
     'src/bootstrap.js',
     """import { reportBootstrapIncident } from './bootstrap-reporter.js';
@@ -90,7 +92,6 @@ replace_once(
   const report = reportBootstrapIncident({ code, error, context })""",
     'repeated bootstrap fatal evidence',
 )
-
 replace_once(
     'src/quest/runner-state-store.js',
     """function classifyCodeRunnerError(error) {
@@ -153,12 +154,10 @@ replace_once(
     embed_helper + 'export function buildIncidentWebhookPayload({',
     'incident embed budget helper',
 )
-replace_once(
+insert_after(
     'src/error-reporter.js',
-    """    : [safeErrorMessage(error), safeErrorStack(error)].filter(Boolean).join('\n');
-
-  return {""",
-    """    : [safeErrorMessage(error), safeErrorStack(error)].filter(Boolean).join('\n');
+    "    : [safeErrorMessage(error), safeErrorStack(error)].filter(Boolean).join('\\n');",
+    """
   const title = `${status === 'RECOVERED' ? '✅' : '🚨'} ${definition.title}`;
   const footerText = 'NeverDie Quest Bot · Backend Incident Log';
   const fitted = fitIncidentEmbedText(
@@ -166,35 +165,13 @@ replace_once(
     details,
     incidentFields({ code, incidentId, status, context, occurrences }),
     footerText,
-  );
-
-  return {""",
+  );""",
     'incident fitted values',
 )
-replace_once(
-    'src/error-reporter.js',
-    "title: `${status === 'RECOVERED' ? '✅' : '🚨'} ${definition.title}`,",
-    'title,',
-    'incident fitted title',
-)
-replace_once(
-    'src/error-reporter.js',
-    'description: codeBlock(details, 2200),',
-    'description: fitted.description,',
-    'incident fitted description',
-)
-replace_once(
-    'src/error-reporter.js',
-    'fields: incidentFields({ code, incidentId, status, context, occurrences }),',
-    'fields: fitted.fields,',
-    'incident fitted fields',
-)
-replace_once(
-    'src/error-reporter.js',
-    "footer: { text: 'NeverDie Quest Bot · Backend Incident Log' },",
-    'footer: { text: footerText },',
-    'incident fitted footer',
-)
+replace_once('src/error-reporter.js', "title: `${status === 'RECOVERED' ? '✅' : '🚨'} ${definition.title}`,", 'title,', 'incident fitted title')
+replace_once('src/error-reporter.js', 'description: codeBlock(details, 2200),', 'description: fitted.description,', 'incident fitted description')
+replace_once('src/error-reporter.js', 'fields: incidentFields({ code, incidentId, status, context, occurrences }),', 'fields: fitted.fields,', 'incident fitted fields')
+replace_once('src/error-reporter.js', "footer: { text: 'NeverDie Quest Bot · Backend Incident Log' },", 'footer: { text: footerText },', 'incident fitted footer')
 replace_once(
     'src/error-reporter.js',
     """  incident.occurrences++;
@@ -269,7 +246,6 @@ replace_once(
   return { state: resultState, code, incidentId: incident.incidentId };""",
     'recovery recurrence finalization',
 )
-
 replace_once(
     'test/backup-health.node-test.js',
     """test('a new failure after pending recovery starts a fresh incident lifecycle', async () => {
@@ -324,6 +300,5 @@ replace_once(
 });""",
     'backup pending recovery test',
 )
-
 subprocess.run(['git', 'add', 'test/backup-health.node-test.js'], check=True)
 print('Applied second-pass full-audit replacements')
