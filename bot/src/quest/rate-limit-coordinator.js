@@ -168,6 +168,12 @@ function responseError(response) {
   return error;
 }
 
+function abortError() {
+  const error = new Error('aborted');
+  error.name = 'AbortError';
+  return error;
+}
+
 function checkpointError(stage, error) {
   return error instanceof RunnerMutationCheckpointError
     ? error
@@ -240,6 +246,8 @@ export class DiscordRateLimitCoordinator {
       mutation,
     };
 
+    if (options?.signal?.aborted) return Promise.reject(abortError());
+
     if (task.jobKey && mutation) {
       try {
         assertRunnerMutationOwnership(task.jobKey, this.now());
@@ -267,12 +275,35 @@ export class DiscordRateLimitCoordinator {
     }
 
     return new Promise((resolve, reject) => {
-      this.queue.push({ ...task, resolve, reject });
+      const queuedTask = { ...task, resolve, reject, detachAbort: null };
+      const onAbort = () => {
+        const index = this.queue.indexOf(queuedTask);
+        if (index < 0) return;
+        this.queue.splice(index, 1);
+        queuedTask.detachAbort?.();
+        const error = abortError();
+        if (task.jobKey && task.mutation) {
+          try {
+            markRunnerMutationFailed(task.jobKey, error, { state: RUNNER_STATE.RUNNING });
+          } catch {
+            this.stats.checkpointErrors++;
+          }
+        }
+        this.stats.queued = this.queue.length;
+        reject(error);
+        this.pump();
+      };
+      if (options?.signal) {
+        options.signal.addEventListener('abort', onAbort, { once: true });
+        queuedTask.detachAbort = () => options.signal.removeEventListener('abort', onAbort);
+      }
+      this.queue.push(queuedTask);
       this.queue.sort((left, right) => (
         right.priority - left.priority || left.id - right.id
       ));
       this.stats.queued = this.queue.length;
-      this.pump();
+      if (options?.signal?.aborted) onAbort();
+      else this.pump();
     });
   }
 
@@ -340,6 +371,7 @@ export class DiscordRateLimitCoordinator {
       this.wakeupTimer = null;
       this.pump();
     }, delay);
+    this.wakeupTimer.unref?.();
   }
 
   setBucketReset(task, bucket, delay, scope) {
@@ -559,6 +591,7 @@ export class DiscordRateLimitCoordinator {
   }
 
   run(task) {
+    task.detachAbort?.();
     this.activeCount++;
     this.activeAccounts.add(task.account);
     this.enterHalfOpen(task);
