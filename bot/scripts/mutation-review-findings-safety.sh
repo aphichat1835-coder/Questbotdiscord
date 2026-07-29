@@ -89,12 +89,8 @@ python3 <<'PY'
 from pathlib import Path
 path = Path('src/quest/all-mode-recovery.js')
 source = path.read_text(encoding='utf-8')
-old = """      schedule(context, {
-        notBefore: currentTime() + Math.max(1000, Number(restoreRetryDelayMs) || 0),
-      });"""
-new = """      if (false) schedule(context, {
-        notBefore: currentTime() + Math.max(1000, Number(restoreRetryDelayMs) || 0),
-      });"""
+old = '    schedule(context, { notBefore: retryAt });'
+new = '    if (false) schedule(context, { notBefore: retryAt });'
 if source.count(old) != 1:
     raise SystemExit('mutation target not found: all-mode restore rearm')
 path.write_text(source.replace(old, new, 1), encoding='utf-8')
