@@ -1,0 +1,56 @@
+name: Update README audit findings
+
+on:
+  push:
+    branches:
+      - aa.1
+    paths:
+      - .github/workflows/update-readme-audit.yml
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    if: github.event.head_commit.message == 'chore add one-shot README audit update'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout aa.1
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: aa.1
+          fetch-depth: 0
+
+      - name: Update README documentation
+        shell: bash
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+
+          path = Path('bot/README.md')
+          source = path.read_text(encoding='utf-8')
+          replacements = [
+              (
+                  '- `MANAGER_ROLE_ID` — Role ที่ใช้ Start/Stop Runner และดู `/api-status`; Owner/Admin ใช้ได้เสมอ',
+                  '- `MANAGER_ROLE_ID` — Role ที่ใช้ `/run`, `/panel` และ `/api-status`; `/stop` จำกัดเฉพาะเจ้าของ Runner ส่วน Owner/Admin ใช้คำสั่ง Manager ได้เสมอ',
+              ),
+              (
+                  '- `QUEST_WORKER_POLL_MS` — รอบ Reconcile ของ Worker ค่าเริ่มต้น 5000 ms\n- Discord client profile overrides ต้องเปลี่ยนพร้อมกันทั้งชุดและ Restart',
+                  '- `QUEST_WORKER_POLL_MS` — รอบ Reconcile ของ Worker ค่าเริ่มต้น 5000 ms\n- `DISCORD_LOCALE` — Locale ของ Discord client profile ค่าเริ่มต้น `en-US`\n- `DISCORD_TIMEZONE` — Timezone ของ Discord client profile ค่าเริ่มต้น `Asia/Bangkok`\n- Discord client profile overrides ต้องเปลี่ยนพร้อมกันทั้งชุดและ Restart',
+              ),
+          ]
+          for old, new in replacements:
+              if source.count(old) != 1:
+                  raise SystemExit(f'expected one README target, found {source.count(old)}: {old}')
+              source = source.replace(old, new, 1)
+          path.write_text(source, encoding='utf-8')
+          PY
+
+      - name: Commit and push README
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add bot/README.md
+          git commit -m "docs: align optional environment and command permissions"
+          git push origin HEAD:aa.1
