@@ -46,7 +46,7 @@ export function installDiscordApiRuntime({
 
   previousGlobalFetch = globalThis.fetch;
   transportFetch = fetchFn.bind(globalThis);
-  globalThis.fetch = (input, options = {}) => {
+  globalThis.fetch = async (input, options = {}) => {
     const rewritten = rewriteDiscordApiUrl(input);
     if (!rewritten.coordinated) return transportFetch(input, options);
     return coordinator.schedule(
