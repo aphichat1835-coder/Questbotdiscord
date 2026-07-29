@@ -105,11 +105,28 @@ async function restoreAllModeRow(row, context) {
   });
 }
 
+async function persistAllModeRetry(jobKey, nextActionAt, error) {
+  const current = getRunnerState(jobKey);
+  if (current?.state !== RUNNER_STATE.WAITING_RETRY) return false;
+  transitionRunnerState(jobKey, RUNNER_STATE.WAITING_RETRY, {
+    nextActionAt,
+    retryCount: Number(current.retry_count ?? 0) + 1,
+    lastError: error?.message ?? String(error),
+    metadata: {
+      ...current.metadata,
+      recoveryRetryPersisted: true,
+    },
+    stateSource: 'all-mode-recovery-retry',
+  });
+  return true;
+}
+
 const allModeRecovery = createAllModeRecoveryController({
   readState: getRunnerState,
   readJob: legacyRunner.getJob,
   readScheduled: getScheduledRunner,
   restore: restoreAllModeRow,
+  persistRetry: persistAllModeRetry,
   reportError: (error, context) => {
     console.error(
       `[RunnerRecovery:${String(context?.jobKey ?? 'unknown').slice(0, 100)}] restart failed — ${error?.message ?? 'unknown error'}`,
