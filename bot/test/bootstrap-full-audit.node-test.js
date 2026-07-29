@@ -9,9 +9,11 @@ import { INCIDENT } from '../src/incident-catalog.js';
 
 const originalConsoleError = console.error;
 const originalWebhook = process.env.LOG_WEBHOOK_URL;
+const originalExitCode = process.exitCode;
 
 test.afterEach(() => {
   console.error = originalConsoleError;
+  process.exitCode = originalExitCode;
   resetBootstrapStateForTests();
   if (originalWebhook == null) delete process.env.LOG_WEBHOOK_URL;
   else process.env.LOG_WEBHOOK_URL = originalWebhook;
