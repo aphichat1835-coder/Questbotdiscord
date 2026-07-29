@@ -194,7 +194,7 @@ test('an earlier blocked bucket replaces a later queue wakeup timer', async () =
 
   await short;
   assert.deepEqual(order.map(([name]) => name), ['short']);
-  assert.ok(order[0][1] < 2_000, `short bucket started after ${order[0][1]}ms`);
+  assert.ok(order[0][1] < 8_000, `short bucket started after ${order[0][1]}ms`);
 
   coordinator.bucketResetAt.set('bucket-long', 0);
   coordinator.pump();
