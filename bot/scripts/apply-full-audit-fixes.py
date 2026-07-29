@@ -3,13 +3,14 @@ from pathlib import Path
 import subprocess
 
 
-def replace_once(path: str, old: str, new: str) -> None:
+def replace_once(path: str, old: str, new: str, label: str) -> None:
     file = Path(path)
     source = file.read_text(encoding='utf-8')
     count = source.count(old)
     if count != 1:
-        raise SystemExit(f'{path}: expected exactly one replacement target, found {count}')
+        raise SystemExit(f'{path} [{label}]: expected exactly one target, found {count}')
     file.write_text(source.replace(old, new, 1), encoding='utf-8')
+    print(f'patched {label}')
 
 
 replace_once(
@@ -22,6 +23,7 @@ replace_once(
     backupHealth.state = 'degraded';""",
     """  } catch (error) {
     backupHealth.state = 'degraded';""",
+    'backup recovery state preservation',
 )
 
 replace_once(
@@ -33,8 +35,8 @@ import {
 import { fetchDurableRecoveryQuests } from './quest/recovery-fetch.js';
 import {
   getRunnerState,""",
+    'recovery fetch import',
 )
-
 replace_once(
     'src/discord-runner.js',
     """    const quests = await fetchQuests(userToken, signal);
@@ -51,6 +53,7 @@ replace_once(
     });
     if (!quests) return;
     if (recoveryPlan.action === 'VERIFY_MUTATION') {""",
+    'recovery fetch deferral',
 )
 
 replace_once(
@@ -62,22 +65,14 @@ export const FATAL_REPORT_BUDGET_MS = 3500;""",
 import { redactText } from './redaction.js';
 
 export const FATAL_REPORT_BUDGET_MS = 3500;""",
+    'bootstrap redaction import',
 )
-
 replace_once(
     'src/bootstrap.js',
-    """export async function fatalBootstrapShutdown({
-  code = INCIDENT.CLIENT_STARTUP_FAILED,
-  error,
-  context = {},
-} = {}) {
+    """} = {}) {
   if (fatalBootstrapPromise) return fatalBootstrapPromise;
   const report = reportBootstrapIncident({ code, error, context })""",
-    """export async function fatalBootstrapShutdown({
-  code = INCIDENT.CLIENT_STARTUP_FAILED,
-  error,
-  context = {},
-} = {}) {
+    """} = {}) {
   if (fatalBootstrapPromise) {
     let serializedContext;
     try {
@@ -93,6 +88,7 @@ replace_once(
     return fatalBootstrapPromise;
   }
   const report = reportBootstrapIncident({ code, error, context })""",
+    'repeated bootstrap fatal evidence',
 )
 
 replace_once(
@@ -102,17 +98,6 @@ replace_once(
   if (code.startsWith('SQLITE_')) return RUNNER_ERROR_CATEGORY.STORAGE;
   if (NETWORK_ERROR_CODES.has(code)) return RUNNER_ERROR_CATEGORY.NETWORK;
   return null;
-}
-
-export function classifyRunnerError(error) {
-  const category = classifyNamedRunnerError(error)
-    ?? classifyHttpRunnerError(error)
-    ?? classifyCodeRunnerError(error);
-  if (category) return category;
-  if (!Number.isInteger(error?.status) && error instanceof Error) {
-    return RUNNER_ERROR_CATEGORY.NETWORK;
-  }
-  return RUNNER_ERROR_CATEGORY.UNKNOWN;
 }""",
     """function classifyCodeRunnerError(error) {
   for (const rawCode of [error?.code, error?.cause?.code]) {
@@ -123,47 +108,23 @@ export function classifyRunnerError(error) {
     }
   }
   return null;
-}
-
-export function classifyRunnerError(error) {
-  const category = classifyNamedRunnerError(error)
-    ?? classifyHttpRunnerError(error)
-    ?? classifyCodeRunnerError(error);
-  if (category) return category;
-  if (error?.message === 'fetch failed') return RUNNER_ERROR_CATEGORY.NETWORK;
-  return RUNNER_ERROR_CATEGORY.UNKNOWN;
 }""",
+    'network error evidence',
+)
+replace_once(
+    'src/quest/runner-state-store.js',
+    """  if (category) return category;
+  if (!Number.isInteger(error?.status) && error instanceof Error) {
+    return RUNNER_ERROR_CATEGORY.NETWORK;
+  }
+  return RUNNER_ERROR_CATEGORY.UNKNOWN;""",
+    """  if (category) return category;
+  if (error?.message === 'fetch failed') return RUNNER_ERROR_CATEGORY.NETWORK;
+  return RUNNER_ERROR_CATEGORY.UNKNOWN;""",
+    'generic error classification',
 )
 
-replace_once(
-    'src/error-reporter.js',
-    """export function buildIncidentWebhookPayload({
-  code,
-  error = null,
-  context = {},
-  incidentId = createIncidentId(),
-  status = 'DETECTED',
-  occurrences = 1,
-} = {}) {
-  const definition = getIncidentDefinition(code);
-  const details = status === 'RECOVERED'
-    ? 'ระบบกลับมาทำงานภายในเกณฑ์ที่กำหนดแล้ว'
-    : [safeErrorMessage(error), safeErrorStack(error)].filter(Boolean).join('\n');
-
-  return {
-    username: 'Quest Bot Backend',
-    allowed_mentions: { parse: [] },
-    embeds: [{
-      title: `${status === 'RECOVERED' ? '✅' : '🚨'} ${definition.title}`,
-      description: codeBlock(details, 2200),
-      color: status === 'RECOVERED' ? 0x57F287 : 0xED4245,
-      fields: incidentFields({ code, incidentId, status, context, occurrences }),
-      footer: { text: 'NeverDie Quest Bot · Backend Incident Log' },
-      timestamp: new Date().toISOString(),
-    }],
-  };
-}""",
-    """function fitIncidentEmbedText(title, details, fields, footerText) {
+embed_helper = """function fitIncidentEmbedText(title, details, fields, footerText) {
   const boundedFields = fields.map((field) => ({ ...field }));
   const fixedLength = () => title.length + footerText.length + boundedFields.reduce(
     (total, field) => total + field.name.length + field.value.length,
@@ -185,18 +146,19 @@ replace_once(
   };
 }
 
-export function buildIncidentWebhookPayload({
-  code,
-  error = null,
-  context = {},
-  incidentId = createIncidentId(),
-  status = 'DETECTED',
-  occurrences = 1,
-} = {}) {
-  const definition = getIncidentDefinition(code);
-  const details = status === 'RECOVERED'
-    ? 'ระบบกลับมาทำงานภายในเกณฑ์ที่กำหนดแล้ว'
-    : [safeErrorMessage(error), safeErrorStack(error)].filter(Boolean).join('\n');
+"""
+replace_once(
+    'src/error-reporter.js',
+    'export function buildIncidentWebhookPayload({',
+    embed_helper + 'export function buildIncidentWebhookPayload({',
+    'incident embed budget helper',
+)
+replace_once(
+    'src/error-reporter.js',
+    """    : [safeErrorMessage(error), safeErrorStack(error)].filter(Boolean).join('\n');
+
+  return {""",
+    """    : [safeErrorMessage(error), safeErrorStack(error)].filter(Boolean).join('\n');
   const title = `${status === 'RECOVERED' ? '✅' : '🚨'} ${definition.title}`;
   const footerText = 'NeverDie Quest Bot · Backend Incident Log';
   const fitted = fitIncidentEmbedText(
@@ -206,45 +168,53 @@ export function buildIncidentWebhookPayload({
     footerText,
   );
 
-  return {
-    username: 'Quest Bot Backend',
-    allowed_mentions: { parse: [] },
-    embeds: [{
-      title,
-      description: fitted.description,
-      color: status === 'RECOVERED' ? 0x57F287 : 0xED4245,
-      fields: fitted.fields,
-      footer: { text: footerText },
-      timestamp: new Date().toISOString(),
-    }],
-  };
-}""",
+  return {""",
+    'incident fitted values',
 )
-
 replace_once(
     'src/error-reporter.js',
-    """function suppressIncident(incident, code, now, state = 'suppressed') {
-  incident.occurrences++;
+    "title: `${status === 'RECOVERED' ? '✅' : '🚨'} ${definition.title}`,",
+    'title,',
+    'incident fitted title',
+)
+replace_once(
+    'src/error-reporter.js',
+    'description: codeBlock(details, 2200),',
+    'description: fitted.description,',
+    'incident fitted description',
+)
+replace_once(
+    'src/error-reporter.js',
+    'fields: incidentFields({ code, incidentId, status, context, occurrences }),',
+    'fields: fitted.fields,',
+    'incident fitted fields',
+)
+replace_once(
+    'src/error-reporter.js',
+    "footer: { text: 'NeverDie Quest Bot · Backend Incident Log' },",
+    'footer: { text: footerText },',
+    'incident fitted footer',
+)
+replace_once(
+    'src/error-reporter.js',
+    """  incident.occurrences++;
   incident.lastSeenAt = now;
   reporterStatus.suppressedIncidents++;""",
-    """function suppressIncident(incident, code, now, state = 'suppressed') {
-  incident.occurrences++;
+    """  incident.occurrences++;
   incident.lastSeenAt = now;
   if (incident.state === 'recovering') incident.reoccurredDuringRecovery = true;
   reporterStatus.suppressedIncidents++;""",
+    'recovery recurrence marker',
 )
-
 replace_once(
     'src/error-reporter.js',
     """    nextRetryAt: null,
-    state: 'new',
-  };""",
+    state: 'new',""",
     """    nextRetryAt: null,
     reoccurredDuringRecovery: false,
-    state: 'new',
-  };""",
+    state: 'new',""",
+    'new incident recurrence state',
 )
-
 replace_once(
     'src/error-reporter.js',
     """  if (!incident || incident.state === 'recovered') return { state: 'not_open', code };
@@ -258,8 +228,8 @@ replace_once(
     return { state: 'not_open', code, incidentId: incident.incidentId };
   }
   if (incident.state === 'delivering') {""",
+    'silent recovery for undelivered incident',
 )
-
 replace_once(
     'src/error-reporter.js',
     """  incident.recoveryDelivery = delivery;
@@ -297,6 +267,7 @@ replace_once(
 
   recordDeliveryStatus(code, incident.incidentId, delivery, now);
   return { state: resultState, code, incidentId: incident.incidentId };""",
+    'recovery recurrence finalization',
 )
 
 replace_once(
@@ -351,6 +322,7 @@ replace_once(
   assert.equal(getBackupHealthStatus().recoveryPending, false);
   assert.equal(getBackupHealthStatus().incidentOpen, false);
 });""",
+    'backup pending recovery test',
 )
 
 subprocess.run(['git', 'add', 'test/backup-health.node-test.js'], check=True)
