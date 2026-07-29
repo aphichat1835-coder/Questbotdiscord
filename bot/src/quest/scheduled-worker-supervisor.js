@@ -10,6 +10,7 @@ export { reconcileScheduledWorker, scheduledClaimTtlMs } from './scheduled-worke
 
 let supervisorTimer = null;
 let supervisorHolder = null;
+let supervisorStartPromise = null;
 let reconcilePromise = null;
 let lastResult = null;
 
@@ -41,14 +42,24 @@ export async function startScheduledWorkerSupervisor(client, {
   holder = `worker:${process.pid}`,
   initialReconcile = runReconcile,
 } = {}) {
-  if (supervisorTimer) return false;
+  if (supervisorTimer || supervisorStartPromise) return false;
   supervisorHolder = holder;
-  supervisorTimer = setInterval(() => {
-    void runReconcile(client).catch(() => undefined);
-  }, config.workerPollIntervalMs);
-  supervisorTimer.unref?.();
-  await initialReconcile(client, { holder }).catch(() => undefined);
-  return true;
+  supervisorStartPromise = (async () => {
+    try {
+      await initialReconcile(client, { holder });
+      supervisorTimer = setInterval(() => {
+        void runReconcile(client).catch(() => undefined);
+      }, config.workerPollIntervalMs);
+      supervisorTimer.unref?.();
+      return true;
+    } catch (error) {
+      supervisorHolder = null;
+      throw error;
+    } finally {
+      supervisorStartPromise = null;
+    }
+  })();
+  return supervisorStartPromise;
 }
 
 export function releaseScheduledWorkerSupervisorClaims() {
@@ -59,6 +70,7 @@ export function releaseScheduledWorkerSupervisorClaims() {
 }
 
 export async function stopScheduledWorkerSupervisor({ releaseClaims = true } = {}) {
+  await supervisorStartPromise?.catch(() => undefined);
   if (supervisorTimer) {
     clearInterval(supervisorTimer);
     supervisorTimer = null;
