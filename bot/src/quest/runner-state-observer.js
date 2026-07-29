@@ -57,7 +57,14 @@ function runningQuestName(value) {
   for (const marker of ['กำลังเตรียมทำ', 'กำลังทำ']) {
     const markerIndex = value.indexOf(marker);
     if (markerIndex < 0) continue;
-    const name = value.slice(markerIndex + marker.length).trim();
+    const start = markerIndex + marker.length;
+    const progress = progressMatch(value);
+    const end = progress && progress.index > start ? progress.index : value.length;
+    const name = value
+      .slice(start, end)
+      .trim()
+      .replace(/[:\-–]\s*$/, '')
+      .trim();
     if (name) return name.slice(0, 160);
   }
   return null;
