@@ -22,6 +22,7 @@ import {
   stopScheduledWorkerSupervisor,
 } from './quest/scheduled-worker-supervisor.js';
 import { createWorkerDiscordClient } from './quest/worker-discord-client.js';
+import { shutdownWorkerResources } from './worker-shutdown.js';
 
 export function createWorkerApp({ exit = process.exit } = {}) {
   const processRole = 'worker';
@@ -51,19 +52,15 @@ export function createWorkerApp({ exit = process.exit } = {}) {
       }
       console.log(`🧹 Scheduled worker shutdown — ${reason}`);
 
-      try {
-        await stopScheduledWorkerSupervisor({ releaseClaims: false });
-        try {
-          await shutdownRunners();
-        } finally {
-          releaseScheduledWorkerSupervisorClaims();
-        }
-        await stopDashboard();
-        uninstallDiscordApiRuntime();
-      } catch (error) {
-        reportError('Scheduled worker resource shutdown', error);
-        requestExitCode(1);
-      }
+      const resources = await shutdownWorkerResources({
+        stopSupervisor: () => stopScheduledWorkerSupervisor({ releaseClaims: false }),
+        shutdownRunners,
+        releaseClaims: releaseScheduledWorkerSupervisorClaims,
+        stopDashboard,
+        uninstallRuntime: uninstallDiscordApiRuntime,
+        reportError,
+      });
+      if (!resources.ok) requestExitCode(1);
 
       try {
         if (runtimeLeaseAcquired) {
