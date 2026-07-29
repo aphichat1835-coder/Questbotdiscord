@@ -63,7 +63,7 @@ function runningQuestName(value) {
     const name = value
       .slice(start, end)
       .trim()
-      .replace(/[:\-–]\s*$/, '')
+      .replace(/[:\-–—]\s*$/, '')
       .trim();
     if (name) return name.slice(0, 160);
   }
