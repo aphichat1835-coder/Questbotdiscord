@@ -35,6 +35,25 @@ test('observer extracts a preparing Quest name without a backtracking expression
   assert.equal(state.progress, null);
 });
 
+test('observer strips progress from a running Quest name', () => {
+  const jobKey = 'scheduled:observer-running-name-progress';
+  syncRunnerState(observedJob(jobKey, '▶️ user: กำลังทำ Quest Alpha 50%'));
+
+  const state = getRunnerState(jobKey);
+  assert.equal(state.state, RUNNER_STATE.RUNNING_PROGRESS);
+  assert.equal(state.quest_name, 'Quest Alpha');
+  assert.equal(state.progress, 50);
+});
+
+test('observer strips a separator before a running progress suffix', () => {
+  const jobKey = 'scheduled:observer-running-name-separator';
+  syncRunnerState(observedJob(jobKey, '▶️ user: กำลังทำ Quest Alpha — 75%'));
+
+  const state = getRunnerState(jobKey);
+  assert.equal(state.quest_name, 'Quest Alpha');
+  assert.equal(state.progress, 75);
+});
+
 test('observer extracts a colon-delimited Quest name and clamps progress', () => {
   const jobKey = 'scheduled:observer-progress-colon';
   syncRunnerState(observedJob(jobKey, '▶️ user: Quest Beta 150%'));
