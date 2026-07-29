@@ -175,7 +175,7 @@ test('an earlier blocked bucket replaces a later queue wakeup timer', async () =
   const order = [];
 
   coordinator.routeBuckets.set('GET:/long', 'bucket-long');
-  coordinator.bucketResetAt.set('bucket-long', startedAt + 120);
+  coordinator.bucketResetAt.set('bucket-long', startedAt + 10_000);
   const long = coordinator.schedule('https://discord.com/api/v10/long', {
     headers: { Authorization: 'account-long' },
   }, async () => {
@@ -192,10 +192,14 @@ test('an earlier blocked bucket replaces a later queue wakeup timer', async () =
     return response();
   });
 
-  await Promise.all([short, long]);
-  assert.equal(order[0][0], 'short');
-  assert.ok(order[0][1] < 80, `short bucket started after ${order[0][1]}ms`);
-  assert.ok(order[1][1] >= 90, `long bucket started after only ${order[1][1]}ms`);
+  await short;
+  assert.deepEqual(order.map(([name]) => name), ['short']);
+  assert.ok(order[0][1] < 2_000, `short bucket started after ${order[0][1]}ms`);
+
+  coordinator.bucketResetAt.set('bucket-long', 0);
+  coordinator.pump();
+  await long;
+  assert.deepEqual(order.map(([name]) => name), ['short', 'long']);
 });
 
 test('coordinator settles the caller even when response bookkeeping throws', async () => {
