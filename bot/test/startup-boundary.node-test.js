@@ -31,6 +31,7 @@ test('entrypoint installs bootstrap handlers before importing runtime modules', 
 test('explicit bootstrap failure exits even when another handle keeps the event loop referenced', () => {
   const env = {
     ...process.env,
+    DATABASE_PATH: ':memory:',
     QUESTBOT_TEST_MODE: 'true',
   };
   delete env.DISCORD_BOT_TOKEN;
