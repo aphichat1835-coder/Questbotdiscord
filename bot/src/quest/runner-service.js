@@ -12,6 +12,7 @@ import {
   registerRunnerExecution,
   runWithRunnerExecutionContext,
 } from './runner-execution-context.js';
+import { rollbackStartedRunner } from './runner-start-rollback.js';
 import { restoreScheduledRunnerRows } from './scheduled-restore.js';
 import {
   clearAllSmartWakes,
@@ -193,6 +194,18 @@ function releaseExecutionWhenSettled(args, registration) {
   void Promise.resolve(done).then(scheduleRecovery, () => undefined);
 }
 
+async function rollbackPostStartFailure(args) {
+  return rollbackStartedRunner(args, {
+    getJob: legacyRunner.getJob,
+    stopJob: legacyRunner.stopJob,
+    reportError: (rollbackError, context) => {
+      console.error(
+        `[RunnerStartRollback:${String(context?.jobKey ?? 'unknown').slice(0, 100)}] ${rollbackError?.message ?? 'rollback failed'}`,
+      );
+    },
+  });
+}
+
 export function shouldDelegateScheduledRunner(processRole, mode) {
   return processRole === 'control' && mode === 'scheduled';
 }
@@ -200,18 +213,27 @@ export function shouldDelegateScheduledRunner(processRole, mode) {
 export async function startLocalRunner(args) {
   beginDurableStart(args, config.processRole === 'worker' ? 'worker' : 'runner-service');
   let registration;
+  let legacyStarted = false;
   try {
     registration = registerRunnerExecution(args);
     const result = await runWithRunnerExecutionContext(
       registration.context,
       () => legacyRunner.startRunner(args),
     );
+    legacyStarted = true;
     markStarted(args);
     releaseExecutionWhenSettled(args, registration);
     return result;
   } catch (error) {
+    if (legacyStarted) await rollbackPostStartFailure(args);
     registration?.release();
-    markStartFailure(args, error);
+    try {
+      markStartFailure(args, error);
+    } catch (stateError) {
+      console.error(
+        `[RunnerStartFailure:${String(args.jobKey).slice(0, 100)}] state update failed — ${stateError?.message ?? 'unknown error'}`,
+      );
+    }
     throw error;
   }
 }
