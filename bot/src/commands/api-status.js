@@ -200,7 +200,7 @@ export function buildApiStatusEmbed(snapshot) {
   if (snapshot.aggregate.lastError) {
     embed.addFields({
       name: '❌ Quest API Error ล่าสุด',
-      value: `\`${snapshot.aggregate.lastError.slice(0, 900)}\``,
+      value: `\`${redactSensitive(snapshot.aggregate.lastError).slice(0, 900)}\``,
     });
   }
   return embed;
