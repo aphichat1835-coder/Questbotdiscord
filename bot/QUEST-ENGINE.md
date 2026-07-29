@@ -1,6 +1,6 @@
 # Quest Engine Architecture
 
-เอกสารนี้อธิบายสถาปัตยกรรม Quest Engine บนกิ่ง `aa.1` หลัง Correctness และ Static-analysis review รอบล่าสุด ใช้เป็น Source of truth สำหรับ Review, UAT, Incident response และการพิจารณา Deploy
+เอกสารนี้อธิบายสถาปัตยกรรม Quest Engine บนกิ่ง `aa.1` หลัง Full-source correctness และ static-analysis audit ใช้เป็น Source of truth สำหรับ Review, UAT, Incident response และการพิจารณา Deploy
 
 ## 1. ขอบเขตที่ล็อกไว้
 
@@ -33,13 +33,16 @@ src/quest/
 │  └─ unsupported-executor.js
 ├─ all-mode-recovery.js
 ├─ claim-retry-policy.js
+├─ discord-api-runtime.js
 ├─ durable-mutation-verifier.js
 ├─ rate-limit-coordinator.js
+├─ recovery-fetch.js
 ├─ recovery-planner.js
 ├─ runner-completion-observer.js
 ├─ runner-completion-release.js
 ├─ runner-execution-context.js
 ├─ runner-ownership-guard.js
+├─ runner-start-rollback.js
 ├─ runner-state-observer.js
 ├─ runner-state-store.js
 ├─ schedule-hint-bus.js
@@ -48,7 +51,8 @@ src/quest/
 ├─ scheduled-worker-reconciler.js
 ├─ scheduled-worker-supervisor.js
 ├─ smart-scheduler.js
-└─ smart-wake-controller.js
+├─ smart-wake-controller.js
+└─ worker-discord-client.js
 ```
 
 `discord-runner.js` เป็น Orchestrator และ Presentation boundary ของระบบเดิม แต่ Production entrypoints, Commands, Restore และ Lifecycle ต้องผ่าน `quest/runner-service.js`
@@ -63,6 +67,9 @@ Source of truth:
 - Retry classification ของ Claim → `quest/claim-retry-policy.js`
 - Queue, scoped rate limit, circuit และ mutation barrier → `quest/rate-limit-coordinator.js`
 - All-in-one delayed recovery → `quest/all-mode-recovery.js`
+- Transient durable recovery fetch policy → `quest/recovery-fetch.js`
+- Post-start rollback → `quest/runner-start-rollback.js`
+- Standalone Worker Discord REST output → `quest/worker-discord-client.js`
 - Completion settlement → `quest/runner-completion-observer.js`
 - Safe execution-context release → `quest/runner-completion-release.js`
 
@@ -75,6 +82,7 @@ API client ต้อง:
 - Encode External Quest ID เป็น path segment เดียว
 - ตรวจทั้ง `/quests/@me` และ `/users/@me/quests`
 - ไม่สรุปว่า Quest หายจาก Endpoint แรกที่คืนรายการว่าง
+- Fatal 401 ต้องชนะ Empty candidate จาก Endpoint ก่อนหน้า
 - ไม่ Generic retry POST Mutation
 - ส่ง Abort และ Fatal authentication ต่ออย่างถูกต้อง
 - ส่ง Video progress timestamp เป็นจำนวนเต็มไม่ติดลบ
@@ -182,10 +190,11 @@ Payload ที่ Persist ต้องไม่มี Token, Cookie, CAPTCHA, We
 กฎสำคัญ:
 
 - Claim retry ห้ามเปลี่ยน `STOPPED`, `COMPLETED` หรือ `FAILED` กลับเป็น `WAITING_RETRY`
-- Recovery fetch ที่หยุดกลาง `VERIFY_MUTATION/VERIFY_COMPLETION` ต้องกลับ `WAITING_RETRY` พร้อม Backoff แม้ไม่มี Active mutation checkpoint
+- Transient durable recovery fetch ถูก Defer เข้า Normal loop; Abort และ Fatal authentication ยังคงเป็น Terminal ตาม Policy
 - `applyRunnerRecoveryPlan()` ต้องรักษา Diagnostic metadata เดิมก่อนเขียน Recovery fields ล่าสุด
 - Restore ที่ Throw ต้อง Report และ Rearm
 - Restore summary ที่ `restored <= 0` ถือว่าล้มและต้อง Rearm
+- Retry deadline ใหม่ต้อง Persist ลง Durable state ก่อนตั้ง Timer รอบถัดไป
 - ก่อน Rearm/Restore ต้องตรวจ State, Schedule row, Schedule ID และ Replacement job ซ้ำ
 - Timer ต้องไม่เก็บ Raw user token
 
@@ -209,22 +218,23 @@ Payload ที่ Persist ต้องไม่มี Token, Cookie, CAPTCHA, We
 - Contain Error reporter ที่ Throw ซ้ำ
 - ไม่สร้าง Derived unhandled rejection
 
-Rate-limit coordinator Promise chain ถูกตรวจแล้ว: Error ที่คาดหมายจาก Rate-limit bookkeeping, Circuit, Mutation checkpoint และ Schedule publishing ถูกแยก Catch ก่อน Resolve/Reject ปัจจุบันไม่มี Source/Test evidence ที่ต้องเพิ่ม Catch ใหม่
+Rate-limit coordinator Promise chain ถูกตรวจแล้ว: Error ที่คาดหมายจาก Rate-limit bookkeeping, Circuit, Mutation checkpoint และ Schedule publishing ถูกแยก Catch ก่อน Resolve/Reject
 
 ## 8. Rate limit และ Circuit breaker
 
 Coordinator รองรับ:
 
 - Serialization ต่อบัญชี
-- Route-to-bucket mapping
+- Route-to-bucket mapping และย้าย Reset/Circuit state เมื่อ Bucket หรือ Scope เปลี่ยน
 - Scope `user`, `shared`, `global`
 - Header `Retry-After` และ JSON `retry_after`
 - Server delay เต็มจำนวนโดยไม่ Cap เหลือ 60 วินาที
 - Response ปกติที่มีโควตาไม่เข้าสู่ body parsing path
-- Global pause และ Request priority
+- Global pause, Durable `next_action_at` และ Request priority
 - Circuit states `CLOSED`, `OPEN`, `HALF_OPEN`
 - Mutation barrier ต่อ `jobKey`
 - Fresh Quest verification ก่อนปลด Barrier
+- Request ที่ยังอยู่ใน Queue ถูกยกเลิกทันทีเมื่อ AbortSignal ถูกยกเลิก
 
 Authorization ใน Queue เก็บเป็น SHA-256 fingerprint ไม่เก็บ Raw token
 
@@ -249,6 +259,9 @@ Authorization ใน Queue เก็บเป็น SHA-256 fingerprint ไม�
 - Worker ที่เสีย Claim ต้อง Abort ก่อน Mutation ถัดไป
 - Worker อื่น Takeover ได้หลัง Claim หมดอายุ
 - Control และ Workers ต้องใช้ SQLite ไฟล์เดียวกันจริง
+- SQLite ใช้ `busy_timeout=5000` เพื่อรอ Write contention แบบมีขอบเขต
+- Schema migration, Runtime lease และ Scheduled claim acquisition ใช้ Immediate transaction เพื่อ Serialize การแย่งสิทธิ์ข้าม Process
+- Detached `STOPPING` rows ต้องถูก Finalize ครบแม้มีมากกว่า 500 แถว
 
 Shutdown order:
 
@@ -259,6 +272,8 @@ Shutdown order:
 5. ปล่อย Scheduled claims
 6. ปล่อย Runtime lease
 7. ปิด Database
+
+Cleanup แต่ละขั้นต้องแยก Error boundary เพื่อไม่ให้ความล้มเหลวขั้นหนึ่งข้ามขั้นหลัง
 
 ## 11. Checkpoint version decision
 
@@ -271,26 +286,28 @@ Shutdown order:
 
 ดังนั้นการ Backfill แถวเดิมเป็น Version 2 ไม่ทำให้ Recovery ตีความ Legacy mutation format ผิด และ Finding ที่ต้องบังคับ Version 1 สำหรับแถวเดิมถือเป็น False positive ภายใต้ Schema ปัจจุบัน
 
-## 12. Static-analysis cleanup และ Final automated evidence
+## 12. Full-source audit และ Final automated evidence
 
-Validated implementation HEAD ก่อน Documentation-only sync:
+Validated implementation HEAD ก่อน Final documentation sync:
 
-`cf93dbd37659405c112aa5bc0b1f466aa43d1c5b`
+`45e508c08ef9e15c10acefb22dbb7ce15462bf3a`
 
 GitHub Actions CI ของ Implementation HEAD นี้:
 
-- `#1446` — Success
-- `#1447` — Success
+- `#1739` — Success
+- `#1740` — Success
 
-ผลจาก Artifact ของ CI #1447:
+ผลจาก Artifact ของ CI #1740:
 
-- 412 tests passed
+- 462 tests passed
 - 0 failed
 - 0 cancelled
 - 0 skipped
 - 0 todo
-- Coverage: 93.62% lines / 84.87% branches / 89.30% functions
-- Mutation baseline และ Mutation safety scripts ผ่านทุกชุด
+- Coverage: 93.78% lines / 85.22% branches / 89.28% functions
+- LCOV generated: 393,076 bytes
+- Mutation baseline ผ่าน
+- Critical mutation groups 14/14, 15/15 และ 26/26 ถูก Kill
 - Dedicated recovery metadata mutation ถูก Kill
 - Mutation scripts คืน Source ครบ
 - Repository shape ผ่าน
@@ -300,27 +317,19 @@ GitHub Actions CI ของ Implementation HEAD นี้:
 - JS/MJS/Bash syntax ผ่าน
 - Production dependency audit ระดับ High ผ่าน
 
-Static-analysis cleanup รอบนี้ครอบคลุม:
+Full-source audit รอบนี้เพิ่มการตรวจและ Regression coverage สำหรับ:
 
-- ลด Cognitive Complexity ของ Quest endpoint fallback และ Scheduled worker reconciliation
-- แยก Runner status parsing ออกจาก State transition และตัด Regex ที่เสี่ยง Backtracking
-- แยก Runner error classification พร้อม Table tests ที่ล็อก Priority
-- แยก `/api-status` เป็น Snapshot และ Pure Embed builder พร้อม Behavior test
-- เอา Empty spread fallbacks และ Array spreads ที่ไม่จำเป็นออก
-- เปลี่ยน `NaN` เป็น `Number.NaN` และใช้ `toSorted()` โดยไม่ Mutate Array เดิม
-- แก้ URL/Request stringification ใน Tests ให้ตรวจชนิดก่อน
-- เพิ่ม Default branch และ stderr handling ให้ Mutation shell scripts
-- รักษาลำดับ Claim heartbeat, Cleanup และ Ownership revalidation เดิม
+- Worker readiness, Startup rollback และ Shutdown isolation
+- SQLite busy timeout, Immediate migration/lease/claim transactions และ STOPPING มากกว่า 500 แถว
+- Route-to-bucket remapping, Scope migration, Global 429 durable deadline และ Queue cancellation
+- CAPTCHA heartbeat, Fatal auth precedence และ malformed Headers
+- Durable recovery fetch deferral และ All-mode retry persistence
+- Backup/Incident recovery lifecycle, recurrence during recovery และ Discord embed total budget
+- Credential redaction, `/api-status` privacy และ explicit `emergency:false`
+- Worker REST timeout, Fetch Promise semantics และ Execution-context remapping
+- README permissions, Environment defaults และ Architecture boundary parsing
 
-External status ที่ยืนยันบน Implementation HEAD/PR static-analysis surface:
-
-- Snyk: Success
-- CodeRabbit commit status: Success
-- CodeRabbit inline review threads ของ PR #15: Resolved
-- Codacy PR #16: Up to standards / 0 new issues
-- SonarCloud current-head result: ยังต้องยืนยันหลัง Scan รอบล่าสุด
-
-Documentation-only commits หลัง Implementation HEAD นี้ต้องผ่าน CI ของตัวเอง แต่ไม่เปลี่ยนผล Implementation evidence ข้างต้น เว้นแต่มีการแก้ Source หรือ Test code เพิ่ม
+External scanners ต้องยืนยันซ้ำบน Final documentation HEAD; CI-based Sonar จะถูก Skip หาก Repository ไม่มี `SONAR_TOKEN`
 
 Mutation gates ที่ยังบังคับใช้อยู่ครอบคลุม:
 
@@ -337,8 +346,8 @@ Mutation gates ที่ยังบังคับใช้อยู่คร�
 11. All-mode recovery ทำงานนอก `WAITING_RETRY`
 12. Observer เขียนทับ High-priority wait
 13. Malformed video timestamp ถึง Network
-14. Completion observer transition failure หลุด Promise chain
-15. Completion release error reporter หลุด containment
+14. Completion observer transition failureหลุด Promise chain
+15. Completion release error reporterหลุด containment
 16. Claim retry ปลุก Terminal runner
 17. Unsupported executor ซ่อน Schema reason
 18. Failed all-mode restore ไม่ Rearm
@@ -371,6 +380,8 @@ Mutation gates ที่ยังบังคับใช้อยู่คร�
 15. Token invalid ขณะอยู่ Waiting state
 16. Claim callback กลับมาหลัง Runner Terminal
 17. Panel ยังมีเพียง `START NOW / STOP ALL`
+18. Worker shutdown fault injection
+19. Backup incident failure → pending recovery → re-failure → successful recovery
 
 ใช้บัญชีและ Server ทดสอบ ห้ามเริ่มจากบัญชีหลัก
 
@@ -379,4 +390,5 @@ Mutation gates ที่ยังบังคับใช้อยู่คร�
 - CI ผ่านไม่เท่ากับ Production ready
 - SQLite ต้องอยู่บน Shared/Persistent storage ที่ทุก Process เข้าถึงไฟล์เดียวกัน
 - ไม่รองรับ Workers ที่ใช้ Database คนละไฟล์
+- Sonar/Codacy/CodeFactor ต้องยืนยันบน Final HEAD
 - ห้าม Merge, Deploy, Auto-merge หรือเปลี่ยน PR ออกจาก Draft จน Review, External gates, Controlled UAT และการอนุมัติจากเจ้าของครบ
