@@ -20,13 +20,17 @@ function blockNames(block) {
 
 function namedImports(moduleSource, modulePath) {
   const lines = moduleSource.split('\n');
-  const terminator = `from '${modulePath}';`;
+  const moduleClause = `from '${modulePath}'`;
   for (let start = 0; start < lines.length; start++) {
     if (!lines[start].trimStart().startsWith('import {')) continue;
     const block = [];
     for (let end = start; end < lines.length; end++) {
       block.push(lines[end]);
-      if (lines[end].includes(terminator)) return blockNames(block.join('\n'));
+      if (!lines[end].trimEnd().endsWith(';')) continue;
+      const joined = block.join('\n');
+      if (joined.includes(moduleClause)) return blockNames(joined);
+      start = end;
+      break;
     }
   }
   return [];
