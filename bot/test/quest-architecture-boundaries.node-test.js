@@ -7,6 +7,17 @@ async function source(relativePath) {
   return readFile(new URL(relativePath, import.meta.url), 'utf8');
 }
 
+function blockNames(block) {
+  const open = block.indexOf('{');
+  const close = block.lastIndexOf('}');
+  if (open === -1 || close <= open) return [];
+  return block
+    .slice(open + 1, close)
+    .split(',')
+    .map((name) => name.trim())
+    .filter(Boolean);
+}
+
 function namedImports(moduleSource, modulePath) {
   const lines = moduleSource.split('\n');
   const terminator = `from '${modulePath}';`;
@@ -15,19 +26,28 @@ function namedImports(moduleSource, modulePath) {
     const block = [];
     for (let end = start; end < lines.length; end++) {
       block.push(lines[end]);
-      if (!lines[end].includes(terminator)) continue;
-      const joined = block.join('\n');
-      const open = joined.indexOf('{');
-      const close = joined.lastIndexOf('}');
-      if (open === -1 || close <= open) return [];
-      return joined
-        .slice(open + 1, close)
-        .split(',')
-        .map((name) => name.trim())
-        .filter(Boolean);
+      if (lines[end].includes(terminator)) return blockNames(block.join('\n'));
     }
   }
   return [];
+}
+
+function localNamedExports(moduleSource) {
+  const lines = moduleSource.split('\n');
+  const names = [];
+  for (let start = 0; start < lines.length; start++) {
+    if (!lines[start].trimStart().startsWith('export {')) continue;
+    const block = [];
+    for (let end = start; end < lines.length; end++) {
+      block.push(lines[end]);
+      if (!lines[end].includes('};')) continue;
+      const joined = block.join('\n');
+      if (!joined.includes(' from ')) names.push(...blockNames(joined));
+      start = end;
+      break;
+    }
+  }
+  return names;
 }
 
 test('discord runner delegates API, schema and progress execution to authoritative modules', async () => {
@@ -59,6 +79,7 @@ test('Discord API v10, client headers and compatibility errors have one source o
   const apiClient = await source('../src/quest/api/discord-client.js');
   const runner = await source('../src/discord-runner.js');
   const apiImports = namedImports(runner, './quest/api/discord-client.js');
+  const localExports = localNamedExports(runner);
 
   assert.match(apiClient, /export const DISCORD_API_BASE = 'https:\/\/discord\.com\/api\/v10'/);
   assert.match(apiClient, /export class DiscordApiError extends Error/);
@@ -74,7 +95,8 @@ test('Discord API v10, client headers and compatibility errors have one source o
   );
   assert.ok(apiImports.includes('isFatalAuthError'));
   assert.equal(apiImports.includes('DiscordApiError'), false);
-  assert.match(runner, /export \{ isFatalAuthError \};/);
+  assert.ok(localExports.includes('isFatalAuthError'));
+  assert.equal(localExports.includes('DiscordApiError'), false);
 });
 
 test('schema normalization and executor selection remain outside the runner', async () => {
