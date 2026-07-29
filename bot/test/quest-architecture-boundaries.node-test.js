@@ -35,6 +35,7 @@ test('discord runner delegates API, schema and progress execution to authoritati
 test('Discord API v10, client headers and compatibility errors have one source of truth', async () => {
   const apiClient = await source('../src/quest/api/discord-client.js');
   const runner = await source('../src/discord-runner.js');
+  const runnerLines = runner.split('\n').map((line) => line.trim());
 
   assert.match(apiClient, /export const DISCORD_API_BASE = 'https:\/\/discord\.com\/api\/v10'/);
   assert.match(apiClient, /export class DiscordApiError extends Error/);
@@ -50,7 +51,7 @@ test('Discord API v10, client headers and compatibility errors have one source o
   );
   assert.match(runner, /isFatalAuthError,/);
   assert.match(runner, /export \{ isFatalAuthError \};/);
-  assert.doesNotMatch(runner, /^\s*DiscordApiError,\s*$/m);
+  assert.equal(runnerLines.includes('DiscordApiError,'), false);
 });
 
 test('schema normalization and executor selection remain outside the runner', async () => {
