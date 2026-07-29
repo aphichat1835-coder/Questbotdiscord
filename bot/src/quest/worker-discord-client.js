@@ -28,9 +28,17 @@ async function readDiscordResponse(response) {
   return data;
 }
 
-function boundedSignal(signal, timeoutMs) {
-  const timeoutSignal = AbortSignal.timeout(timeoutMs);
-  return signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
+function boundedRequestSignal(signal, timeoutMs) {
+  const timeoutController = new AbortController();
+  const timer = setTimeout(() => {
+    timeoutController.abort(new DOMException('Worker Discord request timed out', 'TimeoutError'));
+  }, timeoutMs);
+  return {
+    signal: signal
+      ? AbortSignal.any([signal, timeoutController.signal])
+      : timeoutController.signal,
+    clear: () => clearTimeout(timer),
+  };
 }
 
 export function createWorkerDiscordClient({
@@ -47,16 +55,21 @@ export function createWorkerDiscordClient({
   async function request(path, options = {}) {
     const transport = fetchFn ?? globalThis.fetch;
     if (typeof transport !== 'function') throw new TypeError('Global fetch is unavailable');
-    const response = await transport(`${DISCORD_API_BASE}${path}`, {
-      ...options,
-      signal: boundedSignal(options.signal, timeoutMs),
-      headers: {
-        Authorization: `Bot ${botToken}`,
-        'Content-Type': 'application/json',
-        ...options.headers,
-      },
-    });
-    return readDiscordResponse(response);
+    const bounded = boundedRequestSignal(options.signal, timeoutMs);
+    try {
+      const response = await transport(`${DISCORD_API_BASE}${path}`, {
+        ...options,
+        signal: bounded.signal,
+        headers: {
+          Authorization: `Bot ${botToken}`,
+          'Content-Type': 'application/json',
+          ...options.headers,
+        },
+      });
+      return readDiscordResponse(response);
+    } finally {
+      bounded.clear();
+    }
   }
 
   function message(channelId, data) {
