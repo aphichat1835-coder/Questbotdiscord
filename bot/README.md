@@ -31,7 +31,7 @@ npm start
 
 ### Optional overrides
 
-- `MANAGER_ROLE_ID` — Role ที่ใช้ Start/Stop Runner และดู `/api-status`; Owner/Admin ใช้ได้เสมอ
+- `MANAGER_ROLE_ID` — Role ที่ใช้ `/run`, `/panel` และ `/api-status`; `/stop` จำกัดเฉพาะเจ้าของ Runner ส่วน Owner/Admin ใช้คำสั่ง Manager ได้เสมอ
 - `TIMEZONE` — ค่าเริ่มต้น `Asia/Bangkok`
 - `LOG_CHANNEL_ID` — ห้องสำรองสำหรับข้อความสถานะ Runner ไม่ใช่ Incident Webhook
 - `DATABASE_PATH`, `DATABASE_BACKUP_ENABLED`, `DATABASE_BACKUP_RETENTION`
@@ -39,6 +39,8 @@ npm start
 - `PORT` — Port ของ Health server
 - `QUEST_PROCESS_ROLE` — `all`, `control` หรือ `worker`; ค่าเริ่มต้น `all`
 - `QUEST_WORKER_POLL_MS` — รอบ Reconcile ของ Worker ค่าเริ่มต้น 5000 ms
+- `DISCORD_LOCALE` — Locale ของ Discord client profile ค่าเริ่มต้น `en-US`
+- `DISCORD_TIMEZONE` — Timezone ของ Discord client profile ค่าเริ่มต้น `Asia/Bangkok`
 - Discord client profile overrides ต้องเปลี่ยนพร้อมกันทั้งชุดและ Restart
 
 ## Process topology
