@@ -40,7 +40,8 @@ function localNamedExports(moduleSource) {
     const block = [];
     for (let end = start; end < lines.length; end++) {
       block.push(lines[end]);
-      if (!lines[end].includes('};')) continue;
+      const trimmed = lines[end].trimEnd();
+      if (!lines[end].includes('}') || !trimmed.endsWith(';')) continue;
       const joined = block.join('\n');
       if (!joined.includes(' from ')) names.push(...blockNames(joined));
       start = end;
