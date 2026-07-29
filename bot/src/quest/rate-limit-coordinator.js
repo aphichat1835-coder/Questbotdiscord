@@ -371,7 +371,6 @@ export class DiscordRateLimitCoordinator {
       this.wakeupTimer = null;
       this.pump();
     }, delay);
-    this.wakeupTimer.unref?.();
   }
 
   setBucketReset(task, bucket, delay, scope) {
