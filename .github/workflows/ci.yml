@@ -121,8 +121,8 @@ jobs:
             }
           }
           NODE
-          if grep -R -E 'https://(canary\.|ptb\.)?discord(app)?\.com/api/webhooks/[0-9]{17,20}/' test test-support scripts; then
-            echo "Credential-shaped Discord webhook literal detected in test or script code"
+          if grep -R -E 'https://(canary\.|ptb\.)?discord(app)?\.com/api/webhooks/[0-9]{17,20}/' src test test-support scripts; then
+            echo "Credential-shaped Discord webhook literal detected in source, test, or script code"
             exit 1
           fi
           grep -q "redirect: 'error'" src/webhook-delivery.js
