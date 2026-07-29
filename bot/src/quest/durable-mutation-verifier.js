@@ -38,7 +38,14 @@ function maxNumericProgress(value) {
 }
 
 export function questServerProgressSeconds(quest) {
-  if (Number.isFinite(Number(quest?.progressSecs))) return Number(quest.progressSecs);
+  const directProgress = quest?.progressSecs;
+  if (
+    directProgress != null
+    && directProgress !== ''
+    && Number.isFinite(Number(directProgress))
+  ) {
+    return Number(directProgress);
+  }
   const status = rawUserStatus(quest) ?? {};
   return Math.max(
     maxNumericProgress(status.progress),
