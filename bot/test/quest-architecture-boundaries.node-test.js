@@ -7,6 +7,29 @@ async function source(relativePath) {
   return readFile(new URL(relativePath, import.meta.url), 'utf8');
 }
 
+function namedImports(moduleSource, modulePath) {
+  const lines = moduleSource.split('\n');
+  const terminator = `from '${modulePath}';`;
+  for (let start = 0; start < lines.length; start++) {
+    if (!lines[start].trimStart().startsWith('import {')) continue;
+    const block = [];
+    for (let end = start; end < lines.length; end++) {
+      block.push(lines[end]);
+      if (!lines[end].includes(terminator)) continue;
+      const joined = block.join('\n');
+      const open = joined.indexOf('{');
+      const close = joined.lastIndexOf('}');
+      if (open === -1 || close <= open) return [];
+      return joined
+        .slice(open + 1, close)
+        .split(',')
+        .map((name) => name.trim())
+        .filter(Boolean);
+    }
+  }
+  return [];
+}
+
 test('discord runner delegates API, schema and progress execution to authoritative modules', async () => {
   const runner = await source('../src/discord-runner.js');
 
@@ -35,7 +58,7 @@ test('discord runner delegates API, schema and progress execution to authoritati
 test('Discord API v10, client headers and compatibility errors have one source of truth', async () => {
   const apiClient = await source('../src/quest/api/discord-client.js');
   const runner = await source('../src/discord-runner.js');
-  const runnerLines = runner.split('\n').map((line) => line.trim());
+  const apiImports = namedImports(runner, './quest/api/discord-client.js');
 
   assert.match(apiClient, /export const DISCORD_API_BASE = 'https:\/\/discord\.com\/api\/v10'/);
   assert.match(apiClient, /export class DiscordApiError extends Error/);
@@ -49,9 +72,9 @@ test('Discord API v10, client headers and compatibility errors have one source o
     runner,
     /export \{ DiscordApiError \} from '\.\/quest\/api\/discord-client\.js';/,
   );
-  assert.match(runner, /isFatalAuthError,/);
+  assert.ok(apiImports.includes('isFatalAuthError'));
+  assert.equal(apiImports.includes('DiscordApiError'), false);
   assert.match(runner, /export \{ isFatalAuthError \};/);
-  assert.equal(runnerLines.includes('DiscordApiError,'), false);
 });
 
 test('schema normalization and executor selection remain outside the runner', async () => {
