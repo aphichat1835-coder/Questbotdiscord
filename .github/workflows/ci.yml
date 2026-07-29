@@ -193,7 +193,7 @@ jobs:
 
   apply-full-audit-fixes:
     name: Apply full audit fixes once
-    if: github.event_name == 'push' && github.ref == 'refs/heads/aa.1' && github.event.head_commit.message == 'ci: apply full audit source fixes'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/aa.1' && github.event.head_commit.message == 'ci apply full audit source fixes'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
