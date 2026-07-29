@@ -9,7 +9,7 @@ permissions:
 
 jobs:
   sync:
-    if: github.event.head_commit.message == 'ci: sync final audit evidence'
+    if: github.event.head_commit.message == 'ci sync final audit evidence'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -24,24 +24,33 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
 
-          path = Path('bot/QUEST-ENGINE.md')
-          text = path.read_text(encoding='utf-8')
-          replacements = {
-              '`45e508c08ef9e15c10acefb22dbb7ce15462bf3a`': '`50a11b5008b37ce82f85026df009c9dac098da85`',
-              '- `#1739` — Success': '- `#1748` — Success',
-              '- `#1740` — Success': '- `#1749` — Success',
-              'ผลจาก Artifact ของ CI #1740:': 'ผลจาก Artifact ของ CI #1749:',
-              'Coverage: 93.78% lines / 85.22% branches / 89.28% functions': 'Coverage: 93.78% lines / 85.25% branches / 89.28% functions',
-              'LCOV generated: 393,076 bytes': 'LCOV generated: 393,224 bytes',
-              'Completion observer transition failureหลุด Promise chain': 'Completion observer transition failure หลุด Promise chain',
-              'Completion release error reporterหลุด containment': 'Completion release error reporter หลุด containment',
+          replacements_by_file = {
+              'bot/QUEST-ENGINE.md': {
+                  '`45e508c08ef9e15c10acefb22dbb7ce15462bf3a`': '`50a11b5008b37ce82f85026df009c9dac098da85`',
+                  '- `#1739` — Success': '- `#1748` — Success',
+                  '- `#1740` — Success': '- `#1749` — Success',
+                  'ผลจาก Artifact ของ CI #1740:': 'ผลจาก Artifact ของ CI #1749:',
+                  'Coverage: 93.78% lines / 85.22% branches / 89.28% functions': 'Coverage: 93.78% lines / 85.25% branches / 89.28% functions',
+                  'LCOV generated: 393,076 bytes': 'LCOV generated: 393,224 bytes',
+                  'Completion observer transition failureหลุด Promise chain': 'Completion observer transition failure หลุด Promise chain',
+                  'Completion release error reporterหลุด containment': 'Completion release error reporter หลุด containment',
+              },
+              'bot/PRODUCTION-CHECKLIST.md': {
+                  'Validated implementation evidence จาก commit `45e508c08ef9e15c10acefb22dbb7ce15462bf3a` และ CI #1739/#1740 ก่อน Final documentation sync:': 'Validated implementation evidence จาก commit `50a11b5008b37ce82f85026df009c9dac098da85` และ CI #1748/#1749 ก่อน Final documentation sync:',
+                  'Coverage 93.78% lines / 85.22% branches / 89.28% functions': 'Coverage 93.78% lines / 85.25% branches / 89.28% functions',
+                  'LCOV generated 393,076 bytes': 'LCOV generated 393,224 bytes',
+              },
           }
-          for old, new in replacements.items():
-              count = text.count(old)
-              if count != 1:
-                  raise SystemExit(f'expected one occurrence of {old!r}, found {count}')
-              text = text.replace(old, new)
-          path.write_text(text, encoding='utf-8')
+
+          for filename, replacements in replacements_by_file.items():
+              path = Path(filename)
+              text = path.read_text(encoding='utf-8')
+              for old, new in replacements.items():
+                  count = text.count(old)
+                  if count != 1:
+                      raise SystemExit(f'{filename}: expected one occurrence of {old!r}, found {count}')
+                  text = text.replace(old, new)
+              path.write_text(text, encoding='utf-8')
           PY
           git diff --check
 
@@ -49,6 +58,6 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add bot/QUEST-ENGINE.md
+          git add bot/QUEST-ENGINE.md bot/PRODUCTION-CHECKLIST.md
           git commit -m "docs: correct final audit evidence"
           git push origin HEAD:aa.1
