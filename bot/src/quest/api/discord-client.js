@@ -258,6 +258,16 @@ export function sendApplicationHeartbeatRequest(token, quest, terminal, signal) 
   });
 }
 
+function isCaptchaChallenge(data) {
+  return Boolean(
+    data?.captcha_sitekey
+    || data?.captcha_service
+    || data?.captcha_rqtoken
+    || data?.captcha_rqdata
+    || data?.captcha_key,
+  );
+}
+
 export async function sendHeartbeatRequest(
   token,
   quest,
@@ -275,7 +285,7 @@ export async function sendHeartbeatRequest(
       signal,
     });
   } catch (error) {
-    if (error?.status !== 400 || !quest?.applicationId) throw error;
+    if (error?.status !== 400 || !quest?.applicationId || isCaptchaChallenge(error.data)) throw error;
     return sendApplicationHeartbeatRequest(token, quest, terminal, signal);
   }
 }
