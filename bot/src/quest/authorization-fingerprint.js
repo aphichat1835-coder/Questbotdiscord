@@ -3,7 +3,11 @@ import { createHash } from 'node:crypto';
 function authorizationValue(value) {
   if (typeof value === 'string') return value;
   if (value == null) return null;
-  return new Headers(value).get('authorization');
+  try {
+    return new Headers(value).get('authorization');
+  } catch {
+    return null;
+  }
 }
 
 export function authorizationFingerprint(value = null) {
