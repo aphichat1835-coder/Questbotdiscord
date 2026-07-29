@@ -290,22 +290,22 @@ Cleanup แต่ละขั้นต้องแยก Error boundary เพ�
 
 Validated implementation HEAD ก่อน Final documentation sync:
 
-`45e508c08ef9e15c10acefb22dbb7ce15462bf3a`
+`50a11b5008b37ce82f85026df009c9dac098da85`
 
 GitHub Actions CI ของ Implementation HEAD นี้:
 
-- `#1739` — Success
-- `#1740` — Success
+- `#1748` — Success
+- `#1749` — Success
 
-ผลจาก Artifact ของ CI #1740:
+ผลจาก Artifact ของ CI #1749:
 
 - 462 tests passed
 - 0 failed
 - 0 cancelled
 - 0 skipped
 - 0 todo
-- Coverage: 93.78% lines / 85.22% branches / 89.28% functions
-- LCOV generated: 393,076 bytes
+- Coverage: 93.78% lines / 85.25% branches / 89.28% functions
+- LCOV generated: 393,224 bytes
 - Mutation baseline ผ่าน
 - Critical mutation groups 14/14, 15/15 และ 26/26 ถูก Kill
 - Dedicated recovery metadata mutation ถูก Kill
@@ -346,8 +346,8 @@ Mutation gates ที่ยังบังคับใช้อยู่คร�
 11. All-mode recovery ทำงานนอก `WAITING_RETRY`
 12. Observer เขียนทับ High-priority wait
 13. Malformed video timestamp ถึง Network
-14. Completion observer transition failureหลุด Promise chain
-15. Completion release error reporterหลุด containment
+14. Completion observer transition failure หลุด Promise chain
+15. Completion release error reporter หลุด containment
 16. Claim retry ปลุก Terminal runner
 17. Unsupported executor ซ่อน Schema reason
 18. Failed all-mode restore ไม่ Rearm

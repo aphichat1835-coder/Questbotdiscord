@@ -299,7 +299,7 @@ npm audit --omit=dev --audit-level=high
 git diff --exit-code
 ```
 
-Validated implementation evidence จาก commit `45e508c08ef9e15c10acefb22dbb7ce15462bf3a` และ CI #1739/#1740 ก่อน Final documentation sync:
+Validated implementation evidence จาก commit `50a11b5008b37ce82f85026df009c9dac098da85` และ CI #1748/#1749 ก่อน Final documentation sync:
 
 - [x] Repository shape
 - [x] Sanitized Quest fixture
@@ -307,8 +307,8 @@ Validated implementation evidence จาก commit `45e508c08ef9e15c10acefb22dbb
 - [x] Incident/Storage boundaries
 - [x] 462/462 tests
 - [x] 0 failed/cancelled/skipped/todo
-- [x] Coverage 93.78% lines / 85.22% branches / 89.28% functions
-- [x] LCOV generated 393,076 bytes
+- [x] Coverage 93.78% lines / 85.25% branches / 89.28% functions
+- [x] LCOV generated 393,224 bytes
 - [x] Mutation baseline ผ่าน
 - [x] Critical mutation groups 14/14, 15/15 และ 26/26 ถูก Kill
 - [x] Dedicated recovery metadata mutation ถูก Kill
