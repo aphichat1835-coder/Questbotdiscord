@@ -68,3 +68,8 @@ test('redaction covers API, private, encryption, access and signing key names', 
   assert.match(redactedText, /private_key=\[REDACTED\]/);
   assert.match(redactedText, /encryption-key=\[REDACTED\]/);
 });
+
+await import('./bootstrap-full-audit.node-test.js');
+await import('./incident-full-audit.node-test.js');
+await import('./recovery-fetch-policy.node-test.js');
+await import('./runner-error-classification.node-test.js');
