@@ -278,9 +278,13 @@ function classifyHttpRunnerError(error) {
 }
 
 function classifyCodeRunnerError(error) {
-  const code = String(error?.code ?? '');
-  if (code.startsWith('SQLITE_')) return RUNNER_ERROR_CATEGORY.STORAGE;
-  if (NETWORK_ERROR_CODES.has(code)) return RUNNER_ERROR_CATEGORY.NETWORK;
+  for (const rawCode of [error?.code, error?.cause?.code]) {
+    const code = String(rawCode ?? '');
+    if (code.startsWith('SQLITE_')) return RUNNER_ERROR_CATEGORY.STORAGE;
+    if (NETWORK_ERROR_CODES.has(code) || code.startsWith('UND_ERR_')) {
+      return RUNNER_ERROR_CATEGORY.NETWORK;
+    }
+  }
   return null;
 }
 
@@ -289,9 +293,7 @@ export function classifyRunnerError(error) {
     ?? classifyHttpRunnerError(error)
     ?? classifyCodeRunnerError(error);
   if (category) return category;
-  if (!Number.isInteger(error?.status) && error instanceof Error) {
-    return RUNNER_ERROR_CATEGORY.NETWORK;
-  }
+  if (error?.message === 'fetch failed') return RUNNER_ERROR_CATEGORY.NETWORK;
   return RUNNER_ERROR_CATEGORY.UNKNOWN;
 }
 

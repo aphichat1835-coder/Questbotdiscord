@@ -67,6 +67,7 @@ import {
 } from './quest/executors.js';
 import { currentRunnerExecutionContext } from './quest/runner-execution-context.js';
 import { verifyRunnerMutationFromQuests } from './quest/durable-mutation-verifier.js';
+import { fetchDurableRecoveryQuests } from './quest/recovery-fetch.js';
 import {
   getRunnerState,
   RUNNER_MUTATION_STATUS,
@@ -1188,7 +1189,17 @@ export async function startRunner({
     if (mode !== 'scheduled' || !recoveryPlan) return;
     if (!['VERIFY_MUTATION', 'VERIFY_COMPLETION'].includes(recoveryPlan.action)) return;
 
-    const quests = await fetchQuests(userToken, signal);
+    const quests = await fetchDurableRecoveryQuests({
+      fetchQuests,
+      userToken,
+      signal,
+      isFatalAuthError,
+      onDeferred: async () => {
+        addLog(`⚠️ ${username}: RECOVERY DEFERRED — RETRY IN NORMAL LOOP`);
+        await render();
+      },
+    });
+    if (!quests) return;
     if (recoveryPlan.action === 'VERIFY_MUTATION') {
       const result = verifyRunnerMutationFromQuests(jobKey, quests, { finalizeAbsent: true });
       addLog(result.verified
