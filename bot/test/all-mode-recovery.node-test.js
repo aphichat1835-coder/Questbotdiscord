@@ -4,7 +4,11 @@ import test from 'node:test';
 import { createAllModeRecoveryController } from '../src/quest/all-mode-recovery.js';
 import { RUNNER_STATE } from '../src/quest/runner-state-store.js';
 
-function fixture({ restore = null, restoreRetryDelayMs = 60_000 } = {}) {
+function fixture({
+  restore = null,
+  restoreRetryDelayMs = 60_000,
+  persistRetry = null,
+} = {}) {
   let now = Date.parse('2030-01-01T00:00:00.000Z');
   const jobs = new Map();
   const schedules = new Map([[41, { id: 41, owner_id: 'owner-41' }]]);
@@ -17,16 +21,26 @@ function fixture({ restore = null, restoreRetryDelayMs = 60_000 } = {}) {
   const timers = [];
   const restores = [];
   const errors = [];
+  const persisted = [];
+  let readStateFn = (jobKey) => states.get(jobKey) ?? null;
 
   const restoreFn = restore ?? (async () => undefined);
+  const persistRetryFn = persistRetry ?? (async (jobKey, nextActionAt, error) => {
+    const state = states.get(jobKey);
+    if (state?.state !== RUNNER_STATE.WAITING_RETRY) return false;
+    state.next_action_at = nextActionAt;
+    persisted.push({ jobKey, nextActionAt, message: error.message });
+    return true;
+  });
   const controller = createAllModeRecoveryController({
-    readState: (jobKey) => states.get(jobKey) ?? null,
+    readState: (jobKey) => readStateFn(jobKey),
     readJob: (jobKey) => jobs.get(jobKey) ?? null,
     readScheduled: (scheduleId) => schedules.get(scheduleId) ?? null,
     restore: async (row, context) => {
       restores.push({ row, context });
       return restoreFn(row, context);
     },
+    persistRetry: persistRetryFn,
     currentTime: () => now,
     setTimer: (callback, delay) => {
       const timer = { callback, delay, cleared: false, unref() {} };
@@ -49,9 +63,11 @@ function fixture({ restore = null, restoreRetryDelayMs = 60_000 } = {}) {
     controller,
     errors,
     jobs,
+    persisted,
     restores,
     schedules,
     setNow: (value) => { now = value; },
+    setReadState: (callback) => { readStateFn = callback; },
     states,
     timers,
   };
@@ -69,9 +85,10 @@ test('all-mode recovery schedules from durable next_action_at and restores when 
   assert.equal(item.restores[0].row.id, 41);
   assert.equal(item.restores[0].context.userToken, undefined);
   assert.deepEqual(item.errors, []);
+  assert.deepEqual(item.persisted, []);
 });
 
-test('failed all-mode restore reports and rearms with a nonzero bounded delay', async () => {
+test('failed all-mode restore persists and rearms with a nonzero bounded delay', async () => {
   const item = fixture({
     restore: async () => { throw new Error('restore unavailable'); },
     restoreRetryDelayMs: 60_000,
@@ -80,6 +97,15 @@ test('failed all-mode restore reports and rearms with a nonzero bounded delay', 
 
   assert.equal(await item.controller.run(item.context), false);
   assert.deepEqual(item.errors, ['restore unavailable']);
+  assert.equal(item.persisted.length, 1);
+  assert.equal(
+    item.persisted[0].nextActionAt,
+    '2030-01-01T00:01:05.000Z',
+  );
+  assert.equal(
+    item.states.get(item.context.jobKey).next_action_at,
+    '2030-01-01T00:01:05.000Z',
+  );
   assert.equal(item.controller.isScheduled(item.context.jobKey), true);
   assert.equal(item.timers.length, 1);
   assert.equal(item.timers[0].delay, 60_000);
@@ -97,6 +123,29 @@ test('failed restore is not rearmed after the durable state becomes terminal', a
   assert.equal(await item.controller.run(item.context), false);
   assert.equal(item.controller.isScheduled(item.context.jobKey), false);
   assert.equal(item.timers.length, 0);
+  assert.deepEqual(item.persisted, []);
+});
+
+test('timer callback contains durable state read failures without unhandled rejection', async () => {
+  const item = fixture();
+  assert.equal(item.controller.schedule(item.context), true);
+  item.setNow(Date.parse('2030-01-01T00:00:05.000Z'));
+  item.setReadState(() => {
+    throw new Error('state read failed');
+  });
+
+  let unhandled = null;
+  const onUnhandled = (reason) => { unhandled = reason; };
+  process.once('unhandledRejection', onUnhandled);
+  try {
+    item.timers[0].callback();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(unhandled, null);
+    assert.ok(item.errors.includes('state read failed'));
+    assert.equal(item.controller.isScheduled(item.context.jobKey), false);
+  } finally {
+    process.off('unhandledRejection', onUnhandled);
+  }
 });
 
 test('all-mode recovery refuses stale state, removed schedules and replacement jobs', async () => {
