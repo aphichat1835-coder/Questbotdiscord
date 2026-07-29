@@ -27,6 +27,27 @@ const CIRCUIT_STATE = Object.freeze({
   OPEN: 'OPEN',
   HALF_OPEN: 'HALF_OPEN',
 });
+const CIRCUIT_STATE_RANK = new Map([
+  [CIRCUIT_STATE.CLOSED, 0],
+  [CIRCUIT_STATE.HALF_OPEN, 1],
+  [CIRCUIT_STATE.OPEN, 2],
+]);
+
+function mergeCircuitEntries(left, right) {
+  if (!left) return right ? { ...right } : null;
+  if (!right) return { ...left };
+  const state = (CIRCUIT_STATE_RANK.get(left.state) ?? 0)
+    >= (CIRCUIT_STATE_RANK.get(right.state) ?? 0)
+    ? left.state
+    : right.state;
+  return {
+    state,
+    failures: Math.max(left.failures ?? 0, right.failures ?? 0),
+    opens: Math.max(left.opens ?? 0, right.opens ?? 0),
+    openUntil: Math.max(left.openUntil ?? 0, right.openUntil ?? 0),
+    probeActive: Boolean(left.probeActive || right.probeActive),
+  };
+}
 
 export class RunnerMutationCheckpointError extends Error {
   constructor(stage, cause) {
@@ -315,11 +336,48 @@ export class DiscordRateLimitCoordinator {
     return this.routeBuckets.get(task.route) ?? task.route;
   }
 
+  circuitKeyFor(task, bucket, scope) {
+    return scope === 'user'
+      ? `${task.account}:${bucket}`
+      : `shared:${bucket}`;
+  }
+
   circuitKey(task) {
-    const bucket = this.resolvedBucket(task);
-    return this.routeScope(task) === 'shared'
-      ? `shared:${bucket}`
-      : `${task.account}:${bucket}`;
+    return this.circuitKeyFor(task, this.resolvedBucket(task), this.routeScope(task));
+  }
+
+  resetEntry(task, bucket, scope) {
+    return scope === 'user'
+      ? { map: this.accountBucketResetAt, key: `${task.account}:${bucket}` }
+      : { map: this.bucketResetAt, key: bucket };
+  }
+
+  migrateRouteState(task, previousBucket, previousScope) {
+    const nextBucket = this.resolvedBucket(task);
+    const nextScope = this.routeScope(task);
+    const previousCircuitKey = this.circuitKeyFor(task, previousBucket, previousScope);
+    const nextCircuitKey = this.circuitKeyFor(task, nextBucket, nextScope);
+    if (previousCircuitKey !== nextCircuitKey) {
+      const merged = mergeCircuitEntries(
+        this.circuits.get(previousCircuitKey),
+        this.circuits.get(nextCircuitKey),
+      );
+      if (merged) this.circuits.set(nextCircuitKey, merged);
+      this.circuits.delete(previousCircuitKey);
+    }
+
+    const previousReset = this.resetEntry(task, previousBucket, previousScope);
+    const nextReset = this.resetEntry(task, nextBucket, nextScope);
+    if (previousReset.map !== nextReset.map || previousReset.key !== nextReset.key) {
+      const previousResetAt = previousReset.map.get(previousReset.key);
+      if (previousResetAt != null) {
+        nextReset.map.set(
+          nextReset.key,
+          Math.max(nextReset.map.get(nextReset.key) ?? 0, previousResetAt),
+        );
+        previousReset.map.delete(previousReset.key);
+      }
+    }
   }
 
   circuitBlockedUntil(task) {
@@ -375,12 +433,9 @@ export class DiscordRateLimitCoordinator {
 
   setBucketReset(task, bucket, delay, scope) {
     if (delay <= 0) return;
-    const resetAt = this.now() + delay;
-    if (scope === 'user') {
-      this.accountBucketResetAt.set(`${task.account}:${bucket}`, resetAt);
-    } else {
-      this.bucketResetAt.set(bucket, resetAt);
-    }
+    const entry = this.resetEntry(task, bucket, scope);
+    const resetAt = Math.max(entry.map.get(entry.key) ?? 0, this.now() + delay);
+    entry.map.set(entry.key, resetAt);
     publishScheduleHint(task.account, {
       nextActionAt: new Date(resetAt).toISOString(),
       reason: 'rate-limit',
@@ -397,48 +452,64 @@ export class DiscordRateLimitCoordinator {
   }
 
   async updateRateLimitState(task, response) {
+    const previousBucket = this.resolvedBucket(task);
+    const previousScope = this.routeScope(task);
     const bucket = response.headers?.get?.('x-ratelimit-bucket');
     if (bucket) this.routeBuckets.set(task.route, bucket);
     const resolvedBucket = bucket ?? this.routeBuckets.get(task.route) ?? task.route;
-    const scope = String(
+    const announcedScope = String(
       response.headers?.get?.('x-ratelimit-scope')
-        ?? this.routeScopes.get(task.route)
-        ?? 'shared',
+        ?? previousScope,
     ).toLowerCase();
-    if (['user', 'shared', 'global'].includes(scope)) this.routeScopes.set(task.route, scope);
+    const scope = ['user', 'shared', 'global'].includes(announcedScope)
+      ? announcedScope
+      : previousScope;
+    this.routeScopes.set(task.route, scope);
+    this.migrateRouteState(task, previousBucket, previousScope);
+
     const remaining = headerNumber(response.headers, 'x-ratelimit-remaining');
     const shouldReadDelay = response.status === 429 || remaining === 0;
     const parsedDelay = shouldReadDelay ? await retryDelayMs(response) : 0;
     const delay = remaining === 0 && parsedDelay === 0
       ? RATE_LIMIT_FALLBACK_MS
       : parsedDelay;
-
-    if (remaining === 0 && delay > 0) this.setBucketReset(task, resolvedBucket, delay, scope);
+    const globalRateLimit = response.status === 429 && (
+      String(response.headers?.get?.('x-ratelimit-global')).toLowerCase() === 'true'
+      || scope === 'global'
+    );
 
     if (response.status === 429) {
       this.stats.rateLimited++;
       this.stats.lastRateLimitAt = new Date(this.now()).toISOString();
-      if (
-        String(response.headers?.get?.('x-ratelimit-global')).toLowerCase() === 'true'
-        || scope === 'global'
-      ) {
-        this.globalResetAt = this.now() + Math.max(RATE_LIMIT_FALLBACK_MS, delay);
-        this.stats.globalRateLimits++;
-        publishScheduleHint(task.account, {
+    }
+
+    if (globalRateLimit) {
+      this.globalResetAt = Math.max(
+        this.globalResetAt,
+        this.now() + Math.max(RATE_LIMIT_FALLBACK_MS, delay),
+      );
+      this.stats.globalRateLimits++;
+      if (task.jobKey) {
+        transitionRunnerState(task.jobKey, RUNNER_STATE.WAITING_RATE_LIMIT, {
           nextActionAt: new Date(this.globalResetAt).toISOString(),
-          reason: 'rate-limit',
-          priority: 98,
-          source: 'rate-limit',
-          expiresAt: new Date(this.globalResetAt + 60_000).toISOString(),
+          stateSource: 'rate-limit:global',
         });
-      } else {
-        this.setBucketReset(
-          task,
-          resolvedBucket,
-          Math.max(RATE_LIMIT_FALLBACK_MS, delay),
-          scope,
-        );
       }
+      publishScheduleHint(task.account, {
+        nextActionAt: new Date(this.globalResetAt).toISOString(),
+        reason: 'rate-limit',
+        priority: 98,
+        source: 'rate-limit',
+        expiresAt: new Date(this.globalResetAt + 60_000).toISOString(),
+      });
+      return;
+    }
+
+    const bucketDelay = response.status === 429
+      ? Math.max(RATE_LIMIT_FALLBACK_MS, delay)
+      : delay;
+    if ((remaining === 0 || response.status === 429) && bucketDelay > 0) {
+      this.setBucketReset(task, resolvedBucket, bucketDelay, scope);
     }
   }
 

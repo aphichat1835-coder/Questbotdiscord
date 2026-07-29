@@ -75,7 +75,7 @@ export function processLeaseName(role, holder = null) {
 
 export function acquireProcessRoleLease(role, holder, ttlMs = 90_000) {
   requireHolder(holder);
-  return acquireTopologyLease(requireRole(role), holder, ttlMs, Date.now());
+  return acquireTopologyLease.immediate(requireRole(role), holder, ttlMs, Date.now());
 }
 
 export function renewProcessRoleLease(role, holder, ttlMs = 90_000) {

@@ -167,6 +167,7 @@ function rememberQuestEndpointFailure(failures, error) {
 }
 
 function resolveQuestPayloadSearch(failures) {
+  if (failures.fatalError?.status === 401) throw failures.fatalError;
   if (failures.emptyCandidate) return failures.emptyCandidate;
   if (failures.fatalError) throw failures.fatalError;
   if (failures.lastError instanceof QuestCompatibilityError) throw failures.lastError;

@@ -90,7 +90,7 @@ export function acquireScheduledRunnerClaim(
   ttlMs = DEFAULT_SCHEDULED_CLAIM_TTL_MS,
   now = Date.now(),
 ) {
-  return acquireClaimTransaction(
+  return acquireClaimTransaction.immediate(
     normalizeScheduleId(scheduleId),
     requireHolder(holder),
     normalizeTtl(ttlMs),

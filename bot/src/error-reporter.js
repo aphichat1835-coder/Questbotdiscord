@@ -28,7 +28,7 @@ const INCIDENT_EVICTION_PRIORITY = new Map([
   ['open', 2],
   ['recovery_pending', 2],
 ]);
-const SENSITIVE_KEY = /authorization|token|secret|cookie|captcha|email|webhook|cipher|password/i;
+const SENSITIVE_KEY = /authorization|token|secret|cookie|captcha|email|webhook|cipher|password|(?:api|private|encryption|access|signing)[_.-]?key/i;
 
 const reporterStatus = {
   lastDeliveryAt: null,

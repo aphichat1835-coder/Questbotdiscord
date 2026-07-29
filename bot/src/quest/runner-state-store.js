@@ -142,52 +142,55 @@ function tableColumns(database, table) {
 }
 
 export function ensureRunnerStateSchema(database = db) {
-  database.exec(`
-    CREATE TABLE IF NOT EXISTS runner_states (
-      job_key                 TEXT PRIMARY KEY,
-      owner_id                TEXT NOT NULL,
-      account_id              TEXT,
-      username                TEXT,
-      mode                    TEXT NOT NULL,
-      schedule_id             INTEGER,
-      state                   TEXT NOT NULL,
-      quest_id                TEXT,
-      quest_name              TEXT,
-      progress                REAL,
-      next_action_at          TEXT,
-      retry_count             INTEGER NOT NULL DEFAULT 0,
-      last_error              TEXT,
-      metadata_json           TEXT,
-      checkpoint_version      INTEGER NOT NULL DEFAULT ${CHECKPOINT_VERSION},
-      quest_event             TEXT,
-      server_progress_seconds REAL,
-      mutation_kind           TEXT,
-      mutation_status         TEXT NOT NULL DEFAULT '${RUNNER_MUTATION_STATUS.NONE}',
-      mutation_payload_json   TEXT,
-      mutation_attempted_at   TEXT,
-      mutation_verified_at    TEXT,
-      error_category          TEXT,
-      state_source            TEXT NOT NULL DEFAULT 'legacy-observer',
-      started_at              TEXT NOT NULL DEFAULT (datetime('now')),
-      updated_at              TEXT NOT NULL DEFAULT (datetime('now')),
-      completed_at            TEXT
-    );
-  `);
+  const migrate = database.transaction(() => {
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS runner_states (
+        job_key                 TEXT PRIMARY KEY,
+        owner_id                TEXT NOT NULL,
+        account_id              TEXT,
+        username                TEXT,
+        mode                    TEXT NOT NULL,
+        schedule_id             INTEGER,
+        state                   TEXT NOT NULL,
+        quest_id                TEXT,
+        quest_name              TEXT,
+        progress                REAL,
+        next_action_at          TEXT,
+        retry_count             INTEGER NOT NULL DEFAULT 0,
+        last_error              TEXT,
+        metadata_json           TEXT,
+        checkpoint_version      INTEGER NOT NULL DEFAULT ${CHECKPOINT_VERSION},
+        quest_event             TEXT,
+        server_progress_seconds REAL,
+        mutation_kind           TEXT,
+        mutation_status         TEXT NOT NULL DEFAULT '${RUNNER_MUTATION_STATUS.NONE}',
+        mutation_payload_json   TEXT,
+        mutation_attempted_at   TEXT,
+        mutation_verified_at    TEXT,
+        error_category          TEXT,
+        state_source            TEXT NOT NULL DEFAULT 'legacy-observer',
+        started_at              TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at              TEXT NOT NULL DEFAULT (datetime('now')),
+        completed_at            TEXT
+      );
+    `);
 
-  const columns = tableColumns(database, 'runner_states');
-  for (const [name, declaration] of Object.entries(ADDITIVE_COLUMNS)) {
-    if (!columns.has(name)) database.exec(`ALTER TABLE runner_states ADD COLUMN ${name} ${declaration}`);
-  }
+    const columns = tableColumns(database, 'runner_states');
+    for (const [name, declaration] of Object.entries(ADDITIVE_COLUMNS)) {
+      if (!columns.has(name)) database.exec(`ALTER TABLE runner_states ADD COLUMN ${name} ${declaration}`);
+    }
 
-  database.exec(`
-    CREATE INDEX IF NOT EXISTS idx_runner_states_owner
-      ON runner_states(owner_id, updated_at DESC);
-    CREATE INDEX IF NOT EXISTS idx_runner_states_state
-      ON runner_states(state, next_action_at);
-    CREATE INDEX IF NOT EXISTS idx_runner_states_mutation
-      ON runner_states(mutation_status, mutation_kind, updated_at);
-  `);
-  return tableColumns(database, 'runner_states');
+    database.exec(`
+      CREATE INDEX IF NOT EXISTS idx_runner_states_owner
+        ON runner_states(owner_id, updated_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_runner_states_state
+        ON runner_states(state, next_action_at);
+      CREATE INDEX IF NOT EXISTS idx_runner_states_mutation
+        ON runner_states(mutation_status, mutation_kind, updated_at);
+    `);
+    return tableColumns(database, 'runner_states');
+  });
+  return migrate.immediate();
 }
 
 ensureRunnerStateSchema();
@@ -562,6 +565,14 @@ export function getRunnerState(jobKey) {
   return parseRunnerState(db.prepare(
     'SELECT * FROM runner_states WHERE job_key = ?',
   ).get(jobKey));
+}
+
+export function listStoppingScheduledRunnerStates() {
+  return db.prepare(`
+    SELECT * FROM runner_states
+    WHERE mode = 'scheduled' AND state = ?
+    ORDER BY updated_at ASC, job_key ASC
+  `).all(RUNNER_STATE.STOPPING).map(parseRunnerState);
 }
 
 export function listRunnerStates({ ownerId = null, activeOnly = false, limit = 100 } = {}) {

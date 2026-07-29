@@ -16,7 +16,7 @@ import {
 } from './scheduled-worker-claims.js';
 import {
   getRunnerState,
-  listRunnerStates,
+  listStoppingScheduledRunnerStates,
   RUNNER_STATE,
   transitionRunnerState,
 } from './runner-state-store.js';
@@ -267,8 +267,7 @@ function finalizeStops(rows, active, options) {
   const rowIds = new Set(rows.map((row) => Number(row.id)));
   const activeIds = new Set(active.map((job) => Number(job.scheduleId)));
   let finalized = 0;
-  for (const state of listRunnerStates({ activeOnly: true, limit: 500 })) {
-    if (state.mode !== 'scheduled' || state.state !== RUNNER_STATE.STOPPING) continue;
+  for (const state of listStoppingScheduledRunnerStates()) {
     const id = Number(state.schedule_id);
     if (rowIds.has(id) || activeIds.has(id)) continue;
     if (options.holder) options.releaseClaim(id, options.holder);
