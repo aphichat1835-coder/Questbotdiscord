@@ -22,7 +22,12 @@ const cases = [
   { label: 'connection refused', error: { code: 'ECONNREFUSED' }, expected: RUNNER_ERROR_CATEGORY.NETWORK },
   { label: 'DNS not found', error: { code: 'ENOTFOUND' }, expected: RUNNER_ERROR_CATEGORY.NETWORK },
   { label: 'temporary DNS failure', error: { code: 'EAI_AGAIN' }, expected: RUNNER_ERROR_CATEGORY.NETWORK },
-  { label: 'generic Error without HTTP status', error: new Error('socket closed'), expected: RUNNER_ERROR_CATEGORY.NETWORK },
+  { label: 'Undici code', error: { code: 'UND_ERR_CONNECT_TIMEOUT' }, expected: RUNNER_ERROR_CATEGORY.NETWORK },
+  { label: 'Undici cause code', error: { cause: { code: 'UND_ERR_SOCKET' } }, expected: RUNNER_ERROR_CATEGORY.NETWORK },
+  { label: 'known network cause code', error: { cause: { code: 'ECONNRESET' } }, expected: RUNNER_ERROR_CATEGORY.NETWORK },
+  { label: 'fetch failed message', error: new TypeError('fetch failed'), expected: RUNNER_ERROR_CATEGORY.NETWORK },
+  { label: 'generic Error without network evidence', error: new Error('invariant violated'), expected: RUNNER_ERROR_CATEGORY.UNKNOWN },
+  { label: 'programming TypeError', error: new TypeError('cannot read property'), expected: RUNNER_ERROR_CATEGORY.UNKNOWN },
   { label: 'unknown plain value', error: { code: 'OTHER' }, expected: RUNNER_ERROR_CATEGORY.UNKNOWN },
   { label: 'null', error: null, expected: RUNNER_ERROR_CATEGORY.UNKNOWN },
 ];
