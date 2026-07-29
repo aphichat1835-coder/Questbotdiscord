@@ -1,0 +1,242 @@
+name: Sync final audit documentation
+
+on:
+  push:
+    branches:
+      - aa.1
+    paths:
+      - .github/workflows/sync-final-audit-docs.yml
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    if: github.event.head_commit.message == 'chore add one-shot final audit documentation sync'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout aa.1
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: aa.1
+          fetch-depth: 0
+
+      - name: Sync architecture and production checklist
+        shell: bash
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+
+          def replace_once(path, old, new, label):
+              file = Path(path)
+              source = file.read_text(encoding='utf-8')
+              count = source.count(old)
+              if count != 1:
+                  raise SystemExit(f'{path} [{label}] expected one target, found {count}')
+              file.write_text(source.replace(old, new, 1), encoding='utf-8')
+
+          replace_once(
+              'bot/QUEST-ENGINE.md',
+              """├─ all-mode-recovery.js
+          ├─ claim-retry-policy.js
+          ├─ durable-mutation-verifier.js
+          ├─ rate-limit-coordinator.js
+          ├─ recovery-planner.js
+          ├─ runner-completion-observer.js
+          ├─ runner-completion-release.js
+          ├─ runner-execution-context.js
+          ├─ runner-ownership-guard.js
+          ├─ runner-state-observer.js
+          ├─ runner-state-store.js
+          ├─ schedule-hint-bus.js
+          ├─ scheduled-restore.js
+          ├─ scheduled-worker-claims.js
+          ├─ scheduled-worker-reconciler.js
+          ├─ scheduled-worker-supervisor.js
+          ├─ smart-scheduler.js
+          └─ smart-wake-controller.js""",
+              """├─ all-mode-recovery.js
+          ├─ claim-retry-policy.js
+          ├─ discord-api-runtime.js
+          ├─ durable-mutation-verifier.js
+          ├─ rate-limit-coordinator.js
+          ├─ recovery-fetch.js
+          ├─ recovery-planner.js
+          ├─ runner-completion-observer.js
+          ├─ runner-completion-release.js
+          ├─ runner-execution-context.js
+          ├─ runner-ownership-guard.js
+          ├─ runner-start-rollback.js
+          ├─ runner-state-observer.js
+          ├─ runner-state-store.js
+          ├─ schedule-hint-bus.js
+          ├─ scheduled-restore.js
+          ├─ scheduled-worker-claims.js
+          ├─ scheduled-worker-reconciler.js
+          ├─ scheduled-worker-supervisor.js
+          ├─ smart-scheduler.js
+          ├─ smart-wake-controller.js
+          └─ worker-discord-client.js""",
+              'module tree',
+          )
+
+          replace_once(
+              'bot/QUEST-ENGINE.md',
+              """- All-in-one delayed recovery → `quest/all-mode-recovery.js`
+          - Completion settlement → `quest/runner-completion-observer.js`""",
+              """- All-in-one delayed recovery → `quest/all-mode-recovery.js`
+          - Transient durable recovery fetch policy → `quest/recovery-fetch.js`
+          - Post-start rollback → `quest/runner-start-rollback.js`
+          - Standalone Worker Discord REST output → `quest/worker-discord-client.js`
+          - Completion settlement → `quest/runner-completion-observer.js`""",
+              'source of truth',
+          )
+
+          replace_once(
+              'bot/QUEST-ENGINE.md',
+              """- Control และ Workers ต้องใช้ SQLite ไฟล์เดียวกันจริง
+
+          Shutdown order:""",
+              """- Control และ Workers ต้องใช้ SQLite ไฟล์เดียวกันจริง
+          - SQLite ใช้ `busy_timeout=5000` เพื่อรอ Write contention แบบมีขอบเขต
+          - Schema migration, Runtime lease และ Scheduled claim acquisition ใช้ Immediate transaction เพื่อ Serialize การแย่งสิทธิ์ข้าม Process
+
+          Shutdown order:""",
+              'sqlite contention policy',
+          )
+
+          old_evidence = """Validated implementation HEAD ก่อน Documentation-only sync:
+
+          `cf93dbd37659405c112aa5bc0b1f466aa43d1c5b`
+
+          GitHub Actions CI ของ Implementation HEAD นี้:
+
+          - `#1446` — Success
+          - `#1447` — Success
+
+          ผลจาก Artifact ของ CI #1447:
+
+          - 412 tests passed
+          - 0 failed
+          - 0 cancelled
+          - 0 skipped
+          - 0 todo
+          - Coverage: 93.62% lines / 84.87% branches / 89.30% functions
+          - Mutation baseline และ Mutation safety scripts ผ่านทุกชุด
+          - Dedicated recovery metadata mutation ถูก Kill
+          - Mutation scripts คืน Source ครบ
+          - Repository shape ผ่าน
+          - Sanitized Quest fixture ผ่าน
+          - Backup destinations ผ่าน
+          - Incident/storage boundaries ผ่าน
+          - JS/MJS/Bash syntax ผ่าน
+          - Production dependency audit ระดับ High ผ่าน
+
+          Static-analysis cleanup รอบนี้ครอบคลุม:
+
+          - ลด Cognitive Complexity ของ Quest endpoint fallback และ Scheduled worker reconciliation
+          - แยก Runner status parsing ออกจาก State transition และตัด Regex ที่เสี่ยง Backtracking
+          - แยก Runner error classification พร้อม Table tests ที่ล็อก Priority
+          - แยก `/api-status` เป็น Snapshot และ Pure Embed builder พร้อม Behavior test
+          - เอา Empty spread fallbacks และ Array spreads ที่ไม่จำเป็นออก
+          - เปลี่ยน `NaN` เป็น `Number.NaN` และใช้ `toSorted()` โดยไม่ Mutate Array เดิม
+          - แก้ URL/Request stringification ใน Tests ให้ตรวจชนิดก่อน
+          - เพิ่ม Default branch และ stderr handling ให้ Mutation shell scripts
+          - รักษาลำดับ Claim heartbeat, Cleanup และ Ownership revalidation เดิม
+
+          External status ที่ยืนยันบน Implementation HEAD/PR static-analysis surface:
+
+          - Snyk: Success
+          - CodeRabbit commit status: Success
+          - CodeRabbit inline review threads ของ PR #15: Resolved
+          - Codacy PR #16: Up to standards / 0 new issues
+          - SonarCloud current-head result: ยังต้องยืนยันหลัง Scan รอบล่าสุด
+
+          Documentation-only commits หลัง Implementation HEAD นี้ต้องผ่าน CI ของตัวเอง แต่ไม่เปลี่ยนผล Implementation evidence ข้างต้น เว้นแต่มีการแก้ Source หรือ Test codeเพิ่ม"""
+
+          new_evidence = """Validated implementation HEAD ก่อน Final documentation sync:
+
+          `45e508c08ef9e15c10acefb22dbb7ce15462bf3a`
+
+          GitHub Actions CI ของ Implementation HEAD นี้:
+
+          - `#1739` — Success
+          - `#1740` — Success
+
+          ผลจาก Artifact ของ CI #1740:
+
+          - 462 tests passed
+          - 0 failed
+          - 0 cancelled
+          - 0 skipped
+          - 0 todo
+          - Coverage: 93.78% lines / 85.22% branches / 89.28% functions
+          - LCOV generated: 393,076 bytes
+          - Mutation baseline ผ่าน
+          - Critical mutation groups 14/14, 15/15 และ 26/26 ถูก Kill
+          - Dedicated recovery metadata mutation ถูก Kill
+          - Mutation scripts คืน Source ครบ
+          - Repository shape ผ่าน
+          - Sanitized Quest fixture ผ่าน
+          - Backup destinations ผ่าน
+          - Incident/storage boundaries ผ่าน
+          - JS/MJS/Bash syntax ผ่าน
+          - Production dependency audit ระดับ High ผ่าน
+
+          Full-source audit รอบนี้เพิ่มการตรวจและ Regression coverage สำหรับ:
+
+          - Worker readiness และ Startup rollback
+          - SQLite busy timeout, Immediate migration/lease/claim transactions และ STOPPING มากกว่า 500 แถว
+          - Route-to-bucket remapping, Scope migration, Global 429 durable deadline และ Queue cancellation
+          - CAPTCHA heartbeat, Fatal auth precedence และ malformed Headers
+          - Durable recovery fetch deferral และ All-mode retry persistence
+          - Backup/Incident recovery lifecycle, recurrence during recovery และ Discord embed total budget
+          - Credential redaction, `/api-status` privacy และ explicit `emergency:false`
+          - Shutdown isolation, Worker REST timeout, Fetch Promise semantics และ Execution-context remapping
+          - README permissions, Environment defaults และ Architecture boundary parsing
+
+          External scanners ต้องยืนยันซ้ำบน Final documentation HEAD; CI-based Sonar จะถูก Skip หาก Repository ไม่มี `SONAR_TOKEN`
+
+          Documentation-only commits หลัง Implementation HEAD นี้ต้องผ่าน CI ของตัวเอง แต่ไม่เปลี่ยนผล Implementation evidence ข้างต้น"""
+
+          replace_once('bot/QUEST-ENGINE.md', old_evidence, new_evidence, 'final evidence')
+
+          replace_once(
+              'bot/PRODUCTION-CHECKLIST.md',
+              """- [ ] Worker อื่น Takeover ได้หลัง Claim หมดอายุ
+          - [ ] ไม่ใช้ Local disk แยกกันเป็น Shared topology""",
+              """- [ ] Worker อื่น Takeover ได้หลัง Claim หมดอายุ
+          - [ ] SQLite `busy_timeout` เป็น 5000 ms
+          - [ ] Schema migration, Runtime lease และ Scheduled claim acquisition Serialize ด้วย Immediate transaction
+          - [ ] ไม่ใช้ Local disk แยกกันเป็น Shared topology""",
+              'topology checklist',
+          )
+
+          replace_once(
+              'bot/PRODUCTION-CHECKLIST.md',
+              """- [ ] Global 429 หยุด Queue ทั้งหมด
+          - [ ] Authorization เป็น Fingerprint ไม่ใช่ Raw token""",
+              """- [ ] Global 429 หยุด Queue ทั้งหมดและ Persist `next_action_at` ที่ตรงกับ Server delay
+          - [ ] Route-to-bucket และ Scope remapping ย้าย Reset/Circuit state โดยไม่ทิ้ง State เก่า
+          - [ ] Authorization เป็น Fingerprint ไม่ใช่ Raw token""",
+              'rate limit checklist',
+          )
+
+          replace_once(
+              'bot/PRODUCTION-CHECKLIST.md',
+              """- [ ] Recovery fetch ที่จบระหว่าง `FETCHING_QUESTS` → `WAITING_RETRY`
+          - [ ] Recovery plan ต้องรักษา Diagnostic metadata เดิม""",
+              """- [ ] Transient recovery fetch ถูก Defer เข้า Normal loop; Abort และ Fatal auth ยังเป็น Terminal ตาม Policy
+          - [ ] Recovery plan ต้องรักษา Diagnostic metadata เดิม""",
+              'recovery checklist',
+          )
+          PY
+
+      - name: Commit and push documentation
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add bot/QUEST-ENGINE.md bot/PRODUCTION-CHECKLIST.md
+          git commit -m "docs: sync final full-audit architecture evidence"
+          git push origin HEAD:aa.1
