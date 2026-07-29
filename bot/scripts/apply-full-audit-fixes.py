@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 from pathlib import Path
+import subprocess
 
 
 def replace_once(path: str, old: str, new: str) -> None:
@@ -12,454 +13,345 @@ def replace_once(path: str, old: str, new: str) -> None:
 
 
 replace_once(
-    'src/error-reporter.js',
-    "const SENSITIVE_KEY = /authorization|token|secret|cookie|captcha|email|webhook|cipher|password/i;",
-    "const SENSITIVE_KEY = /authorization|token|secret|cookie|captcha|email|webhook|cipher|password|(?:api|private|encryption|access|signing)[_.-]?key/i;",
-)
-
-replace_once(
-    'src/quest/api/discord-client.js',
-    """function resolveQuestPayloadSearch(failures) {
-  if (failures.emptyCandidate) return failures.emptyCandidate;
-  if (failures.fatalError) throw failures.fatalError;
-  if (failures.lastError instanceof QuestCompatibilityError) throw failures.lastError;
-  throw new QuestCompatibilityError(
-    `Quest API endpoints unavailable: ${failures.lastError?.message ?? 'unknown error'}`,
-    { code: 'QUEST_ENDPOINTS_UNAVAILABLE' },
-  );
-}""",
-    """function resolveQuestPayloadSearch(failures) {
-  if (failures.fatalError?.status === 401) throw failures.fatalError;
-  if (failures.emptyCandidate) return failures.emptyCandidate;
-  if (failures.fatalError) throw failures.fatalError;
-  if (failures.lastError instanceof QuestCompatibilityError) throw failures.lastError;
-  throw new QuestCompatibilityError(
-    `Quest API endpoints unavailable: ${failures.lastError?.message ?? 'unknown error'}`,
-    { code: 'QUEST_ENDPOINTS_UNAVAILABLE' },
-  );
-}""",
-)
-
-replace_once(
-    'src/db.js',
-    """    const database = new Database(dbPath);
-    database.pragma('journal_mode = WAL');
-    database.pragma('foreign_keys = ON');""",
-    """    const database = new Database(dbPath);
-    database.pragma('busy_timeout = 5000');
-    database.pragma('journal_mode = WAL');
-    database.pragma('foreign_keys = ON');""",
-)
-replace_once(
-    'src/db.js',
-    '  return acquireRuntimeLeaseTransaction(name, holder, ttlMs, Date.now());',
-    '  return acquireRuntimeLeaseTransaction.immediate(name, holder, ttlMs, Date.now());',
-)
-
-replace_once(
-    'src/process-topology.js',
-    '  return acquireTopologyLease(requireRole(role), holder, ttlMs, Date.now());',
-    '  return acquireTopologyLease.immediate(requireRole(role), holder, ttlMs, Date.now());',
-)
-
-replace_once(
-    'src/quest/scheduled-worker-claims.js',
-    """  return acquireClaimTransaction(
-    normalizeScheduleId(scheduleId),""",
-    """  return acquireClaimTransaction.immediate(
-    normalizeScheduleId(scheduleId),""",
-)
-
-replace_once(
-    'src/quest/runner-state-store.js',
-    """export function ensureRunnerStateSchema(database = db) {
-  database.exec(`
-    CREATE TABLE IF NOT EXISTS runner_states (
-      job_key                 TEXT PRIMARY KEY,
-      owner_id                TEXT NOT NULL,
-      account_id              TEXT,
-      username                TEXT,
-      mode                    TEXT NOT NULL,
-      schedule_id             INTEGER,
-      state                   TEXT NOT NULL,
-      quest_id                TEXT,
-      quest_name              TEXT,
-      progress                REAL,
-      next_action_at          TEXT,
-      retry_count             INTEGER NOT NULL DEFAULT 0,
-      last_error              TEXT,
-      metadata_json           TEXT,
-      checkpoint_version      INTEGER NOT NULL DEFAULT ${CHECKPOINT_VERSION},
-      quest_event             TEXT,
-      server_progress_seconds REAL,
-      mutation_kind           TEXT,
-      mutation_status         TEXT NOT NULL DEFAULT '${RUNNER_MUTATION_STATUS.NONE}',
-      mutation_payload_json   TEXT,
-      mutation_attempted_at   TEXT,
-      mutation_verified_at    TEXT,
-      error_category          TEXT,
-      state_source            TEXT NOT NULL DEFAULT 'legacy-observer',
-      started_at              TEXT NOT NULL DEFAULT (datetime('now')),
-      updated_at              TEXT NOT NULL DEFAULT (datetime('now')),
-      completed_at            TEXT
-    );
-  `);
-
-  const columns = tableColumns(database, 'runner_states');
-  for (const [name, declaration] of Object.entries(ADDITIVE_COLUMNS)) {
-    if (!columns.has(name)) database.exec(`ALTER TABLE runner_states ADD COLUMN ${name} ${declaration}`);
-  }
-
-  database.exec(`
-    CREATE INDEX IF NOT EXISTS idx_runner_states_owner
-      ON runner_states(owner_id, updated_at DESC);
-    CREATE INDEX IF NOT EXISTS idx_runner_states_state
-      ON runner_states(state, next_action_at);
-    CREATE INDEX IF NOT EXISTS idx_runner_states_mutation
-      ON runner_states(mutation_status, mutation_kind, updated_at);
-  `);
-  return tableColumns(database, 'runner_states');
-}""",
-    """export function ensureRunnerStateSchema(database = db) {
-  const migrate = database.transaction(() => {
-    database.exec(`
-      CREATE TABLE IF NOT EXISTS runner_states (
-        job_key                 TEXT PRIMARY KEY,
-        owner_id                TEXT NOT NULL,
-        account_id              TEXT,
-        username                TEXT,
-        mode                    TEXT NOT NULL,
-        schedule_id             INTEGER,
-        state                   TEXT NOT NULL,
-        quest_id                TEXT,
-        quest_name              TEXT,
-        progress                REAL,
-        next_action_at          TEXT,
-        retry_count             INTEGER NOT NULL DEFAULT 0,
-        last_error              TEXT,
-        metadata_json           TEXT,
-        checkpoint_version      INTEGER NOT NULL DEFAULT ${CHECKPOINT_VERSION},
-        quest_event             TEXT,
-        server_progress_seconds REAL,
-        mutation_kind           TEXT,
-        mutation_status         TEXT NOT NULL DEFAULT '${RUNNER_MUTATION_STATUS.NONE}',
-        mutation_payload_json   TEXT,
-        mutation_attempted_at   TEXT,
-        mutation_verified_at    TEXT,
-        error_category          TEXT,
-        state_source            TEXT NOT NULL DEFAULT 'legacy-observer',
-        started_at              TEXT NOT NULL DEFAULT (datetime('now')),
-        updated_at              TEXT NOT NULL DEFAULT (datetime('now')),
-        completed_at            TEXT
-      );
-    `);
-
-    const columns = tableColumns(database, 'runner_states');
-    for (const [name, declaration] of Object.entries(ADDITIVE_COLUMNS)) {
-      if (!columns.has(name)) database.exec(`ALTER TABLE runner_states ADD COLUMN ${name} ${declaration}`);
+    'src/worker.js',
+    """  } catch (error) {
+    if (backupHealth.recoveryPending) {
+      backupHealth.recoveryPending = false;
+      backupHealth.incidentOpen = false;
     }
+    backupHealth.state = 'degraded';""",
+    """  } catch (error) {
+    backupHealth.state = 'degraded';""",
+)
 
-    database.exec(`
-      CREATE INDEX IF NOT EXISTS idx_runner_states_owner
-        ON runner_states(owner_id, updated_at DESC);
-      CREATE INDEX IF NOT EXISTS idx_runner_states_state
-        ON runner_states(state, next_action_at);
-      CREATE INDEX IF NOT EXISTS idx_runner_states_mutation
-        ON runner_states(mutation_status, mutation_kind, updated_at);
-    `);
-    return tableColumns(database, 'runner_states');
-  });
-  return migrate.immediate();
-}""",
+replace_once(
+    'src/discord-runner.js',
+    """import { verifyRunnerMutationFromQuests } from './quest/durable-mutation-verifier.js';
+import {
+  getRunnerState,""",
+    """import { verifyRunnerMutationFromQuests } from './quest/durable-mutation-verifier.js';
+import { fetchDurableRecoveryQuests } from './quest/recovery-fetch.js';
+import {
+  getRunnerState,""",
+)
+
+replace_once(
+    'src/discord-runner.js',
+    """    const quests = await fetchQuests(userToken, signal);
+    if (recoveryPlan.action === 'VERIFY_MUTATION') {""",
+    """    const quests = await fetchDurableRecoveryQuests({
+      fetchQuests,
+      userToken,
+      signal,
+      isFatalAuthError,
+      onDeferred: async () => {
+        addLog(`⚠️ ${username}: RECOVERY DEFERRED — RETRY IN NORMAL LOOP`);
+        await render();
+      },
+    });
+    if (!quests) return;
+    if (recoveryPlan.action === 'VERIFY_MUTATION') {""",
+)
+
+replace_once(
+    'src/bootstrap.js',
+    """import { reportBootstrapIncident } from './bootstrap-reporter.js';
+
+export const FATAL_REPORT_BUDGET_MS = 3500;""",
+    """import { reportBootstrapIncident } from './bootstrap-reporter.js';
+import { redactText } from './redaction.js';
+
+export const FATAL_REPORT_BUDGET_MS = 3500;""",
+)
+
+replace_once(
+    'src/bootstrap.js',
+    """export async function fatalBootstrapShutdown({
+  code = INCIDENT.CLIENT_STARTUP_FAILED,
+  error,
+  context = {},
+} = {}) {
+  if (fatalBootstrapPromise) return fatalBootstrapPromise;
+  const report = reportBootstrapIncident({ code, error, context })""",
+    """export async function fatalBootstrapShutdown({
+  code = INCIDENT.CLIENT_STARTUP_FAILED,
+  error,
+  context = {},
+} = {}) {
+  if (fatalBootstrapPromise) {
+    let serializedContext;
+    try {
+      serializedContext = JSON.stringify(context);
+    } catch {
+      serializedContext = String(context);
+    }
+    console.error(
+      `❌ [Bootstrap ${code} suppressed - fatal shutdown already in progress]`,
+      redactText(error?.stack || error?.message || error),
+      redactText(serializedContext, { fallback: '{}' }),
+    );
+    return fatalBootstrapPromise;
+  }
+  const report = reportBootstrapIncident({ code, error, context })""",
 )
 
 replace_once(
     'src/quest/runner-state-store.js',
-    """export function getRunnerState(jobKey) {
-  return parseRunnerState(db.prepare(
-    'SELECT * FROM runner_states WHERE job_key = ?',
-  ).get(jobKey));
+    """function classifyCodeRunnerError(error) {
+  const code = String(error?.code ?? '');
+  if (code.startsWith('SQLITE_')) return RUNNER_ERROR_CATEGORY.STORAGE;
+  if (NETWORK_ERROR_CODES.has(code)) return RUNNER_ERROR_CATEGORY.NETWORK;
+  return null;
 }
 
-export function listRunnerStates({ ownerId = null, activeOnly = false, limit = 100 } = {}) {""",
-    """export function getRunnerState(jobKey) {
-  return parseRunnerState(db.prepare(
-    'SELECT * FROM runner_states WHERE job_key = ?',
-  ).get(jobKey));
+export function classifyRunnerError(error) {
+  const category = classifyNamedRunnerError(error)
+    ?? classifyHttpRunnerError(error)
+    ?? classifyCodeRunnerError(error);
+  if (category) return category;
+  if (!Number.isInteger(error?.status) && error instanceof Error) {
+    return RUNNER_ERROR_CATEGORY.NETWORK;
+  }
+  return RUNNER_ERROR_CATEGORY.UNKNOWN;
+}""",
+    """function classifyCodeRunnerError(error) {
+  for (const rawCode of [error?.code, error?.cause?.code]) {
+    const code = String(rawCode ?? '');
+    if (code.startsWith('SQLITE_')) return RUNNER_ERROR_CATEGORY.STORAGE;
+    if (NETWORK_ERROR_CODES.has(code) || code.startsWith('UND_ERR_')) {
+      return RUNNER_ERROR_CATEGORY.NETWORK;
+    }
+  }
+  return null;
 }
 
-export function listStoppingScheduledRunnerStates() {
-  return db.prepare(`
-    SELECT * FROM runner_states
-    WHERE mode = 'scheduled' AND state = ?
-    ORDER BY updated_at ASC, job_key ASC
-  `).all(RUNNER_STATE.STOPPING).map(parseRunnerState);
-}
-
-export function listRunnerStates({ ownerId = null, activeOnly = false, limit = 100 } = {}) {""",
+export function classifyRunnerError(error) {
+  const category = classifyNamedRunnerError(error)
+    ?? classifyHttpRunnerError(error)
+    ?? classifyCodeRunnerError(error);
+  if (category) return category;
+  if (error?.message === 'fetch failed') return RUNNER_ERROR_CATEGORY.NETWORK;
+  return RUNNER_ERROR_CATEGORY.UNKNOWN;
+}""",
 )
 
 replace_once(
-    'src/quest/scheduled-worker-reconciler.js',
-    """  getRunnerState,
-  listRunnerStates,
-  RUNNER_STATE,""",
-    """  getRunnerState,
-  listStoppingScheduledRunnerStates,
-  RUNNER_STATE,""",
-)
-replace_once(
-    'src/quest/scheduled-worker-reconciler.js',
-    """  for (const state of listRunnerStates({ activeOnly: true, limit: 500 })) {
-    if (state.mode !== 'scheduled' || state.state !== RUNNER_STATE.STOPPING) continue;""",
-    """  for (const state of listStoppingScheduledRunnerStates()) {""",
-)
+    'src/error-reporter.js',
+    """export function buildIncidentWebhookPayload({
+  code,
+  error = null,
+  context = {},
+  incidentId = createIncidentId(),
+  status = 'DETECTED',
+  occurrences = 1,
+} = {}) {
+  const definition = getIncidentDefinition(code);
+  const details = status === 'RECOVERED'
+    ? 'ระบบกลับมาทำงานภายในเกณฑ์ที่กำหนดแล้ว'
+    : [safeErrorMessage(error), safeErrorStack(error)].filter(Boolean).join('\n');
 
-replace_once(
-    'src/quest/rate-limit-coordinator.js',
-    """const CIRCUIT_STATE = Object.freeze({
-  CLOSED: 'CLOSED',
-  OPEN: 'OPEN',
-  HALF_OPEN: 'HALF_OPEN',
-});""",
-    """const CIRCUIT_STATE = Object.freeze({
-  CLOSED: 'CLOSED',
-  OPEN: 'OPEN',
-  HALF_OPEN: 'HALF_OPEN',
-});
-const CIRCUIT_STATE_RANK = new Map([
-  [CIRCUIT_STATE.CLOSED, 0],
-  [CIRCUIT_STATE.HALF_OPEN, 1],
-  [CIRCUIT_STATE.OPEN, 2],
-]);
-
-function mergeCircuitEntries(left, right) {
-  if (!left) return right ? { ...right } : null;
-  if (!right) return { ...left };
-  const state = (CIRCUIT_STATE_RANK.get(left.state) ?? 0)
-    >= (CIRCUIT_STATE_RANK.get(right.state) ?? 0)
-    ? left.state
-    : right.state;
   return {
-    state,
-    failures: Math.max(left.failures ?? 0, right.failures ?? 0),
-    opens: Math.max(left.opens ?? 0, right.opens ?? 0),
-    openUntil: Math.max(left.openUntil ?? 0, right.openUntil ?? 0),
-    probeActive: Boolean(left.probeActive || right.probeActive),
+    username: 'Quest Bot Backend',
+    allowed_mentions: { parse: [] },
+    embeds: [{
+      title: `${status === 'RECOVERED' ? '✅' : '🚨'} ${definition.title}`,
+      description: codeBlock(details, 2200),
+      color: status === 'RECOVERED' ? 0x57F287 : 0xED4245,
+      fields: incidentFields({ code, incidentId, status, context, occurrences }),
+      footer: { text: 'NeverDie Quest Bot · Backend Incident Log' },
+      timestamp: new Date().toISOString(),
+    }],
+  };
+}""",
+    """function fitIncidentEmbedText(title, details, fields, footerText) {
+  const boundedFields = fields.map((field) => ({ ...field }));
+  const fixedLength = () => title.length + footerText.length + boundedFields.reduce(
+    (total, field) => total + field.name.length + field.value.length,
+    0,
+  );
+  let overflow = Math.max(0, fixedLength() + 8 - 6000);
+  for (let index = boundedFields.length - 1; index >= 0 && overflow > 0; index--) {
+    const removable = Math.max(0, boundedFields[index].value.length - 1);
+    const removed = Math.min(removable, overflow);
+    if (removed > 0) {
+      boundedFields[index].value = boundedFields[index].value.slice(0, -removed);
+      overflow -= removed;
+    }
+  }
+  const descriptionBudget = Math.max(8, Math.min(4096, 6000 - fixedLength()));
+  return {
+    fields: boundedFields,
+    description: codeBlock(details, Math.max(0, descriptionBudget - 8)),
+  };
+}
+
+export function buildIncidentWebhookPayload({
+  code,
+  error = null,
+  context = {},
+  incidentId = createIncidentId(),
+  status = 'DETECTED',
+  occurrences = 1,
+} = {}) {
+  const definition = getIncidentDefinition(code);
+  const details = status === 'RECOVERED'
+    ? 'ระบบกลับมาทำงานภายในเกณฑ์ที่กำหนดแล้ว'
+    : [safeErrorMessage(error), safeErrorStack(error)].filter(Boolean).join('\n');
+  const title = `${status === 'RECOVERED' ? '✅' : '🚨'} ${definition.title}`;
+  const footerText = 'NeverDie Quest Bot · Backend Incident Log';
+  const fitted = fitIncidentEmbedText(
+    title,
+    details,
+    incidentFields({ code, incidentId, status, context, occurrences }),
+    footerText,
+  );
+
+  return {
+    username: 'Quest Bot Backend',
+    allowed_mentions: { parse: [] },
+    embeds: [{
+      title,
+      description: fitted.description,
+      color: status === 'RECOVERED' ? 0x57F287 : 0xED4245,
+      fields: fitted.fields,
+      footer: { text: footerText },
+      timestamp: new Date().toISOString(),
+    }],
   };
 }""",
 )
 
 replace_once(
-    'src/quest/rate-limit-coordinator.js',
-    """  circuitKey(task) {
-    const bucket = this.resolvedBucket(task);
-    return this.routeScope(task) === 'shared'
-      ? `shared:${bucket}`
-      : `${task.account}:${bucket}`;
-  }
-
-  circuitBlockedUntil(task) {""",
-    """  circuitKeyFor(task, bucket, scope) {
-    return scope === 'user'
-      ? `${task.account}:${bucket}`
-      : `shared:${bucket}`;
-  }
-
-  circuitKey(task) {
-    return this.circuitKeyFor(task, this.resolvedBucket(task), this.routeScope(task));
-  }
-
-  resetEntry(task, bucket, scope) {
-    return scope === 'user'
-      ? { map: this.accountBucketResetAt, key: `${task.account}:${bucket}` }
-      : { map: this.bucketResetAt, key: bucket };
-  }
-
-  migrateRouteState(task, previousBucket, previousScope) {
-    const nextBucket = this.resolvedBucket(task);
-    const nextScope = this.routeScope(task);
-    const previousCircuitKey = this.circuitKeyFor(task, previousBucket, previousScope);
-    const nextCircuitKey = this.circuitKeyFor(task, nextBucket, nextScope);
-    if (previousCircuitKey !== nextCircuitKey) {
-      const merged = mergeCircuitEntries(
-        this.circuits.get(previousCircuitKey),
-        this.circuits.get(nextCircuitKey),
-      );
-      if (merged) this.circuits.set(nextCircuitKey, merged);
-      this.circuits.delete(previousCircuitKey);
-    }
-
-    const previousReset = this.resetEntry(task, previousBucket, previousScope);
-    const nextReset = this.resetEntry(task, nextBucket, nextScope);
-    if (previousReset.map !== nextReset.map || previousReset.key !== nextReset.key) {
-      const previousResetAt = previousReset.map.get(previousReset.key);
-      if (previousResetAt != null) {
-        nextReset.map.set(
-          nextReset.key,
-          Math.max(nextReset.map.get(nextReset.key) ?? 0, previousResetAt),
-        );
-        previousReset.map.delete(previousReset.key);
-      }
-    }
-  }
-
-  circuitBlockedUntil(task) {""",
+    'src/error-reporter.js',
+    """function suppressIncident(incident, code, now, state = 'suppressed') {
+  incident.occurrences++;
+  incident.lastSeenAt = now;
+  reporterStatus.suppressedIncidents++;""",
+    """function suppressIncident(incident, code, now, state = 'suppressed') {
+  incident.occurrences++;
+  incident.lastSeenAt = now;
+  if (incident.state === 'recovering') incident.reoccurredDuringRecovery = true;
+  reporterStatus.suppressedIncidents++;""",
 )
 
 replace_once(
-    'src/quest/rate-limit-coordinator.js',
-    """  setBucketReset(task, bucket, delay, scope) {
-    if (delay <= 0) return;
-    const resetAt = this.now() + delay;
-    if (scope === 'user') {
-      this.accountBucketResetAt.set(`${task.account}:${bucket}`, resetAt);
-    } else {
-      this.bucketResetAt.set(bucket, resetAt);
-    }
-    publishScheduleHint(task.account, {
-      nextActionAt: new Date(resetAt).toISOString(),
-      reason: 'rate-limit',
-      priority: 98,
-      source: 'rate-limit',
-      expiresAt: new Date(resetAt + 60_000).toISOString(),
-    });
-    if (task.jobKey) {
-      transitionRunnerState(task.jobKey, RUNNER_STATE.WAITING_RATE_LIMIT, {
-        nextActionAt: new Date(resetAt).toISOString(),
-        stateSource: `rate-limit:${scope}`,
-      });
-    }
-  }""",
-    """  setBucketReset(task, bucket, delay, scope) {
-    if (delay <= 0) return;
-    const entry = this.resetEntry(task, bucket, scope);
-    const resetAt = Math.max(entry.map.get(entry.key) ?? 0, this.now() + delay);
-    entry.map.set(entry.key, resetAt);
-    publishScheduleHint(task.account, {
-      nextActionAt: new Date(resetAt).toISOString(),
-      reason: 'rate-limit',
-      priority: 98,
-      source: 'rate-limit',
-      expiresAt: new Date(resetAt + 60_000).toISOString(),
-    });
-    if (task.jobKey) {
-      transitionRunnerState(task.jobKey, RUNNER_STATE.WAITING_RATE_LIMIT, {
-        nextActionAt: new Date(resetAt).toISOString(),
-        stateSource: `rate-limit:${scope}`,
-      });
-    }
-  }""",
+    'src/error-reporter.js',
+    """    nextRetryAt: null,
+    state: 'new',
+  };""",
+    """    nextRetryAt: null,
+    reoccurredDuringRecovery: false,
+    state: 'new',
+  };""",
 )
 
 replace_once(
-    'src/quest/rate-limit-coordinator.js',
-    """  async updateRateLimitState(task, response) {
-    const bucket = response.headers?.get?.('x-ratelimit-bucket');
-    if (bucket) this.routeBuckets.set(task.route, bucket);
-    const resolvedBucket = bucket ?? this.routeBuckets.get(task.route) ?? task.route;
-    const scope = String(
-      response.headers?.get?.('x-ratelimit-scope')
-        ?? this.routeScopes.get(task.route)
-        ?? 'shared',
-    ).toLowerCase();
-    if (['user', 'shared', 'global'].includes(scope)) this.routeScopes.set(task.route, scope);
-    const remaining = headerNumber(response.headers, 'x-ratelimit-remaining');
-    const shouldReadDelay = response.status === 429 || remaining === 0;
-    const parsedDelay = shouldReadDelay ? await retryDelayMs(response) : 0;
-    const delay = remaining === 0 && parsedDelay === 0
-      ? RATE_LIMIT_FALLBACK_MS
-      : parsedDelay;
-
-    if (remaining === 0 && delay > 0) this.setBucketReset(task, resolvedBucket, delay, scope);
-
-    if (response.status === 429) {
-      this.stats.rateLimited++;
-      this.stats.lastRateLimitAt = new Date(this.now()).toISOString();
-      if (
-        String(response.headers?.get?.('x-ratelimit-global')).toLowerCase() === 'true'
-        || scope === 'global'
-      ) {
-        this.globalResetAt = this.now() + Math.max(RATE_LIMIT_FALLBACK_MS, delay);
-        this.stats.globalRateLimits++;
-        publishScheduleHint(task.account, {
-          nextActionAt: new Date(this.globalResetAt).toISOString(),
-          reason: 'rate-limit',
-          priority: 98,
-          source: 'rate-limit',
-          expiresAt: new Date(this.globalResetAt + 60_000).toISOString(),
-        });
-      } else {
-        this.setBucketReset(
-          task,
-          resolvedBucket,
-          Math.max(RATE_LIMIT_FALLBACK_MS, delay),
-          scope,
-        );
-      }
-    }
-  }""",
-    """  async updateRateLimitState(task, response) {
-    const previousBucket = this.resolvedBucket(task);
-    const previousScope = this.routeScope(task);
-    const bucket = response.headers?.get?.('x-ratelimit-bucket');
-    if (bucket) this.routeBuckets.set(task.route, bucket);
-    const resolvedBucket = bucket ?? this.routeBuckets.get(task.route) ?? task.route;
-    const announcedScope = String(
-      response.headers?.get?.('x-ratelimit-scope')
-        ?? previousScope,
-    ).toLowerCase();
-    const scope = ['user', 'shared', 'global'].includes(announcedScope)
-      ? announcedScope
-      : previousScope;
-    this.routeScopes.set(task.route, scope);
-    this.migrateRouteState(task, previousBucket, previousScope);
-
-    const remaining = headerNumber(response.headers, 'x-ratelimit-remaining');
-    const shouldReadDelay = response.status === 429 || remaining === 0;
-    const parsedDelay = shouldReadDelay ? await retryDelayMs(response) : 0;
-    const delay = remaining === 0 && parsedDelay === 0
-      ? RATE_LIMIT_FALLBACK_MS
-      : parsedDelay;
-    const globalRateLimit = response.status === 429 && (
-      String(response.headers?.get?.('x-ratelimit-global')).toLowerCase() === 'true'
-      || scope === 'global'
-    );
-
-    if (response.status === 429) {
-      this.stats.rateLimited++;
-      this.stats.lastRateLimitAt = new Date(this.now()).toISOString();
-    }
-
-    if (globalRateLimit) {
-      this.globalResetAt = Math.max(
-        this.globalResetAt,
-        this.now() + Math.max(RATE_LIMIT_FALLBACK_MS, delay),
-      );
-      this.stats.globalRateLimits++;
-      if (task.jobKey) {
-        transitionRunnerState(task.jobKey, RUNNER_STATE.WAITING_RATE_LIMIT, {
-          nextActionAt: new Date(this.globalResetAt).toISOString(),
-          stateSource: 'rate-limit:global',
-        });
-      }
-      publishScheduleHint(task.account, {
-        nextActionAt: new Date(this.globalResetAt).toISOString(),
-        reason: 'rate-limit',
-        priority: 98,
-        source: 'rate-limit',
-        expiresAt: new Date(this.globalResetAt + 60_000).toISOString(),
-      });
-      return;
-    }
-
-    const bucketDelay = response.status === 429
-      ? Math.max(RATE_LIMIT_FALLBACK_MS, delay)
-      : delay;
-    if ((remaining === 0 || response.status === 429) && bucketDelay > 0) {
-      this.setBucketReset(task, resolvedBucket, bucketDelay, scope);
-    }
-  }""",
+    'src/error-reporter.js',
+    """  if (!incident || incident.state === 'recovered') return { state: 'not_open', code };
+  if (incident.state === 'delivering') {""",
+    """  if (!incident || incident.state === 'recovered') return { state: 'not_open', code };
+  if (['delivery_failed', 'delivery_unknown'].includes(incident.state)) {
+    incident.state = 'recovered';
+    incident.recoveredAt = now;
+    incidentState.set(key, incident);
+    pruneReporterState(now);
+    return { state: 'not_open', code, incidentId: incident.incidentId };
+  }
+  if (incident.state === 'delivering') {""",
 )
 
-print('Applied all exact full-audit replacements')
+replace_once(
+    'src/error-reporter.js',
+    """  incident.recoveryDelivery = delivery;
+  if (delivery.state === 'delivered') {
+    incident.recoveredAt = now;
+    incident.state = 'recovered';
+    incident.nextRecoveryRetryAt = null;
+  } else {
+    incident.state = 'recovery_pending';
+    incident.nextRecoveryRetryAt = now + FAILED_DELIVERY_RETRY_MS;
+  }
+  incidentState.set(key, incident);
+  pruneReporterState(now);
+
+  recordDeliveryStatus(code, incident.incidentId, delivery, now);
+  return { state: delivery.state, code, incidentId: incident.incidentId };""",
+    """  incident.recoveryDelivery = delivery;
+  let resultState = delivery.state;
+  if (incident.reoccurredDuringRecovery) {
+    incident.reoccurredDuringRecovery = false;
+    incident.recoveredAt = null;
+    incident.state = 'open';
+    incident.nextRecoveryRetryAt = null;
+    resultState = 'reopened';
+  } else if (delivery.state === 'delivered') {
+    incident.recoveredAt = now;
+    incident.state = 'recovered';
+    incident.nextRecoveryRetryAt = null;
+  } else {
+    incident.state = 'recovery_pending';
+    incident.nextRecoveryRetryAt = now + FAILED_DELIVERY_RETRY_MS;
+  }
+  incidentState.set(key, incident);
+  pruneReporterState(now);
+
+  recordDeliveryStatus(code, incident.incidentId, delivery, now);
+  return { state: resultState, code, incidentId: incident.incidentId };""",
+)
+
+replace_once(
+    'test/backup-health.node-test.js',
+    """test('a new failure after pending recovery starts a fresh incident lifecycle', async () => {
+  resetBackupHealthForTests({
+    state: 'healthy',
+    consecutiveFailures: 0,
+    incidentOpen: true,
+    recoveryPending: true,
+  });
+  const spies = reportingSpies();
+
+  await runBackupAttempt({
+    now: new Date('2026-07-25T13:00:00.000Z'),
+    backupFn: async () => { throw new Error('backup failed again'); },
+    ...spies,
+  });
+
+  const status = getBackupHealthStatus();
+  assert.equal(status.recoveryPending, false);
+  assert.equal(status.incidentOpen, false);
+  assert.equal(spies.incidents.length, 0);
+});""",
+    """test('a new failure preserves pending recovery so a later success can close the reporter incident', async () => {
+  resetBackupHealthForTests({
+    state: 'healthy',
+    consecutiveFailures: 0,
+    incidentOpen: true,
+    recoveryPending: true,
+  });
+  const spies = reportingSpies();
+
+  const failed = await runBackupAttempt({
+    now: new Date('2026-07-25T13:00:00.000Z'),
+    backupFn: async () => { throw new Error('backup failed again'); },
+    ...spies,
+  });
+  const pending = getBackupHealthStatus();
+  const recovered = await runBackupAttempt({
+    now: new Date('2026-07-25T13:15:00.000Z'),
+    backupFn: async () => './data/backups/questbot-slot-1.db',
+    ...spies,
+  });
+
+  assert.equal(failed.ok, false);
+  assert.equal(pending.recoveryPending, true);
+  assert.equal(pending.incidentOpen, true);
+  assert.equal(spies.incidents.length, 0);
+  assert.equal(recovered.recovery.state, 'delivered');
+  assert.equal(spies.recoveries.length, 1);
+  assert.equal(getBackupHealthStatus().recoveryPending, false);
+  assert.equal(getBackupHealthStatus().incidentOpen, false);
+});""",
+)
+
+subprocess.run(['git', 'add', 'test/backup-health.node-test.js'], check=True)
+print('Applied second-pass full-audit replacements')
