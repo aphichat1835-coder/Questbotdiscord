@@ -23,18 +23,33 @@ export function createAllModeRecoveryController({
   readJob,
   readScheduled,
   restore,
+  persistRetry = async () => {},
   currentTime = Date.now,
   setTimer = setTimeout,
   clearTimer = clearTimeout,
   reportError = () => {},
   restoreRetryDelayMs = ALL_MODE_RESTORE_RETRY_DELAY_MS,
 } = {}) {
-  for (const [name, value] of Object.entries({ readState, readJob, readScheduled, restore })) {
+  for (const [name, value] of Object.entries({
+    readState,
+    readJob,
+    readScheduled,
+    restore,
+    persistRetry,
+  })) {
     if (typeof value !== 'function') throw new TypeError(`${name} callback is required`);
   }
 
   const timers = new Map();
   const restoring = new Set();
+
+  function safeReport(error, context) {
+    try {
+      reportError(error, context);
+    } catch {
+      // Recovery scheduling must not create a second unhandled failure.
+    }
+  }
 
   function cancel(jobKey) {
     const entry = timers.get(jobKey);
@@ -59,7 +74,13 @@ export function createAllModeRecoveryController({
 
   function schedule(context, { notBefore = null } = {}) {
     cancel(context?.jobKey);
-    const candidate = eligible(context);
+    let candidate;
+    try {
+      candidate = eligible(context);
+    } catch (error) {
+      safeReport(error, context);
+      return false;
+    }
     if (!candidate) return false;
     const minimumAt = Number.isFinite(Number(notBefore)) ? Number(notBefore) : candidate.nextAt;
     const targetAt = Math.max(candidate.nextAt, minimumAt);
@@ -68,34 +89,45 @@ export function createAllModeRecoveryController({
       Math.min(MAX_ALL_MODE_RECOVERY_TIMER_MS, targetAt - currentTime()),
     );
     const timer = setTimer(() => {
-      void run(context);
+      void Promise.resolve()
+        .then(() => run(context))
+        .catch((error) => safeReport(error, context));
     }, delay);
     timer?.unref?.();
     timers.set(context.jobKey, { timer, context, targetAt });
     return true;
   }
 
+  async function persistRecoveryRetry(context, error) {
+    const retryAt = currentTime() + Math.max(1000, Number(restoreRetryDelayMs) || 0);
+    try {
+      await persistRetry(context.jobKey, new Date(retryAt).toISOString(), error, context);
+    } catch (persistError) {
+      safeReport(persistError, { ...context, stage: 'persist-retry' });
+    }
+    schedule(context, { notBefore: retryAt });
+  }
+
   async function run(context) {
     timers.delete(context.jobKey);
-    const candidate = eligible(context);
-    if (!candidate || restoring.has(context.jobKey)) return false;
-    if (candidate.nextAt > currentTime()) {
-      schedule(context);
-      return false;
-    }
-
+    if (restoring.has(context.jobKey)) return false;
     restoring.add(context.jobKey);
     try {
+      const candidate = eligible(context);
+      if (!candidate) return false;
+      if (candidate.nextAt > currentTime()) {
+        schedule(context);
+        return false;
+      }
+
       const fresh = eligible(context);
       if (!fresh || fresh.nextAt > currentTime()) return false;
       const result = await restore(fresh.row, context);
       assertRestoreResult(result);
       return true;
     } catch (error) {
-      reportError(error, context);
-      schedule(context, {
-        notBefore: currentTime() + Math.max(1000, Number(restoreRetryDelayMs) || 0),
-      });
+      safeReport(error, context);
+      await persistRecoveryRetry(context, error);
       return false;
     } finally {
       restoring.delete(context.jobKey);
