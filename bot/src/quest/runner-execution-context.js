@@ -33,12 +33,24 @@ export function createRunnerExecutionContext(args) {
   });
 }
 
+function clearPreviousJobAccountMapping(context) {
+  const previous = contextsByJob.get(context.jobKey);
+  if (
+    previous?.accountKey
+    && previous.accountKey !== context.accountKey
+    && jobsByAccount.get(previous.accountKey) === context.jobKey
+  ) {
+    jobsByAccount.delete(previous.accountKey);
+  }
+}
+
 export function registerRunnerExecution(args) {
   const context = createRunnerExecutionContext(args);
   const existing = context.accountKey ? jobsByAccount.get(context.accountKey) : null;
   if (existing && existing !== context.jobKey) {
     throw new Error(`Authorization fingerprint is already registered to ${existing}`);
   }
+  clearPreviousJobAccountMapping(context);
   if (context.accountKey) jobsByAccount.set(context.accountKey, context.jobKey);
   contextsByJob.set(context.jobKey, context);
   let active = true;
