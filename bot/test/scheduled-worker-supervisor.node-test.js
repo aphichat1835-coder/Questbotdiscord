@@ -213,7 +213,7 @@ test('STOPPING remains active until the local job cleanup promise settles', asyn
   assert.equal(getRunnerState('scheduled:5').state, RUNNER_STATE.STOPPED);
 });
 
-test('supervisor registers its timer before a failing initial reconcile and rejects a duplicate starter', async () => {
+test('supervisor rejects a failed initial reconcile, blocks duplicate start, and permits retry', async () => {
   let releaseInitial;
   const initialGate = new Promise((resolve) => { releaseInitial = resolve; });
   const firstStart = startScheduledWorkerSupervisor({}, {
@@ -226,5 +226,10 @@ test('supervisor registers its timer before a failing initial reconcile and reje
   const duplicate = await startScheduledWorkerSupervisor({});
   assert.equal(duplicate, false);
   releaseInitial();
-  assert.equal(await firstStart, true);
+  await assert.rejects(firstStart, /initial reconcile failed/);
+
+  const retry = await startScheduledWorkerSupervisor({}, {
+    initialReconcile: async () => ({ recovered: true }),
+  });
+  assert.equal(retry, true);
 });
