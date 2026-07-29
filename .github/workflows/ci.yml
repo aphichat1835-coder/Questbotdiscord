@@ -176,7 +176,7 @@ jobs:
         id: sonar-token
         shell: bash
         env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }} # nosemgrep: generic.secrets.security.detected-sonarqube-docs-api-key.detected-sonarqube-docs-api-key
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         run: |
           if [ -n "$SONAR_TOKEN" ]; then
             echo "available=true" >> "$GITHUB_OUTPUT"
@@ -187,6 +187,6 @@ jobs:
 
       - name: SonarQube Cloud scan
         if: steps.sonar-token.outputs.available == 'true'
-        uses: SonarSource/sonarqube-scan-action@c7ee0f9df90b7aa20e8dcf9695dcfe2e7da5b4f2 # v7
+        uses: SonarSource/sonarqube-scan-action@c7ee0f9df90b7aa20e8dcf9695dcfe2e7da5b4f2 # nosemgrep: generic.secrets.security.detected-sonarqube-docs-api-key.detected-sonarqube-docs-api-key -- pinned v7 commit
         env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }} # nosemgrep: generic.secrets.security.detected-sonarqube-docs-api-key.detected-sonarqube-docs-api-key
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
