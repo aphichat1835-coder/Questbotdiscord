@@ -6,6 +6,7 @@ import {
   beginRunnerState,
   clearRunnerStatesForTests,
   getRunnerState,
+  markRunnerMutationFailed,
   prepareRunnerMutation,
   RUNNER_MUTATION_KIND,
   RUNNER_STATE,
@@ -113,4 +114,52 @@ test('STOPPING state cannot be revived by a stale waiting message', () => {
     '2030-01-01T08:00:00.000Z',
   ));
   assert.equal(getRunnerState(jobKey).state, RUNNER_STATE.STOPPING);
+});
+
+test('failed mutation accepts and preserves the live runner retry deadline', () => {
+  const jobKey = 'scheduled:observer-failed-mutation-retry';
+  const nextCheckAt = '2030-01-01T00:05:00.000Z';
+  beginRunnerState({
+    jobKey,
+    ownerId: 'wait-owner',
+    mode: 'scheduled',
+    scheduleId: 71,
+  });
+  prepareRunnerMutation(jobKey, {
+    kind: RUNNER_MUTATION_KIND.VIDEO_PROGRESS,
+    questId: 'wait-quest',
+    payload: { timestamp: 10 },
+  });
+  markRunnerMutationFailed(jobKey, Object.assign(new Error('bad request'), { status: 400 }));
+
+  syncRunnerState(job(jobKey, '🌐 wait-user: NETWORK RETRY — อีก 5 นาที', nextCheckAt));
+  const state = getRunnerState(jobKey);
+  assert.equal(state.state, RUNNER_STATE.WAITING_RETRY);
+  assert.equal(state.mutation_status, 'FAILED');
+  assert.equal(state.next_action_at, nextCheckAt);
+  assert.equal(state.state_source, 'legacy-observer');
+});
+
+test('failed mutation no longer blocks the next durable daily schedule', () => {
+  const jobKey = 'scheduled:observer-failed-mutation-daily';
+  const nextCheckAt = '2030-01-01T08:00:00.000Z';
+  beginRunnerState({
+    jobKey,
+    ownerId: 'wait-owner',
+    mode: 'scheduled',
+    scheduleId: 71,
+  });
+  prepareRunnerMutation(jobKey, {
+    kind: RUNNER_MUTATION_KIND.HEARTBEAT,
+    questId: 'wait-quest',
+    payload: { terminal: false },
+  });
+  markRunnerMutationFailed(jobKey, Object.assign(new Error('bad request'), { status: 400 }));
+
+  syncRunnerState(job(jobKey, '💤 wait-user: AUTO DAILY ACTIVE', nextCheckAt));
+  const state = getRunnerState(jobKey);
+  assert.equal(state.state, RUNNER_STATE.WAITING_SCHEDULE);
+  assert.equal(state.mutation_status, 'FAILED');
+  assert.equal(state.next_action_at, nextCheckAt);
+  assert.equal(state.metadata.scheduleReason, 'baseline');
 });

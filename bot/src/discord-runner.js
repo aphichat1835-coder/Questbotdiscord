@@ -1242,14 +1242,19 @@ export async function startRunner({
         progressed: false,
         supportedCount: 0,
         transientError: true,
+        retryError: error,
       };
     }
   }
 
-  async function waitForTransientErrorRetry(attempt) {
+  async function waitForTransientErrorRetry(attempt, error) {
     const delayMs = transientRetryDelayMs(attempt);
     nextCheckAt = new Date(Date.now() + delayMs).toISOString();
     persistSchedule({ nextCheckAt });
+    transitionCurrentRunner(RUNNER_STATE.WAITING_RETRY, {
+      nextActionAt: nextCheckAt,
+      lastError: error?.message ?? String(error ?? 'transient runner error'),
+    });
     addLog(`🌐 ${username}: NETWORK RETRY — อีก ${Math.round(delayMs / 60_000)} นาที`);
     await render();
     countAlreadyReported = false;
@@ -1310,7 +1315,10 @@ export async function startRunner({
         continue;
       }
       if (outcome.transientError) {
-        transientErrorAttempts = await waitForTransientErrorRetry(transientErrorAttempts);
+        transientErrorAttempts = await waitForTransientErrorRetry(
+          transientErrorAttempts,
+          outcome.retryError,
+        );
         continue;
       }
       transientErrorAttempts = 0;

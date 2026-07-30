@@ -18,6 +18,12 @@ const HIGH_PRIORITY_WAITING_STATES = new Set([
   RUNNER_STATE.WAITING_ENROLLMENT,
   RUNNER_STATE.WAITING_RATE_LIMIT,
 ]);
+const ACTIVE_MUTATION_STATUSES = new Set([
+  RUNNER_MUTATION_STATUS.PREPARED,
+  RUNNER_MUTATION_STATUS.IN_FLIGHT,
+  RUNNER_MUTATION_STATUS.ACCEPTED,
+  RUNNER_MUTATION_STATUS.UNCERTAIN,
+]);
 const CONTROLLED_STATES = new Set([
   RUNNER_STATE.STOPPING,
   RUNNER_STATE.STOPPED,
@@ -86,12 +92,7 @@ function questNameFromStatus(status) {
 }
 
 function hasActiveMutationCheckpoint(current) {
-  return Boolean(
-    current?.mutation_status
-    && ![RUNNER_MUTATION_STATUS.NONE, RUNNER_MUTATION_STATUS.VERIFIED].includes(
-      current.mutation_status,
-    ),
-  );
+  return ACTIVE_MUTATION_STATUSES.has(current?.mutation_status);
 }
 
 function hasAuthoritativeDirectState(current, observedState) {
