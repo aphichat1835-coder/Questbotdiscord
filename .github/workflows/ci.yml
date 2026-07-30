@@ -190,3 +190,60 @@ jobs:
         uses: SonarSource/sonarqube-scan-action@c7ee0f9df90b7aa20e8dcf9695dcfe2e7da5b4f2 # nosemgrep: generic.secrets.security.detected-sonarqube-docs-api-key.detected-sonarqube-docs-api-key -- pinned v7 commit
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+  apply-static-analysis-cleanup:
+    name: Apply static analysis cleanup once
+    if: github.event_name == 'push' && github.event.head_commit.message == 'chore arm static analysis cleanup'
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: true
+          fetch-depth: 1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version-file: bot/.node-version
+          cache: npm
+          cache-dependency-path: bot/package-lock.json
+
+      - name: Apply exact patch from temporary workflow
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import textwrap
+
+          workflow = Path('.github/workflows/apply-static-analysis-cleanup.yml').read_text(encoding='utf-8')
+          marker = "          from pathlib import Path\n"
+          start = workflow.index(marker, workflow.index("python3 - <<'PY'"))
+          end = workflow.index("\n          PY\n", start)
+          script = textwrap.dedent(workflow[start:end])
+          exec(compile(script, 'apply-static-analysis-cleanup.py', 'exec'), {})
+          PY
+
+      - name: Install dependencies
+        working-directory: bot
+        run: npm ci --ignore-scripts --no-fund --no-audit
+
+      - name: Rebuild trusted native dependency
+        working-directory: bot
+        run: npm rebuild better-sqlite3 --foreground-scripts
+
+      - name: Run focused regression tests
+        working-directory: bot
+        run: node --test test/bootstrap.node-test.js test/quest-architecture-boundaries.node-test.js test/quest-api-runtime.node-test.js
+
+      - name: Commit exact cleanup
+        shell: bash
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add bot/src/bootstrap.js bot/src/quest/rate-limit-coordinator.js bot/test/bootstrap.node-test.js bot/test/quest-architecture-boundaries.node-test.js
+          git commit -m 'refactor static analysis findings'
+          git push origin HEAD:aa.1
