@@ -11,7 +11,7 @@ jobs:
   apply:
     if: github.event.head_commit.message == 'chore trigger rate limit refactor'
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 26
     steps:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
