@@ -208,6 +208,25 @@ function verificationAllowsNextMutation(verification) {
     || verification.retryAllowed === true;
 }
 
+function responseRateLimitScope(response, fallbackScope) {
+  const announced = String(
+    response.headers?.get?.('x-ratelimit-scope') ?? fallbackScope,
+  ).toLowerCase();
+  if (['user', 'shared', 'global'].includes(announced)) return announced;
+  return fallbackScope;
+}
+
+function responseIsGlobalRateLimit(response, scope) {
+  if (response.status !== 429) return false;
+  return String(response.headers?.get?.('x-ratelimit-global')).toLowerCase() === 'true'
+    || scope === 'global';
+}
+
+function resolvedRateLimitDelay(remaining, parsedDelay) {
+  if (remaining === 0 && parsedDelay === 0) return RATE_LIMIT_FALLBACK_MS;
+  return parsedDelay;
+}
+
 export class DiscordRateLimitCoordinator {
   constructor({
     maxConcurrency = DEFAULT_MAX_CONCURRENCY,
@@ -451,67 +470,71 @@ export class DiscordRateLimitCoordinator {
     }
   }
 
-  async updateRateLimitState(task, response) {
-    const previousBucket = this.resolvedBucket(task);
-    const previousScope = this.routeScope(task);
-    const bucket = response.headers?.get?.('x-ratelimit-bucket');
-    if (bucket) this.routeBuckets.set(task.route, bucket);
-    const resolvedBucket = bucket ?? this.routeBuckets.get(task.route) ?? task.route;
-    const announcedScope = String(
-      response.headers?.get?.('x-ratelimit-scope')
-        ?? previousScope,
-    ).toLowerCase();
-    const scope = ['user', 'shared', 'global'].includes(announcedScope)
-      ? announcedScope
-      : previousScope;
-    this.routeScopes.set(task.route, scope);
-    this.migrateRouteState(task, previousBucket, previousScope);
+  resolveResponseRateLimitRoute(task, response) {
+  const previousBucket = this.resolvedBucket(task);
+  const previousScope = this.routeScope(task);
+  const announcedBucket = response.headers?.get?.('x-ratelimit-bucket');
+  if (announcedBucket) this.routeBuckets.set(task.route, announcedBucket);
+  const resolvedBucket = announcedBucket ?? this.routeBuckets.get(task.route) ?? task.route;
+  const scope = responseRateLimitScope(response, previousScope);
+  this.routeScopes.set(task.route, scope);
+  this.migrateRouteState(task, previousBucket, previousScope);
+  return { resolvedBucket, scope };
+}
 
-    const remaining = headerNumber(response.headers, 'x-ratelimit-remaining');
-    const shouldReadDelay = response.status === 429 || remaining === 0;
-    const parsedDelay = shouldReadDelay ? await retryDelayMs(response) : 0;
-    const delay = remaining === 0 && parsedDelay === 0
-      ? RATE_LIMIT_FALLBACK_MS
-      : parsedDelay;
-    const globalRateLimit = response.status === 429 && (
-      String(response.headers?.get?.('x-ratelimit-global')).toLowerCase() === 'true'
-      || scope === 'global'
-    );
+recordRateLimitResponse(response) {
+  if (response.status !== 429) return;
+  this.stats.rateLimited++;
+  this.stats.lastRateLimitAt = new Date(this.now()).toISOString();
+}
 
-    if (response.status === 429) {
-      this.stats.rateLimited++;
-      this.stats.lastRateLimitAt = new Date(this.now()).toISOString();
-    }
-
-    if (globalRateLimit) {
-      this.globalResetAt = Math.max(
-        this.globalResetAt,
-        this.now() + Math.max(RATE_LIMIT_FALLBACK_MS, delay),
-      );
-      this.stats.globalRateLimits++;
-      if (task.jobKey) {
-        transitionRunnerState(task.jobKey, RUNNER_STATE.WAITING_RATE_LIMIT, {
-          nextActionAt: new Date(this.globalResetAt).toISOString(),
-          stateSource: 'rate-limit:global',
-        });
-      }
-      publishScheduleHint(task.account, {
-        nextActionAt: new Date(this.globalResetAt).toISOString(),
-        reason: 'rate-limit',
-        priority: 98,
-        source: 'rate-limit',
-        expiresAt: new Date(this.globalResetAt + 60_000).toISOString(),
-      });
-      return;
-    }
-
-    const bucketDelay = response.status === 429
-      ? Math.max(RATE_LIMIT_FALLBACK_MS, delay)
-      : delay;
-    if ((remaining === 0 || response.status === 429) && bucketDelay > 0) {
-      this.setBucketReset(task, resolvedBucket, bucketDelay, scope);
-    }
+applyGlobalRateLimit(task, delay) {
+  const resetDelay = Math.max(RATE_LIMIT_FALLBACK_MS, delay);
+  this.globalResetAt = Math.max(this.globalResetAt, this.now() + resetDelay);
+  this.stats.globalRateLimits++;
+  const nextActionAt = new Date(this.globalResetAt).toISOString();
+  if (task.jobKey) {
+    transitionRunnerState(task.jobKey, RUNNER_STATE.WAITING_RATE_LIMIT, {
+      nextActionAt,
+      stateSource: 'rate-limit:global',
+    });
   }
+  publishScheduleHint(task.account, {
+    nextActionAt,
+    reason: 'rate-limit',
+    priority: 98,
+    source: 'rate-limit',
+    expiresAt: new Date(this.globalResetAt + 60_000).toISOString(),
+  });
+}
+
+applyBucketRateLimit(task, status, { remaining, delay, resolvedBucket, scope }) {
+  const bucketDelay = status === 429
+    ? Math.max(RATE_LIMIT_FALLBACK_MS, delay)
+    : delay;
+  if (bucketDelay <= 0) return;
+  if (remaining !== 0 && status !== 429) return;
+  this.setBucketReset(task, resolvedBucket, bucketDelay, scope);
+}
+
+async updateRateLimitState(task, response) {
+  const { resolvedBucket, scope } = this.resolveResponseRateLimitRoute(task, response);
+  const remaining = headerNumber(response.headers, 'x-ratelimit-remaining');
+  const shouldReadDelay = response.status === 429 || remaining === 0;
+  const parsedDelay = shouldReadDelay ? await retryDelayMs(response) : 0;
+  const delay = resolvedRateLimitDelay(remaining, parsedDelay);
+  this.recordRateLimitResponse(response);
+  if (responseIsGlobalRateLimit(response, scope)) {
+    this.applyGlobalRateLimit(task, delay);
+    return;
+  }
+  this.applyBucketRateLimit(task, response.status, {
+    remaining,
+    delay,
+    resolvedBucket,
+    scope,
+  });
+}
 
   enterHalfOpen(task) {
     const key = this.circuitKey(task);
