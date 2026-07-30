@@ -18,6 +18,7 @@ import { publishScheduleHint } from './schedule-hint-bus.js';
 export { authorizationFingerprint } from './authorization-fingerprint.js';
 
 const RATE_LIMIT_FALLBACK_MS = 1000;
+export const MAX_RATE_LIMIT_TIMER_DELAY_MS = 2_147_483_647;
 const DEFAULT_MAX_CONCURRENCY = 4;
 const DEFAULT_CIRCUIT_FAILURE_THRESHOLD = 3;
 const DEFAULT_CIRCUIT_OPEN_MS = 30_000;
@@ -324,7 +325,7 @@ export class DiscordRateLimitCoordinator {
         const error = abortError();
         if (task.jobKey && task.mutation) {
           try {
-            markRunnerMutationFailed(task.jobKey, error, { state: RUNNER_STATE.RUNNING });
+            markRunnerMutationFailed(task.jobKey, error);
           } catch {
             this.stats.checkpointErrors++;
           }
@@ -443,7 +444,8 @@ export class DiscordRateLimitCoordinator {
       .map((task) => this.blockedUntil(task))
       .filter((timestamp) => Number.isFinite(timestamp) && timestamp > now);
     if (!waits.length) return;
-    const delay = Math.max(1, Math.min(...waits) - now);
+    const logicalDelay = Math.max(1, Math.min(...waits) - now);
+    const delay = Math.min(MAX_RATE_LIMIT_TIMER_DELAY_MS, logicalDelay);
     this.wakeupTimer = setTimeout(() => {
       this.wakeupTimer = null;
       this.pump();
@@ -613,7 +615,7 @@ export class DiscordRateLimitCoordinator {
       markRunnerMutationUncertain(task.jobKey, error, new Date(this.now()));
       this.blockedMutationJobs.add(task.jobKey);
     } else {
-      markRunnerMutationFailed(task.jobKey, error, { state: RUNNER_STATE.RUNNING });
+      markRunnerMutationFailed(task.jobKey, error);
       this.blockedMutationJobs.delete(task.jobKey);
     }
   }

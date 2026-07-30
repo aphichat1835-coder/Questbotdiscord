@@ -5,7 +5,6 @@ import {
   markRunnerMutationFailed,
   markRunnerMutationUncertain,
   markRunnerMutationVerified,
-  RUNNER_STATE,
 } from './quest/runner-state-store.js';
 
 const MAX_RETRY_DELAY_MS = 60_000;
@@ -62,9 +61,7 @@ function markVerified() {
 }
 
 function markFailed(error) {
-  return checkpoint('mark-failed', (jobKey) => markRunnerMutationFailed(jobKey, error, {
-    state: RUNNER_STATE.RUNNING,
-  }));
+  return checkpoint('mark-failed', (jobKey) => markRunnerMutationFailed(jobKey, error));
 }
 
 function markControlledRetry() {
