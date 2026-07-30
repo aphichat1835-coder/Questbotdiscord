@@ -213,23 +213,8 @@ jobs:
           cache: npm
           cache-dependency-path: bot/package-lock.json
 
-      - name: Apply exact patch from temporary workflow
-        shell: bash
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-
-          workflow = Path('.github/workflows/apply-static-analysis-cleanup.yml').read_text(encoding='utf-8')
-          marker = "          from pathlib import Path\n"
-          start = workflow.index(marker, workflow.index("python3 - <<'PY'"))
-          end = workflow.index("\n          PY\n", start)
-          segment = workflow[start:end]
-          script = '\n'.join(
-              line[10:] if line.startswith('          ') else line
-              for line in segment.splitlines()
-          )
-          exec(compile(script, 'apply-static-analysis-cleanup.py', 'exec'), {})
-          PY
+      - name: Apply exact source and test updates
+        run: python3 .github/scripts/apply-static-analysis-cleanup.py
 
       - name: Install dependencies
         working-directory: bot
