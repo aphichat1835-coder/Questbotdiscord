@@ -217,13 +217,16 @@ jobs:
         run: |
           python3 - <<'PY'
           from pathlib import Path
-          import textwrap
 
           workflow = Path('.github/workflows/apply-static-analysis-cleanup.yml').read_text(encoding='utf-8')
           marker = "          from pathlib import Path\n"
           start = workflow.index(marker, workflow.index("python3 - <<'PY'"))
           end = workflow.index("\n          PY\n", start)
-          script = textwrap.dedent(workflow[start:end])
+          segment = workflow[start:end]
+          script = '\n'.join(
+              line[10:] if line.startswith('          ') else line
+              for line in segment.splitlines()
+          )
           exec(compile(script, 'apply-static-analysis-cleanup.py', 'exec'), {})
           PY
 
