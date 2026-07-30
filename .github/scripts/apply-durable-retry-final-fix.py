@@ -106,7 +106,7 @@ test('failed mutation no longer blocks the next durable daily schedule', () => {
 source = test_file.read_text(encoding='utf-8')
 if "failed mutation accepts and preserves the live runner retry deadline" in source:
     raise SystemExit('wait observer integration tests already exist')
-test_file.write_text(source.rstrip() + append + '\n', encoding='utf-8')
+test_file.write_text((source.rstrip() + append).rstrip() + '\n', encoding='utf-8')
 
 filter_script = Path('bot/scripts/filter-lcov-source.mjs')
 if filter_script.exists():
