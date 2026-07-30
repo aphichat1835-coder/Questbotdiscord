@@ -5,6 +5,20 @@ import { redactText } from './redaction.js';
 export const FATAL_REPORT_BUDGET_MS = 3500;
 let fatalBootstrapPromise = null;
 
+export function serializeBootstrapContext(context) {
+  const seen = new WeakSet();
+  try {
+    return JSON.stringify(context, (_key, value) => {
+      if (!value || typeof value !== 'object') return value;
+      if (seen.has(value)) return '[Circular]';
+      seen.add(value);
+      return value;
+    }) ?? '{}';
+  } catch {
+    return '{"serialization":"failed"}';
+  }
+}
+
 export async function reportWithinFatalBudget(reportPromise, budgetMs = FATAL_REPORT_BUDGET_MS) {
   let timer = null;
   const timeout = new Promise((resolve) => {
@@ -23,12 +37,7 @@ export async function fatalBootstrapShutdown({
   context = {},
 } = {}) {
   if (fatalBootstrapPromise) {
-    let serializedContext;
-    try {
-      serializedContext = JSON.stringify(context);
-    } catch {
-      serializedContext = String(context);
-    }
+    const serializedContext = serializeBootstrapContext(context);
     console.error(
       `❌ [Bootstrap ${code} suppressed - fatal shutdown already in progress]`,
       redactText(error?.stack || error?.message || error),
