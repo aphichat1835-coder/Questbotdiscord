@@ -64,9 +64,26 @@ test('worker status client sends and edits messages through Discord API v10', as
   ]);
   for (const call of calls) {
     assert.equal(call.options.headers.Authorization, 'Bot bot-token-fixture');
+    assert.equal(call.options.signal instanceof AbortSignal, true);
     const payload = JSON.parse(call.options.body);
     assert.deepEqual(payload.allowed_mentions, { parse: [] });
   }
+});
+
+test('worker status client aborts a Discord REST request at its timeout', async () => {
+  const client = createWorkerDiscordClient({
+    botToken: 'bot-token-fixture',
+    requestTimeoutMs: 5,
+    fetchFn: async (_url, options) => new Promise((resolve, reject) => {
+      options.signal.addEventListener('abort', () => reject(options.signal.reason), { once: true });
+    }),
+  });
+
+  const channel = await client.channels.fetch('channel-timeout');
+  await assert.rejects(
+    channel.send({ content: 'will timeout' }),
+    (error) => error?.name === 'TimeoutError',
+  );
 });
 
 test('worker status client rejects Discord REST failures without exposing response bodies', async () => {

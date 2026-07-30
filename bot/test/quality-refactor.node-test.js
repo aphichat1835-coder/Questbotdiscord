@@ -37,6 +37,10 @@ test('settleWithTimeout does not report a timeout after tasks finish', async () 
 
 test('runner quality refactor keeps static-analysis regressions out', async () => {
   const runner = await readFile(new URL('../src/discord-runner.js', import.meta.url), 'utf8');
+  const videoExecutor = await readFile(
+    new URL('../src/quest/executors/video-executor.js', import.meta.url),
+    'utf8',
+  );
   const worker = await readFile(new URL('../src/worker.js', import.meta.url), 'utf8');
   const httpRetry = await readFile(new URL('../src/http-retry.js', import.meta.url), 'utf8');
   const mutationRetry = await readFile(new URL('../src/mutation-retry.js', import.meta.url), 'utf8');
@@ -74,8 +78,11 @@ test('runner quality refactor keeps static-analysis regressions out', async () =
   assert.match(runner, /async function refreshRoundQuest\(/);
   assert.match(runner, /async function ensureQuestEnrollment\(/);
   assert.match(runner, /async function verifyQuestCompletion\(/);
-  assert.match(runner, /function nextVideoTimestamp\(/);
-  assert.match(runner, /async function submitVideoProgressStep\(/);
+  assert.doesNotMatch(runner, /function nextVideoTimestamp\(/);
+  assert.doesNotMatch(runner, /async function submitVideoProgressStep\(/);
+  assert.match(videoExecutor, /export function nextVideoTimestamp\(/);
+  assert.match(videoExecutor, /async function submitProgress\(/);
+  assert.match(videoExecutor, /export async function executeVideoQuest\(/);
   const executeProgressIndex = runner.indexOf('async function executeQuestProgress');
   const abortAfterRunnerIndex = runner.indexOf(
     "if (signal.aborted) throw new Error('aborted');",

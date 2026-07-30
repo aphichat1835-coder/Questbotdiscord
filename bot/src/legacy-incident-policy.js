@@ -19,6 +19,7 @@ export function classifyLegacyIncident(source, error, emergency = undefined) {
   const normalizedSource = String(source ?? 'Unknown source');
   const message = safeMessage(error);
 
+  if (emergency === false) return null;
   if (emergency === true) {
     return {
       code: INCIDENT.SYSTEM_FAILURE,

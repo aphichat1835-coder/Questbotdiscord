@@ -1,8 +1,18 @@
 import { config } from '../config.js';
 import * as legacyRunner from '../discord-runner.js';
 import { isProcessRoleActive } from '../process-topology.js';
-import { listScheduledRunners } from '../scheduled-runner-store.js';
+import {
+  getScheduledRunner,
+  listScheduledRunners,
+} from '../scheduled-runner-store.js';
+import { createAllModeRecoveryController } from './all-mode-recovery.js';
 import { observeRunnerCompletion } from './runner-completion-observer.js';
+import { releaseRunnerExecutionWhenSettled } from './runner-completion-release.js';
+import {
+  registerRunnerExecution,
+  runWithRunnerExecutionContext,
+} from './runner-execution-context.js';
+import { rollbackStartedRunner } from './runner-start-rollback.js';
 import { restoreScheduledRunnerRows } from './scheduled-restore.js';
 import {
   clearAllSmartWakes,
@@ -30,7 +40,28 @@ const TERMINAL_RUNNER_STATES = new Set([
   RUNNER_STATE.FAILED,
 ]);
 
+function recoveryMetadata(args, source, current = null) {
+  return {
+    ...current?.metadata,
+    source,
+    recoveryAction: args.recoveryPlan?.action ?? null,
+    recoveryReason: args.recoveryPlan?.reason ?? null,
+  };
+}
+
 function beginDurableStart(args, source = 'runner-service') {
+  const current = getRunnerState(args.jobKey);
+  if (args.recoveryPlan && current) {
+    transitionRunnerState(args.jobKey, RUNNER_STATE.AUTHENTICATING, {
+      accountId: args.accountId ?? current.account_id,
+      username: args.username ?? current.username,
+      nextActionAt: args.initialNextCheckAt ?? current.next_action_at,
+      metadata: recoveryMetadata(args, source, current),
+      stateSource: 'recovery-start',
+    });
+    return;
+  }
+
   beginRunnerState({
     jobKey: args.jobKey,
     ownerId: args.ownerId,
@@ -41,16 +72,96 @@ function beginDurableStart(args, source = 'runner-service') {
     state: RUNNER_STATE.QUEUED,
     nextActionAt: args.initialNextCheckAt ?? null,
     metadata: { source },
+    stateSource: source,
   });
-  transitionRunnerState(args.jobKey, RUNNER_STATE.AUTHENTICATING);
+  transitionRunnerState(args.jobKey, RUNNER_STATE.AUTHENTICATING, {
+    stateSource: source,
+  });
+}
+
+function activeScheduledInventory() {
+  const jobs = legacyRunner.listJobs().filter((job) => (
+    job.mode === 'scheduled' && job.lifecycle !== 'stopping'
+  ));
+  const existingAccountIds = jobs.map((job) => job.accountId).filter(Boolean);
+  const existingOwnerCounts = new Map();
+  for (const job of jobs) {
+    existingOwnerCounts.set(
+      job.ownerId,
+      (existingOwnerCounts.get(job.ownerId) ?? 0) + 1,
+    );
+  }
+  return { existingAccountIds, existingOwnerCounts };
+}
+
+async function restoreAllModeRow(row, context) {
+  const inventory = activeScheduledInventory();
+  return restoreScheduledRunnerRows(context.client, startLocalRunner, {
+    rows: [row],
+    reconciliationRows: listScheduledRunners(),
+    existingAccountIds: inventory.existingAccountIds,
+    existingOwnerCounts: inventory.existingOwnerCounts,
+    now: new Date(),
+  });
+}
+
+async function persistAllModeRetry(jobKey, nextActionAt, error) {
+  const current = getRunnerState(jobKey);
+  if (current?.state !== RUNNER_STATE.WAITING_RETRY) return false;
+  transitionRunnerState(jobKey, RUNNER_STATE.WAITING_RETRY, {
+    nextActionAt,
+    retryCount: Number(current.retry_count ?? 0) + 1,
+    lastError: error?.message ?? String(error),
+    metadata: {
+      ...current.metadata,
+      recoveryRetryPersisted: true,
+    },
+    stateSource: 'all-mode-recovery-retry',
+  });
+  return true;
+}
+
+const allModeRecovery = createAllModeRecoveryController({
+  readState: getRunnerState,
+  readJob: legacyRunner.getJob,
+  readScheduled: getScheduledRunner,
+  restore: restoreAllModeRow,
+  persistRetry: persistAllModeRetry,
+  reportError: (error, context) => {
+    console.error(
+      `[RunnerRecovery:${String(context?.jobKey ?? 'unknown').slice(0, 100)}] restart failed — ${error?.message ?? 'unknown error'}`,
+    );
+  },
+});
+
+function recoveryWakeContext(args) {
+  return {
+    jobKey: args.jobKey,
+    mode: args.mode ?? 'oneshot',
+    processRole: config.processRole,
+    scheduleId: args.scheduleId ?? null,
+    client: args.client,
+  };
+}
+
+function startedStateSource(args) {
+  if (args.recoveryPlan) return 'recovery-started';
+  return config.processRole === 'worker' ? 'worker' : 'runner-service';
 }
 
 function markStarted(args) {
-  transitionRunnerState(args.jobKey, RUNNER_STATE.RUNNING, {
-    accountId: args.accountId ?? null,
-    username: args.username ?? null,
-    nextActionAt: args.initialNextCheckAt ?? null,
-    lastError: null,
+  allModeRecovery.cancel(args.jobKey);
+  const current = getRunnerState(args.jobKey);
+  const targetState = args.recoveryPlan?.targetState ?? RUNNER_STATE.RUNNING;
+  transitionRunnerState(args.jobKey, targetState, {
+    accountId: args.accountId ?? current?.account_id ?? null,
+    username: args.username ?? current?.username ?? null,
+    nextActionAt: args.initialNextCheckAt ?? current?.next_action_at ?? null,
+    lastError: args.recoveryPlan ? current?.last_error ?? null : null,
+    metadata: args.recoveryPlan
+      ? recoveryMetadata(args, 'recovery-started', current)
+      : current?.metadata ?? null,
+    stateSource: startedStateSource(args),
   });
   registerSmartWake(args);
   observeRunnerCompletion(args.jobKey, args.mode ?? 'oneshot', args.scheduleId ?? null);
@@ -58,9 +169,11 @@ function markStarted(args) {
 }
 
 function markStartFailure(args, error) {
+  allModeRecovery.cancel(args.jobKey);
   transitionRunnerState(args.jobKey, RUNNER_STATE.FAILED, {
     lastError: error?.message ?? String(error),
     metadata: { stage: 'start' },
+    stateSource: 'runner-start-failure',
   });
   clearSmartWake(args.jobKey);
 }
@@ -72,7 +185,41 @@ function transitionOwnedRunner(jobKey, ownerId, state, metadata) {
   }
   return transitionRunnerState(jobKey, state, {
     nextActionAt: null,
-    metadata: { ...(current.metadata ?? {}), ...metadata },
+    metadata: { ...current.metadata, ...metadata },
+    stateSource: 'runner-service-control',
+  });
+}
+
+function releaseExecutionWhenSettled(args, registration) {
+  const job = legacyRunner.getJob(args.jobKey);
+  const done = job?.done;
+  const scheduleRecovery = () => {
+    queueMicrotask(() => allModeRecovery.schedule(recoveryWakeContext(args)));
+  };
+  if (!done) {
+    registration.release();
+    return;
+  }
+
+  releaseRunnerExecutionWhenSettled(done, () => registration.release(), {
+    onError: (error) => {
+      console.error(
+        `[RunnerExecution:${String(args.jobKey).slice(0, 100)}] release failed — ${error?.message ?? 'unknown error'}`,
+      );
+    },
+  });
+  void Promise.resolve(done).then(scheduleRecovery, () => undefined);
+}
+
+async function rollbackPostStartFailure(args) {
+  return rollbackStartedRunner(args, {
+    getJob: legacyRunner.getJob,
+    stopJob: legacyRunner.stopJob,
+    reportError: (rollbackError, context) => {
+      console.error(
+        `[RunnerStartRollback:${String(context?.jobKey ?? 'unknown').slice(0, 100)}] ${rollbackError?.message ?? 'rollback failed'}`,
+      );
+    },
   });
 }
 
@@ -82,12 +229,28 @@ export function shouldDelegateScheduledRunner(processRole, mode) {
 
 export async function startLocalRunner(args) {
   beginDurableStart(args, config.processRole === 'worker' ? 'worker' : 'runner-service');
+  let registration;
+  let legacyStarted = false;
   try {
-    const result = await legacyRunner.startRunner(args);
+    registration = registerRunnerExecution(args);
+    const result = await runWithRunnerExecutionContext(
+      registration.context,
+      () => legacyRunner.startRunner(args),
+    );
+    legacyStarted = true;
     markStarted(args);
+    releaseExecutionWhenSettled(args, registration);
     return result;
   } catch (error) {
-    markStartFailure(args, error);
+    if (legacyStarted) await rollbackPostStartFailure(args);
+    registration?.release();
+    try {
+      markStartFailure(args, error);
+    } catch (stateError) {
+      console.error(
+        `[RunnerStartFailure:${String(args.jobKey).slice(0, 100)}] state update failed — ${stateError?.message ?? 'unknown error'}`,
+      );
+    }
     throw error;
   }
 }
@@ -107,6 +270,7 @@ export async function startRunner(args) {
       delegated: true,
       reason: 'worker-queue',
     },
+    stateSource: 'control-plane',
   });
   return { queued: true, nextActionAt };
 }
@@ -130,7 +294,7 @@ export async function restoreScheduledRunners(client) {
 
   markInterruptedRunnerStates(new Date(), {
     includeOneShot: config.processRole !== 'worker',
-    includeScheduled: true,
+    includeScheduled: false,
   });
   const result = await restoreScheduledRunnerRows(client, startLocalRunner);
   syncAllRunnerStates();
@@ -142,8 +306,13 @@ export async function restoreScheduledRunners(client) {
 export async function shutdownRunners(timeoutMs = null) {
   for (const job of legacyRunner.listJobs()) {
     const current = getRunnerState(job.key);
-    if (current) transitionRunnerState(job.key, RUNNER_STATE.STOPPING);
+    if (current) {
+      transitionRunnerState(job.key, RUNNER_STATE.STOPPING, {
+        stateSource: 'shutdown',
+      });
+    }
   }
+  allModeRecovery.clear();
   clearAllSmartWakes();
   const result = await legacyRunner.shutdownRunners(timeoutMs);
   syncAllRunnerStates();
@@ -154,6 +323,7 @@ export async function shutdownRunners(timeoutMs = null) {
 export function stopJob(ownerId, jobKey, options = {}) {
   const stopped = legacyRunner.stopJob(ownerId, jobKey, options);
   if (stopped) {
+    allModeRecovery.cancel(jobKey);
     transitionOwnedRunner(jobKey, ownerId, RUNNER_STATE.STOPPING, {
       stopSource: config.processRole,
     });
@@ -168,6 +338,7 @@ export function stopScheduledJob(ownerId, scheduleId) {
   const stopped = legacyRunner.stopScheduledJob(ownerId, scheduleId);
   if (!stopped) return false;
 
+  allModeRecovery.cancel(jobKey);
   clearSmartWake(jobKey);
   const workerMayStillBeRunning = config.processRole === 'control'
     && isProcessRoleActive('worker');
@@ -189,6 +360,7 @@ export function stopAllForUser(ownerId, options = {}) {
   const stopped = legacyRunner.stopAllForUser(ownerId, options);
   if (stopped > 0) {
     for (const job of jobs) {
+      allModeRecovery.cancel(job.key);
       transitionOwnedRunner(job.key, ownerId, RUNNER_STATE.STOPPING, {
         stopSource: config.processRole,
       });
@@ -208,5 +380,3 @@ export const getUserJobs = legacyRunner.getUserJobs;
 export const listJobs = legacyRunner.listJobs;
 export const listQuestEngineStatuses = legacyRunner.listQuestEngineStatuses;
 export const refreshBuildInfo = legacyRunner.refreshBuildInfo;
-export const selectQuestClaimPlatform = legacyRunner.selectQuestClaimPlatform;
-export const stopRunner = legacyRunner.stopRunner;

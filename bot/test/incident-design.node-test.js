@@ -4,7 +4,17 @@ import test from 'node:test';
 
 test('incident design keeps the six required environment values documented', () => {
   const design = fs.readFileSync('./INCIDENT-DESIGN.md', 'utf8');
-  const lines = new Set(design.split(/\r?\n/));
+  const heading = '## Required environment';
+  const headingIndex = design.indexOf(heading);
+  assert.notEqual(headingIndex, -1, 'required environment heading must be documented');
+  const sectionStart = headingIndex + heading.length;
+  const nextHeading = design.indexOf('\n## ', sectionStart);
+  const requiredSection = design.slice(
+    sectionStart,
+    nextHeading === -1 ? design.length : nextHeading,
+  );
+  const lines = new Set(requiredSection.split(/\r?\n/));
+
   for (const name of [
     'DISCORD_BOT_TOKEN',
     'DISCORD_CLIENT_ID',

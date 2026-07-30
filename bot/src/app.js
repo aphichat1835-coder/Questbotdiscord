@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { Client, Collection, GatewayIntentBits } from 'discord.js';
+import { shutdownAppResources } from './app-resource-shutdown.js';
 import { config } from './config.js';
 import { startWorker, stopWorker } from './worker.js';
 import { startDashboard, stopDashboard } from './dashboard.js';
@@ -171,14 +172,13 @@ export function createApp({ exit = process.exit } = {}) {
         requestExitCode(1);
       }
 
-      try {
-        await client.destroy();
-        await stopDashboard();
-        uninstallDiscordApiRuntime();
-      } catch (error) {
-        reportError('Resource shutdown', error);
-        requestExitCode(1);
-      }
+      const resources = await shutdownAppResources({
+        destroyClient: () => client.destroy(),
+        stopDashboard,
+        uninstallRuntime: uninstallDiscordApiRuntime,
+        reportError,
+      });
+      if (!resources.ok) requestExitCode(1);
 
       try {
         if (runtimeLeaseAcquired) {

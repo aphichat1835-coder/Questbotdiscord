@@ -72,6 +72,7 @@ export function resolveDatabaseBackupSlotPath(databasePath, slotIndex) {
 function openDatabase() {
   try {
     const database = new Database(dbPath);
+    database.pragma('busy_timeout = 5000');
     database.pragma('journal_mode = WAL');
     database.pragma('foreign_keys = ON');
     return database;
@@ -367,7 +368,7 @@ const acquireRuntimeLeaseTransaction = db.transaction((name, holder, ttlMs, now)
 
 export function acquireRuntimeLease(name, holder, ttlMs = 90_000) {
   if (!name || !holder) throw new TypeError('Runtime lease name and holder are required');
-  return acquireRuntimeLeaseTransaction(name, holder, ttlMs, Date.now());
+  return acquireRuntimeLeaseTransaction.immediate(name, holder, ttlMs, Date.now());
 }
 
 export function renewRuntimeLease(name, holder, ttlMs = 90_000) {

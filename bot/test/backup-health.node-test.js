@@ -240,7 +240,7 @@ test('a failed recovery is retried on the next successful backup', async () => {
   assert.equal(getBackupHealthStatus().incidentOpen, false);
 });
 
-test('a new failure after pending recovery starts a fresh incident lifecycle', async () => {
+test('a new failure preserves pending recovery so a later success can close the reporter incident', async () => {
   resetBackupHealthForTests({
     state: 'healthy',
     consecutiveFailures: 0,
@@ -249,16 +249,26 @@ test('a new failure after pending recovery starts a fresh incident lifecycle', a
   });
   const spies = reportingSpies();
 
-  await runBackupAttempt({
+  const failed = await runBackupAttempt({
     now: new Date('2026-07-25T13:00:00.000Z'),
     backupFn: async () => { throw new Error('backup failed again'); },
     ...spies,
   });
+  const pending = getBackupHealthStatus();
+  const recovered = await runBackupAttempt({
+    now: new Date('2026-07-25T13:15:00.000Z'),
+    backupFn: async () => './data/backups/questbot-slot-1.db',
+    ...spies,
+  });
 
-  const status = getBackupHealthStatus();
-  assert.equal(status.recoveryPending, false);
-  assert.equal(status.incidentOpen, false);
+  assert.equal(failed.ok, false);
+  assert.equal(pending.recoveryPending, true);
+  assert.equal(pending.incidentOpen, true);
   assert.equal(spies.incidents.length, 0);
+  assert.equal(recovered.recovery.state, 'delivered');
+  assert.equal(spies.recoveries.length, 1);
+  assert.equal(getBackupHealthStatus().recoveryPending, false);
+  assert.equal(getBackupHealthStatus().incidentOpen, false);
 });
 
 test('backup status exposes bounded retry evidence without a database path', () => {

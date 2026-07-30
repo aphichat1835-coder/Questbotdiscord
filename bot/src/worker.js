@@ -149,10 +149,6 @@ export async function runBackupAttempt({
       recovery,
     };
   } catch (error) {
-    if (backupHealth.recoveryPending) {
-      backupHealth.recoveryPending = false;
-      backupHealth.incidentOpen = false;
-    }
     backupHealth.state = 'degraded';
     backupHealth.consecutiveFailures++;
     backupHealth.lastError = safeErrorMessage(error);

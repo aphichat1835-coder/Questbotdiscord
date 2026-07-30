@@ -1,4 +1,4 @@
-const SENSITIVE_KEY = /authorization|token|secret|cookie|captcha|email|webhook|cipher|password/i;
+const SENSITIVE_KEY = /authorization|token|secret|cookie|captcha|email|webhook|cipher|password|(?:api|private|encryption|access|signing)[_.-]?key/i;
 const DISCORD_WEBHOOK_URL = /https:\/\/(?:canary\.|ptb\.)?discord(?:app)?\.com\/api\/webhooks\/\d{17,20}\/[a-z0-9._-]+/gi;
 const DISCORD_TOKEN = /\b[\w-]{20,}\.[\w-]{5,}\.[\w-]{15,}\b/g;
 

@@ -1,8 +1,23 @@
 import { INCIDENT } from './incident-catalog.js';
 import { reportBootstrapIncident } from './bootstrap-reporter.js';
+import { redactText } from './redaction.js';
 
 export const FATAL_REPORT_BUDGET_MS = 3500;
 let fatalBootstrapPromise = null;
+
+export function serializeBootstrapContext(context) {
+  const seen = new WeakSet();
+  try {
+    return JSON.stringify(context, (_key, value) => {
+      if (!value || typeof value !== 'object') return value;
+      if (seen.has(value)) return '[Circular]';
+      seen.add(value);
+      return value;
+    }) ?? '{}';
+  } catch {
+    return '{"serialization":"failed"}';
+  }
+}
 
 export async function reportWithinFatalBudget(reportPromise, budgetMs = FATAL_REPORT_BUDGET_MS) {
   let timer = null;
@@ -21,7 +36,15 @@ export async function fatalBootstrapShutdown({
   error,
   context = {},
 } = {}) {
-  if (fatalBootstrapPromise) return fatalBootstrapPromise;
+  if (fatalBootstrapPromise) {
+    const serializedContext = serializeBootstrapContext(context);
+    console.error(
+      `❌ [Bootstrap ${code} suppressed - fatal shutdown already in progress]`,
+      redactText(error?.stack || error?.message || error),
+      redactText(serializedContext, { fallback: '{}' }),
+    );
+    return fatalBootstrapPromise;
+  }
   const report = reportBootstrapIncident({ code, error, context })
     .catch(() => ({ state: 'report_failed' }));
   fatalBootstrapPromise = reportWithinFatalBudget(report);

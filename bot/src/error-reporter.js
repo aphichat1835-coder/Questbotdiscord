@@ -28,7 +28,7 @@ const INCIDENT_EVICTION_PRIORITY = new Map([
   ['open', 2],
   ['recovery_pending', 2],
 ]);
-const SENSITIVE_KEY = /authorization|token|secret|cookie|captcha|email|webhook|cipher|password/i;
+const SENSITIVE_KEY = /authorization|token|secret|cookie|captcha|email|webhook|cipher|password|(?:api|private|encryption|access|signing)[_.-]?key/i;
 
 const reporterStatus = {
   lastDeliveryAt: null,
@@ -139,6 +139,28 @@ function incidentFields({ code, incidentId, status, context, occurrences }) {
   return fields;
 }
 
+function fitIncidentEmbedText(title, details, fields, footerText) {
+  const boundedFields = fields.map((field) => ({ ...field }));
+  const fixedLength = () => title.length + footerText.length + boundedFields.reduce(
+    (total, field) => total + field.name.length + field.value.length,
+    0,
+  );
+  let overflow = Math.max(0, fixedLength() + 8 - 6000);
+  for (let index = boundedFields.length - 1; index >= 0 && overflow > 0; index--) {
+    const removable = Math.max(0, boundedFields[index].value.length - 1);
+    const removed = Math.min(removable, overflow);
+    if (removed > 0) {
+      boundedFields[index].value = boundedFields[index].value.slice(0, -removed);
+      overflow -= removed;
+    }
+  }
+  const descriptionBudget = Math.max(8, Math.min(4096, 6000 - fixedLength()));
+  return {
+    fields: boundedFields,
+    description: codeBlock(details, Math.max(0, descriptionBudget - 8)),
+  };
+}
+
 export function buildIncidentWebhookPayload({
   code,
   error = null,
@@ -151,16 +173,24 @@ export function buildIncidentWebhookPayload({
   const details = status === 'RECOVERED'
     ? 'ระบบกลับมาทำงานภายในเกณฑ์ที่กำหนดแล้ว'
     : [safeErrorMessage(error), safeErrorStack(error)].filter(Boolean).join('\n');
+  const title = `${status === 'RECOVERED' ? '✅' : '🚨'} ${definition.title}`;
+  const footerText = 'NeverDie Quest Bot · Backend Incident Log';
+  const fitted = fitIncidentEmbedText(
+    title,
+    details,
+    incidentFields({ code, incidentId, status, context, occurrences }),
+    footerText,
+  );
 
   return {
     username: 'Quest Bot Backend',
     allowed_mentions: { parse: [] },
     embeds: [{
-      title: `${status === 'RECOVERED' ? '✅' : '🚨'} ${definition.title}`,
-      description: codeBlock(details, 2200),
+      title,
+      description: fitted.description,
       color: status === 'RECOVERED' ? 0x57F287 : 0xED4245,
-      fields: incidentFields({ code, incidentId, status, context, occurrences }),
-      footer: { text: 'NeverDie Quest Bot · Backend Incident Log' },
+      fields: fitted.fields,
+      footer: { text: footerText },
       timestamp: new Date().toISOString(),
     }],
   };
@@ -232,6 +262,7 @@ function pruneReporterState(now) {
 function suppressIncident(incident, code, now, state = 'suppressed') {
   incident.occurrences++;
   incident.lastSeenAt = now;
+  if (incident.state === 'recovering') incident.reoccurredDuringRecovery = true;
   reporterStatus.suppressedIncidents++;
   return {
     state,
@@ -252,6 +283,7 @@ function newIncident(code, scope, now) {
     lastAttemptAt: null,
     lastDeliveredAt: null,
     nextRetryAt: null,
+    reoccurredDuringRecovery: false,
     state: 'new',
   };
 }
@@ -388,6 +420,13 @@ export async function reportRecovery({
   const incident = incidentState.get(key);
 
   if (!incident || incident.state === 'recovered') return { state: 'not_open', code };
+  if (['delivery_failed', 'delivery_unknown'].includes(incident.state)) {
+    incident.state = 'recovered';
+    incident.recoveredAt = now;
+    incidentState.set(key, incident);
+    pruneReporterState(now);
+    return { state: 'not_open', code, incidentId: incident.incidentId };
+  }
   if (incident.state === 'delivering') {
     return { state: 'retry_deferred', code, incidentId: incident.incidentId };
   }
@@ -419,7 +458,14 @@ export async function reportRecovery({
   const delivery = await deliverWebhook(payload, 'unexpected recovery delivery failure');
 
   incident.recoveryDelivery = delivery;
-  if (delivery.state === 'delivered') {
+  let resultState = delivery.state;
+  if (incident.reoccurredDuringRecovery) {
+    incident.reoccurredDuringRecovery = false;
+    incident.recoveredAt = null;
+    incident.state = 'open';
+    incident.nextRecoveryRetryAt = null;
+    resultState = 'reopened';
+  } else if (delivery.state === 'delivered') {
     incident.recoveredAt = now;
     incident.state = 'recovered';
     incident.nextRecoveryRetryAt = null;
@@ -431,7 +477,7 @@ export async function reportRecovery({
   pruneReporterState(now);
 
   recordDeliveryStatus(code, incident.incidentId, delivery, now);
-  return { state: delivery.state, code, incidentId: incident.incidentId };
+  return { state: resultState, code, incidentId: incident.incidentId };
 }
 
 function legacyCounterKey(policy) {
