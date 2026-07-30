@@ -18,41 +18,36 @@ function blockNames(block) {
     .filter(Boolean);
 }
 
-function namedImports(moduleSource, modulePath) {
+function declarationBlocks(moduleSource, prefix) {
   const lines = moduleSource.split('\n');
-  const moduleClause = `from '${modulePath}'`;
-  for (let start = 0; start < lines.length; start++) {
-    if (!lines[start].trimStart().startsWith('import {')) continue;
-    const block = [];
-    for (let end = start; end < lines.length; end++) {
-      block.push(lines[end]);
-      if (!lines[end].trimEnd().endsWith(';')) continue;
-      const joined = block.join('\n');
-      if (joined.includes(moduleClause)) return blockNames(joined);
-      start = end;
-      break;
+  const blocks = [];
+  let index = 0;
+  while (index < lines.length) {
+    if (!lines[index].trimStart().startsWith(prefix)) {
+      index++;
+      continue;
     }
+    const block = [];
+    do {
+      block.push(lines[index]);
+      index++;
+    } while (index < lines.length && !block.at(-1).trimEnd().endsWith(';'));
+    blocks.push(block.join('\n'));
   }
-  return [];
+  return blocks;
+}
+
+function namedImports(moduleSource, modulePath) {
+  const moduleClause = `from '${modulePath}'`;
+  const block = declarationBlocks(moduleSource, 'import {')
+    .find((candidate) => candidate.includes(moduleClause));
+  return block ? blockNames(block) : [];
 }
 
 function localNamedExports(moduleSource) {
-  const lines = moduleSource.split('\n');
-  const names = [];
-  for (let start = 0; start < lines.length; start++) {
-    if (!lines[start].trimStart().startsWith('export {')) continue;
-    const block = [];
-    for (let end = start; end < lines.length; end++) {
-      block.push(lines[end]);
-      const trimmed = lines[end].trimEnd();
-      if (!lines[end].includes('}') || !trimmed.endsWith(';')) continue;
-      const joined = block.join('\n');
-      if (!joined.includes(' from ')) names.push(...blockNames(joined));
-      start = end;
-      break;
-    }
-  }
-  return names;
+  return declarationBlocks(moduleSource, 'export {')
+    .filter((block) => !block.includes(' from '))
+    .flatMap(blockNames);
 }
 
 test('discord runner delegates API, schema and progress execution to authoritative modules', async () => {
