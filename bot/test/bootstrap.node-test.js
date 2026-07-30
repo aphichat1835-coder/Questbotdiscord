@@ -8,6 +8,7 @@ import {
   installBootstrapProcessHandlers,
   reportWithinFatalBudget,
   resetBootstrapStateForTests,
+  serializeBootstrapContext,
 } from '../src/bootstrap.js';
 import { INCIDENT } from '../src/incident-catalog.js';
 import { createFakeDiscordWebhookUrl } from '../test-support/fake-webhook.js';
@@ -18,6 +19,14 @@ console.error = () => {};
 
 test.afterEach(() => resetBootstrapStateForTests());
 test.after(() => { console.error = originalConsoleError; });
+
+test('bootstrap context serialization handles circular values without default object strings', () => {
+  const context = { component: 'bootstrap' };
+  context.self = context;
+  const serialized = serializeBootstrapContext(context);
+  assert.equal(serialized, '{"component":"bootstrap","self":"[Circular]"}');
+  assert.doesNotMatch(serialized, /\[object Object\]/);
+});
 
 test('bootstrap reporter sends without importing runtime config or database', async () => {
   let request;
