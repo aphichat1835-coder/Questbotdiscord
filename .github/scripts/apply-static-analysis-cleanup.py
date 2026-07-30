@@ -1,119 +1,27 @@
 from pathlib import Path
 
+bootstrap = Path('bot/src/bootstrap.js').read_text(encoding='utf-8')
+if 'export function serializeBootstrapContext(context)' not in bootstrap:
+    raise SystemExit('bootstrap serializer fix is missing')
+if 'serializedContext = String(context)' in bootstrap:
+    raise SystemExit('unsafe bootstrap object stringification remains')
 
-def replace_once(path, old, new):
-    file = Path(path)
-    text = file.read_text(encoding='utf-8')
-    count = text.count(old)
-    if count != 1:
-        raise SystemExit(f'{path}: expected one target, found {count}')
-    file.write_text(text.replace(old, new), encoding='utf-8')
-
-
-bootstrap = 'bot/src/bootstrap.js'
-replace_once(
-    bootstrap,
-    "export const FATAL_REPORT_BUDGET_MS = 3500;\nlet fatalBootstrapPromise = null;\n",
-    "export const FATAL_REPORT_BUDGET_MS = 3500;\nlet fatalBootstrapPromise = null;\n\nexport function serializeBootstrapContext(context) {\n  const seen = new WeakSet();\n  try {\n    return JSON.stringify(context, (_key, value) => {\n      if (!value || typeof value !== 'object') return value;\n      if (seen.has(value)) return '[Circular]';\n      seen.add(value);\n      return value;\n    }) ?? '{}';\n  } catch {\n    return '{\\\"serialization\\\":\\\"failed\\\"}';\n  }\n}\n",
+architecture = Path('bot/test/quest-architecture-boundaries.node-test.js').read_text(
+    encoding='utf-8',
 )
-replace_once(
-    bootstrap,
-    "  if (fatalBootstrapPromise) {\n    let serializedContext;\n    try {\n      serializedContext = JSON.stringify(context);\n    } catch {\n      serializedContext = String(context);\n    }\n    console.error(\n",
-    "  if (fatalBootstrapPromise) {\n    const serializedContext = serializeBootstrapContext(context);\n    console.error(\n",
-)
+if 'function declarationBlocks(moduleSource, prefix)' not in architecture:
+    raise SystemExit('architecture parser cleanup is missing')
+if 'start = end;' in architecture:
+    raise SystemExit('unused start assignment remains')
 
-bootstrap_test = 'bot/test/bootstrap.node-test.js'
-replace_once(
-    bootstrap_test,
-    "  reportWithinFatalBudget,\n  resetBootstrapStateForTests,\n",
-    "  reportWithinFatalBudget,\n  resetBootstrapStateForTests,\n  serializeBootstrapContext,\n",
-)
-replace_once(
-    bootstrap_test,
-    "test.after(() => { console.error = originalConsoleError; });\n\n",
-    "test.after(() => { console.error = originalConsoleError; });\n\ntest('bootstrap context serialization handles circular values without default object strings', () => {\n  const context = { component: 'bootstrap' };\n  context.self = context;\n  const serialized = serializeBootstrapContext(context);\n  assert.equal(serialized, '{\\\"component\\\":\\\"bootstrap\\\",\\\"self\\\":\\\"[Circular]\\\"}');\n  assert.doesNotMatch(serialized, /\\[object Object\\]/);\n});\n\n",
-)
+coordinator_path = Path('bot/src/quest/rate-limit-coordinator.js')
+coordinator = coordinator_path.read_text(encoding='utf-8')
+start_marker = '\n  resolveResponseRateLimitRoute(task, response) {\n'
+end_marker = '\n\n  enterHalfOpen(task) {'
+if coordinator.count(start_marker) != 1 or coordinator.count(end_marker) != 1:
+    raise SystemExit('rate-limit response helper boundaries are not unique')
 
-architecture_test = 'bot/test/quest-architecture-boundaries.node-test.js'
-old_parsers = """function namedImports(moduleSource, modulePath) {
-  const lines = moduleSource.split('\\n');
-  const moduleClause = `from '${modulePath}'`;
-  for (let start = 0; start < lines.length; start++) {
-    if (!lines[start].trimStart().startsWith('import {')) continue;
-    const block = [];
-    for (let end = start; end < lines.length; end++) {
-      block.push(lines[end]);
-      if (!lines[end].trimEnd().endsWith(';')) continue;
-      const joined = block.join('\\n');
-      if (joined.includes(moduleClause)) return blockNames(joined);
-      start = end;
-      break;
-    }
-  }
-  return [];
-}
-
-function localNamedExports(moduleSource) {
-  const lines = moduleSource.split('\\n');
-  const names = [];
-  for (let start = 0; start < lines.length; start++) {
-    if (!lines[start].trimStart().startsWith('export {')) continue;
-    const block = [];
-    for (let end = start; end < lines.length; end++) {
-      block.push(lines[end]);
-      const trimmed = lines[end].trimEnd();
-      if (!lines[end].includes('}') || !trimmed.endsWith(';')) continue;
-      const joined = block.join('\\n');
-      if (!joined.includes(' from ')) names.push(...blockNames(joined));
-      start = end;
-      break;
-    }
-  }
-  return names;
-}
-"""
-new_parsers = """function declarationBlocks(moduleSource, prefix) {
-  const lines = moduleSource.split('\\n');
-  const blocks = [];
-  let index = 0;
-  while (index < lines.length) {
-    if (!lines[index].trimStart().startsWith(prefix)) {
-      index++;
-      continue;
-    }
-    const block = [];
-    do {
-      block.push(lines[index]);
-      index++;
-    } while (index < lines.length && !block.at(-1).trimEnd().endsWith(';'));
-    blocks.push(block.join('\\n'));
-  }
-  return blocks;
-}
-
-function namedImports(moduleSource, modulePath) {
-  const moduleClause = `from '${modulePath}'`;
-  const block = declarationBlocks(moduleSource, 'import {')
-    .find((candidate) => candidate.includes(moduleClause));
-  return block ? blockNames(block) : [];
-}
-
-function localNamedExports(moduleSource) {
-  return declarationBlocks(moduleSource, 'export {')
-    .filter((block) => !block.includes(' from '))
-    .flatMap(blockNames);
-}
-"""
-replace_once(architecture_test, old_parsers, new_parsers)
-
-coordinator = 'bot/src/quest/rate-limit-coordinator.js'
-replace_once(
-    coordinator,
-    "function verificationAllowsNextMutation(verification) {\n  return !verification\n    || verification.checked === false\n    || verification.verified === true\n    || verification.retryAllowed === true;\n}\n",
-    "function verificationAllowsNextMutation(verification) {\n  return !verification\n    || verification.checked === false\n    || verification.verified === true\n    || verification.retryAllowed === true;\n}\n\nfunction responseRateLimitScope(response, fallbackScope) {\n  const announced = String(\n    response.headers?.get?.('x-ratelimit-scope') ?? fallbackScope,\n  ).toLowerCase();\n  if (['user', 'shared', 'global'].includes(announced)) return announced;\n  return fallbackScope;\n}\n\nfunction responseIsGlobalRateLimit(response, scope) {\n  if (response.status !== 429) return false;\n  return String(response.headers?.get?.('x-ratelimit-global')).toLowerCase() === 'true'\n    || scope === 'global';\n}\n\nfunction resolvedRateLimitDelay(remaining, parsedDelay) {\n  if (remaining === 0 && parsedDelay === 0) return RATE_LIMIT_FALLBACK_MS;\n  return parsedDelay;\n}\n",
-)
-
-new_method = """  resolveResponseRateLimitRoute(task, response) {
+formatted_block = """  resolveResponseRateLimitRoute(task, response) {
     const previousBucket = this.resolvedBucket(task);
     const previousScope = this.routeScope(task);
     const announcedBucket = response.headers?.get?.('x-ratelimit-bucket');
@@ -179,15 +87,9 @@ new_method = """  resolveResponseRateLimitRoute(task, response) {
     });
   }
 """
-coordinator_file = Path(coordinator)
-coordinator_text = coordinator_file.read_text(encoding='utf-8')
-start_marker = "\n  async updateRateLimitState(task, response) {\n"
-end_marker = "\n\n  enterHalfOpen(task) {"
-if coordinator_text.count(start_marker) != 1 or coordinator_text.count(end_marker) != 1:
-    raise SystemExit('rate-limit coordinator method boundaries are not unique')
-start = coordinator_text.index(start_marker) + 1
-end = coordinator_text.index(end_marker, start)
-coordinator_file.write_text(
-    coordinator_text[:start] + new_method + coordinator_text[end:],
+start = coordinator.index(start_marker) + 1
+end = coordinator.index(end_marker, start)
+coordinator_path.write_text(
+    coordinator[:start] + formatted_block + coordinator[end:],
     encoding='utf-8',
 )
