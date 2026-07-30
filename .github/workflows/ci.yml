@@ -17,10 +17,7 @@ on:
 jobs:
   apply-durable-retry-final-fix:
     name: Apply durable retry final fix
-    if: >-
-      github.event_name == 'pull_request' &&
-      github.event.pull_request.number == 15 &&
-      github.event.pull_request.head.sha == 'ad325cd82b08b2d3022cbf88453cef1d4f87a521'
+    if: github.event_name == 'pull_request' && github.event.pull_request.number == 15
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -63,12 +60,21 @@ jobs:
           npm run check
           npm audit --omit=dev --audit-level=high
 
-      - name: Verify and commit only intended source files
+      - name: Restore CI and remove temporary patch tools
+        run: |
+          git show bc57fe1206910da4ccff702b98a91951e74c5f77:.github/workflows/ci.yml > .github/workflows/ci.yml
+          rm .github/workflows/apply-durable-retry-final-fix.yml
+          rm .github/scripts/apply-durable-retry-final-fix.py
+
+      - name: Verify and commit the clean validated tree
         run: |
           git diff --check
           python3 - <<'PY'
           import subprocess
-          allowed = {
+          expected = {
+              '.github/scripts/apply-durable-retry-final-fix.py',
+              '.github/workflows/apply-durable-retry-final-fix.yml',
+              '.github/workflows/ci.yml',
               'bot/package.json',
               'bot/scripts/filter-lcov-source.mjs',
               'bot/src/discord-runner.js',
@@ -76,17 +82,12 @@ jobs:
               'bot/test/runner-state-wait-observer.node-test.js',
           }
           changed = set(subprocess.check_output(['git', 'diff', '--name-only'], text=True).splitlines())
-          if changed != allowed:
+          if changed != expected:
               raise SystemExit(f'changed files mismatch: {sorted(changed)}')
           PY
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add \
-            bot/package.json \
-            bot/scripts/filter-lcov-source.mjs \
-            bot/src/discord-runner.js \
-            bot/src/quest/runner-state-observer.js \
-            bot/test/runner-state-wait-observer.node-test.js
+          git add -A
           git commit -m 'fix: persist durable mutation retry deadlines'
           git push origin HEAD:aa.1
 
