@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 
 
@@ -171,6 +172,7 @@ console.log(`Source-only lines: ${totals.linesHit}/${totals.linesFound} (${perce
 console.log(`Source-only branches: ${totals.branchesHit}/${totals.branchesFound} (${percent(totals.branchesHit, totals.branchesFound)})`);
 console.log(`Source-only functions: ${totals.functionsHit}/${totals.functionsFound} (${percent(totals.functionsHit, totals.functionsFound)})`);
 ''', encoding='utf-8')
+subprocess.run(['git', 'add', '-N', str(filter_script)], check=True)
 
 package_path = Path('bot/package.json')
 package_data = json.loads(package_path.read_text(encoding='utf-8'))
