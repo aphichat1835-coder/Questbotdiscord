@@ -190,3 +190,52 @@ jobs:
         uses: SonarSource/sonarqube-scan-action@c7ee0f9df90b7aa20e8dcf9695dcfe2e7da5b4f2 # nosemgrep: generic.secrets.security.detected-sonarqube-docs-api-key.detected-sonarqube-docs-api-key -- pinned v7 commit
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+  apply-final-qodo-fixes:
+    name: Apply final Qodo fixes once
+    if: github.event_name == 'pull_request' && github.event.pull_request.number == 15
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout aa.1
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: aa.1
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version-file: bot/.node-version
+          cache: npm
+          cache-dependency-path: bot/package-lock.json
+
+      - name: Apply exact patch
+        run: python3 .github/scripts/apply-final-qodo-fixes.py
+
+      - name: Install locked dependencies without lifecycle scripts
+        working-directory: bot
+        run: npm ci --ignore-scripts --no-fund --no-audit
+
+      - name: Rebuild trusted native dependency
+        working-directory: bot
+        run: npm rebuild better-sqlite3 --foreground-scripts
+
+      - name: Run focused Qodo regressions
+        working-directory: bot
+        run: node --import ./test/setup-env.js --test --test-concurrency=1 test/final-qodo-regressions.node-test.js
+
+      - name: Run full test suite
+        working-directory: bot
+        run: npm test
+
+      - name: Commit validated patch
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add bot/src/mutation-retry.js bot/src/quest/rate-limit-coordinator.js bot/test/final-qodo-regressions.node-test.js
+          git diff --cached --check
+          git commit -m 'fix: close final qodo mutation and timer bugs'
+          git push origin HEAD:aa.1
