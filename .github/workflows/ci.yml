@@ -15,6 +15,81 @@ on:
     branches: [main, ss, aa, aa.1]
 
 jobs:
+  apply-durable-retry-final-fix:
+    name: Apply durable retry final fix
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.number == 15 &&
+      github.event.pull_request.head.sha == 'ad325cd82b08b2d3022cbf88453cef1d4f87a521'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout aa.1 with push credentials
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: aa.1
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Setup Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version-file: bot/.node-version
+          cache: npm
+          cache-dependency-path: bot/package-lock.json
+
+      - name: Apply guarded patch
+        run: python3 .github/scripts/apply-durable-retry-final-fix.py
+
+      - name: Install locked dependencies
+        working-directory: bot
+        run: |
+          npm ci --ignore-scripts --no-fund --no-audit
+          npm rebuild better-sqlite3 --foreground-scripts
+
+      - name: Run focused and full validation
+        working-directory: bot
+        run: |
+          node --import ./test/setup-env.js --test --test-concurrency=1 \
+            test/final-qodo-regressions.node-test.js \
+            test/runner-state-wait-observer.node-test.js \
+            test/runner-recovery-planner.node-test.js
+          npm run validate:quest-fixture
+          npm test
+          npm run test:coverage
+          npm run test:mutation-safety
+          npm run check
+          npm audit --omit=dev --audit-level=high
+
+      - name: Verify and commit only intended source files
+        run: |
+          git diff --check
+          python3 - <<'PY'
+          import subprocess
+          allowed = {
+              'bot/package.json',
+              'bot/scripts/filter-lcov-source.mjs',
+              'bot/src/discord-runner.js',
+              'bot/src/quest/runner-state-observer.js',
+              'bot/test/runner-state-wait-observer.node-test.js',
+          }
+          changed = set(subprocess.check_output(['git', 'diff', '--name-only'], text=True).splitlines())
+          if changed != allowed:
+              raise SystemExit(f'changed files mismatch: {sorted(changed)}')
+          PY
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add \
+            bot/package.json \
+            bot/scripts/filter-lcov-source.mjs \
+            bot/src/discord-runner.js \
+            bot/src/quest/runner-state-observer.js \
+            bot/test/runner-state-wait-observer.node-test.js
+          git commit -m 'fix: persist durable mutation retry deadlines'
+          git push origin HEAD:aa.1
+
   repository-shape:
     name: Repository shape
     runs-on: ubuntu-latest
