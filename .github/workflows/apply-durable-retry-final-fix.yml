@@ -1,0 +1,97 @@
+name: Apply durable retry final fix
+
+on:
+  push:
+    branches:
+      - aa.1
+    paths:
+      - '.github/workflows/apply-durable-retry-final-fix.yml'
+      - '.github/scripts/apply-durable-retry-final-fix.py'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apply-durable-retry-final-fix-aa1
+  cancel-in-progress: false
+
+jobs:
+  apply-and-verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout aa.1
+        uses: actions/checkout@v4
+        with:
+          ref: aa.1
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.12.0'
+          cache: npm
+          cache-dependency-path: bot/package-lock.json
+
+      - name: Apply guarded patch
+        run: python3 .github/scripts/apply-durable-retry-final-fix.py
+
+      - name: Install production and test dependencies
+        working-directory: bot
+        run: |
+          npm ci --ignore-scripts --no-fund --no-audit
+          npm rebuild better-sqlite3 --foreground-scripts
+
+      - name: Run focused durable retry tests
+        working-directory: bot
+        run: |
+          node --import ./test/setup-env.js --test --test-concurrency=1 \
+            test/final-qodo-regressions.node-test.js \
+            test/runner-state-wait-observer.node-test.js \
+            test/runner-recovery-planner.node-test.js
+
+      - name: Run full validation
+        working-directory: bot
+        run: |
+          npm run validate:quest-fixture
+          npm test
+          npm run test:coverage
+          npm run test:mutation-safety
+          npm run check
+          npm audit --omit=dev --audit-level=high
+
+      - name: Verify only intended files changed
+        run: |
+          git diff --check
+          git status --short
+          python3 - <<'PY'
+          import subprocess
+          allowed = {
+              'bot/package.json',
+              'bot/scripts/filter-lcov-source.mjs',
+              'bot/src/discord-runner.js',
+              'bot/src/quest/runner-state-observer.js',
+              'bot/test/runner-state-wait-observer.node-test.js',
+          }
+          changed = set(subprocess.check_output(['git', 'diff', '--name-only'], text=True).splitlines())
+          unexpected = changed - allowed
+          missing = allowed - changed
+          if unexpected:
+              raise SystemExit(f'unexpected changed files: {sorted(unexpected)}')
+          if missing:
+              raise SystemExit(f'expected files were not changed: {sorted(missing)}')
+          PY
+
+      - name: Commit verified source changes
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add \
+            bot/package.json \
+            bot/scripts/filter-lcov-source.mjs \
+            bot/src/discord-runner.js \
+            bot/src/quest/runner-state-observer.js \
+            bot/test/runner-state-wait-observer.node-test.js
+          git commit -m 'fix: persist durable mutation retry deadlines'
+          git push origin HEAD:aa.1
