@@ -193,7 +193,7 @@ jobs:
 
   apply-static-analysis-cleanup:
     name: Apply static analysis cleanup once
-    if: github.event_name == 'push' && github.event.head_commit.message == 'chore arm static analysis cleanup'
+    if: github.event_name == 'pull_request' && github.base_ref == 'main'
     permissions:
       contents: write
     runs-on: ubuntu-latest
