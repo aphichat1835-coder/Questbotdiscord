@@ -646,6 +646,15 @@ export class DiscordRateLimitCoordinator {
   }
 
   async handleResponse(task, response) {
+    // Persist the mutation outcome first. A following 429/rate-limit update must
+    // be the final durable transition so Retry-After survives process restart.
+    try {
+      this.updateMutationFromResponse(task, response);
+    } catch {
+      this.stats.checkpointErrors++;
+      if (task.jobKey && task.mutation) this.blockedMutationJobs.add(task.jobKey);
+    }
+
     try {
       await this.updateRateLimitState(task, response);
     } catch {
@@ -656,13 +665,6 @@ export class DiscordRateLimitCoordinator {
       this.updateCircuitFromResponse(task, response);
     } catch {
       this.stats.bookkeepingErrors++;
-    }
-
-    try {
-      this.updateMutationFromResponse(task, response);
-    } catch {
-      this.stats.checkpointErrors++;
-      if (task.jobKey && task.mutation) this.blockedMutationJobs.add(task.jobKey);
     }
 
     try {
