@@ -37,7 +37,7 @@ let observerTimer = null;
 function stateFromStatus(job) {
   const status = String(job.status ?? '');
   if (job.lifecycle === 'stopping') return RUNNER_STATE.STOPPING;
-  if (/TOKEN INVALID|ERROR|ไม่สำเร็จ/.test(status)) return RUNNER_STATE.FAILED;
+  if (/TOKEN INVALID/.test(status)) return RUNNER_STATE.FAILED;
   if (/STOPPED BY USER/.test(status)) return RUNNER_STATE.STOPPED;
   if (/NETWORK RETRY/.test(status)) return RUNNER_STATE.WAITING_RETRY;
   if (/NEXT CHECK|AUTO DAILY ACTIVE/.test(status)) return RUNNER_STATE.WAITING_SCHEDULE;
