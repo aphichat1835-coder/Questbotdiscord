@@ -40,6 +40,18 @@ function sleepingJob(done = Promise.resolve()) {
   };
 }
 
+function beginSleepingRunner(jobKey, scheduleId) {
+  beginRunnerState({
+    jobKey,
+    ownerId: 'wake-owner',
+    mode: 'scheduled',
+    scheduleId,
+    state: RUNNER_STATE.WAITING_SCHEDULE,
+    nextActionAt: new Date(Date.now() + 60_000).toISOString(),
+    stateSource: 'test-sleep',
+  });
+}
+
 async function publishDue(token, offsetMs = -1) {
   publishScheduleHint(authorizationFingerprint(token), {
     nextActionAt: new Date(Date.now() + offsetMs).toISOString(),
@@ -73,13 +85,7 @@ test('smart wake clears a denied attempt and accepts a later changed hint', asyn
   const jobKey = 'scheduled:smart-wake-stop-denied';
   const token = 'smart-wake-stop-denied-token';
   const scheduleId = 9961;
-  beginRunnerState({
-    jobKey,
-    ownerId: 'wake-owner',
-    mode: 'scheduled',
-    scheduleId,
-    state: RUNNER_STATE.RUNNING,
-  });
+  beginSleepingRunner(jobKey, scheduleId);
   const active = sleepingJob(new Promise(() => {}));
   let restarts = 0;
   let stops = 0;
@@ -108,13 +114,7 @@ test('smart wake does not restart over a replacement job created during cleanup'
   const jobKey = 'scheduled:smart-wake-replacement';
   const token = 'smart-wake-replacement-token';
   const scheduleId = 9962;
-  beginRunnerState({
-    jobKey,
-    ownerId: 'wake-owner',
-    mode: 'scheduled',
-    scheduleId,
-    state: RUNNER_STATE.RUNNING,
-  });
+  beginSleepingRunner(jobKey, scheduleId);
 
   let finishCleanup;
   const cleanup = new Promise((resolve) => { finishCleanup = resolve; });
