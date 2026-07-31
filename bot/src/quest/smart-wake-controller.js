@@ -4,11 +4,19 @@ import { authorizationFingerprint } from './authorization-fingerprint.js';
 import { subscribeScheduleHints } from './schedule-hint-bus.js';
 import {
   getRunnerState,
+  RUNNER_MUTATION_KIND,
   RUNNER_STATE,
   transitionRunnerState,
 } from './runner-state-store.js';
 
 export const MAX_SMART_WAKE_TIMER_MS = 24 * 60 * 60 * 1000;
+
+const SLEEPING_RUNNER_STATES = new Set([
+  RUNNER_STATE.WAITING_SCHEDULE,
+  RUNNER_STATE.WAITING_RETRY,
+  RUNNER_STATE.WAITING_RATE_LIMIT,
+  RUNNER_STATE.WAITING_ENROLLMENT,
+]);
 
 const smartWakeups = new Map();
 const restartingJobs = new Set();
@@ -30,9 +38,35 @@ function hintState(rawReason) {
   return RUNNER_STATE.WAITING_SCHEDULE;
 }
 
-function runnerIsSleeping(job) {
-  const status = String(job?.summary?.().status ?? '');
-  return /NEXT CHECK|AUTO DAILY ACTIVE/.test(status);
+function runnerIsSleeping(jobKey) {
+  return SLEEPING_RUNNER_STATES.has(getRunnerState(jobKey)?.state);
+}
+
+function durableClaimRetryAt(state) {
+  const metadataAt = Date.parse(state?.metadata?.claimRetryAt);
+  if (Number.isFinite(metadataAt)) return metadataAt;
+  if (
+    state?.state === RUNNER_STATE.WAITING_RETRY
+    && state?.mutation_kind === RUNNER_MUTATION_KIND.CLAIM
+  ) {
+    const stateAt = Date.parse(state.next_action_at);
+    return Number.isFinite(stateAt) ? stateAt : null;
+  }
+  return null;
+}
+
+function respectClaimCooldown(jobKey, hint, now = Date.now()) {
+  if (!String(hint?.reason ?? '').startsWith('claim:')) return hint;
+  const retryAt = durableClaimRetryAt(getRunnerState(jobKey));
+  const hintedAt = Date.parse(hint.nextActionAt);
+  if (!Number.isFinite(retryAt) || retryAt <= now || retryAt <= hintedAt) return hint;
+  return {
+    ...hint,
+    nextActionAt: new Date(retryAt).toISOString(),
+    reason: 'claim-retry',
+    priority: 96,
+    source: 'claim-retry',
+  };
 }
 
 function recordWakeFailure(jobKey, error) {
@@ -57,7 +91,7 @@ async function restartSleepingRunner(args) {
     throw new TypeError('Smart wake restart handler is not configured');
   }
   const active = readActiveJob(args.jobKey);
-  if (!active || !runnerIsSleeping(active)) {
+  if (!active || !runnerIsSleeping(args.jobKey)) {
     clearWakeTimer(args.jobKey);
     return false;
   }
@@ -128,8 +162,9 @@ function installWakeTimer(args, hint, existing) {
   return true;
 }
 
-function scheduleSmartWake(args, hint) {
+function scheduleSmartWake(args, incomingHint) {
   if (args.mode !== 'scheduled') return;
+  const hint = respectClaimCooldown(args.jobKey, incomingHint);
   if (!hint || hint.reason === 'baseline') {
     clearWakeTimer(args.jobKey);
     return;
@@ -140,9 +175,10 @@ function scheduleSmartWake(args, hint) {
     return;
   }
 
+  const now = Date.now();
   const active = readActiveJob(args.jobKey);
   const currentNextAt = Date.parse(active?.summary?.().nextCheckAt);
-  if (Number.isFinite(currentNextAt) && currentNextAt <= at) {
+  if (Number.isFinite(currentNextAt) && currentNextAt > now && currentNextAt <= at) {
     clearWakeTimer(args.jobKey);
     return;
   }
@@ -151,7 +187,11 @@ function scheduleSmartWake(args, hint) {
   if (existing?.timer) clearTimeout(existing.timer);
   transitionRunnerState(args.jobKey, hintState(hint.reason), {
     nextActionAt: hint.nextActionAt,
-    metadata: { reason: hint.reason, priority: hint.priority },
+    metadata: {
+      ...getRunnerState(args.jobKey)?.metadata,
+      reason: hint.reason,
+      priority: hint.priority,
+    },
     stateSource: `schedule-hint:${hint.source ?? 'runner'}`,
   });
   installWakeTimer(args, hint, existing);
