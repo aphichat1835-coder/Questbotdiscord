@@ -65,6 +65,26 @@ test('observed user stop overrides a schedule-hint waiting state', () => {
   assert.equal(state.next_action_at, null);
 });
 
+test('recoverable quest failure text cannot overwrite a durable retry state', () => {
+  const jobKey = 'scheduled:terminal-observer-retry';
+  const retryAt = '2030-01-01T00:10:00.000Z';
+  beginRunnerState({
+    jobKey,
+    ownerId: 'terminal-observer-owner',
+    mode: 'scheduled',
+    scheduleId: 930004,
+    state: RUNNER_STATE.WAITING_RETRY,
+    nextActionAt: retryAt,
+    stateSource: 'mutation-failure',
+  });
+
+  syncRunnerState(observedJob(jobKey, '⚠️ user: Quest A — รับ Quest ไม่สำเร็จ'));
+  const state = getRunnerState(jobKey);
+  assert.equal(state.state, RUNNER_STATE.WAITING_RETRY);
+  assert.equal(state.next_action_at, retryAt);
+  assert.equal(state.state_source, 'mutation-failure');
+});
+
 test('an already terminal durable state remains authoritative over stale running text', () => {
   const jobKey = 'scheduled:terminal-observer-preserve';
   beginRunnerState({
