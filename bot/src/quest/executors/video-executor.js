@@ -7,7 +7,7 @@ const VIDEO_UNCHANGED_CHECK_LIMIT = 8;
 
 export function matchesVideoQuest(value) {
   const eventName = typeof value === 'string' ? value : value?.eventName;
-  return VIDEO_EVENTS.has(eventName);
+  return VIDEO_EVENTS.has(eventName) || /^WATCH_VIDEO(?:_|$)/.test(String(eventName ?? ''));
 }
 
 export function nextVideoTimestamp(current, target, enrolledAtMs, now = Date.now()) {
