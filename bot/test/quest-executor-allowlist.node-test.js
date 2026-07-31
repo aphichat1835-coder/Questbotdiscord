@@ -9,6 +9,7 @@ test('video executor accepts compatible WATCH_VIDEO protocol variants', () => {
   assert.equal(matchesVideoQuest('WATCH_VIDEO_ON_MOBILE'), true);
   assert.equal(matchesVideoQuest('WATCH_VIDEO_V2'), true);
   assert.equal(matchesVideoQuest('WATCH_VIDEO_NEW_PROTOCOL'), true);
+  assert.equal(matchesVideoQuest('WATCH_STREAM_VIDEO'), false);
   assert.equal(matchesVideoQuest('STREAM_ON_DESKTOP'), false);
 });
 
@@ -17,6 +18,7 @@ test('desktop executor accepts versioned PLAY_ON_DESKTOP protocol variants only'
   assert.equal(matchesDesktopQuest('PLAY_ON_DESKTOP_V2'), true);
   assert.equal(matchesDesktopQuest('PLAY_ON_DESKTOP_V3'), true);
   assert.equal(matchesDesktopQuest('PLAY_ON_DESKTOP_V99'), true);
+  assert.equal(matchesDesktopQuest('PLAY_ON_DESKTOP_V2_BETA'), false);
   assert.equal(matchesDesktopQuest('PLAY_ON_DESKTOP_NEW_PROTOCOL'), false);
 });
 
@@ -41,8 +43,12 @@ test('lookalike variants still fail closed when required Quest schema is invalid
   );
 });
 
-test('events outside verified protocol families remain quarantined', () => {
-  for (const eventName of ['BRAND_NEW_EVENT', 'PLAY_ON_DESKTOP_NEW_PROTOCOL']) {
+test('events outside compatible protocol families remain quarantined', () => {
+  for (const eventName of [
+    'BRAND_NEW_EVENT',
+    'WATCH_STREAM_VIDEO',
+    'PLAY_ON_DESKTOP_NEW_PROTOCOL',
+  ]) {
     const executor = selectQuestExecutor({ eventName });
     assert.equal(executor.supportsAutomaticProgress, false);
     assert.equal(executor.id, 'unknown');
