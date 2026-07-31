@@ -16,6 +16,7 @@ import {
   RUNNER_MUTATION_KIND,
   RUNNER_MUTATION_STATUS,
   RUNNER_STATE,
+  transitionRunnerState,
 } from '../src/quest/runner-state-store.js';
 
 test('captcha and ambiguous platforms use durable long claim cooldowns', () => {
@@ -56,7 +57,7 @@ test('temporary claim failures use the standard cooldown', () => {
   assert.equal(retry.delayMs, CLAIM_RETRY_DELAY_MS);
 });
 
-test('claim retry survives restart through durable next_action_at', () => {
+test('claim retry survives restart and later schedule-state transitions', () => {
   const jobKey = 'scheduled:claim-retry-policy';
   const now = new Date('2030-01-01T00:00:00.000Z');
   beginRunnerState({
@@ -75,12 +76,22 @@ test('claim retry survives restart through durable next_action_at', () => {
     progressSecs: 60,
   }, { ...retry, now });
 
-  const state = getRunnerState(jobKey);
+  let state = getRunnerState(jobKey);
+  const expectedRetryAt = now.getTime() + CLAIM_RETRY_DELAY_MS;
   assert.equal(state.state, RUNNER_STATE.WAITING_RETRY);
   assert.equal(state.mutation_kind, RUNNER_MUTATION_KIND.CLAIM);
   assert.equal(state.mutation_status, RUNNER_MUTATION_STATUS.FAILED);
   assert.equal(state.metadata.claimRetryReason, CLAIM_RETRY_REASON.TEMPORARY_API_ERROR);
-  assert.equal(claimRetryAt(jobKey), now.getTime() + CLAIM_RETRY_DELAY_MS);
+  assert.equal(claimRetryAt(jobKey), expectedRetryAt);
+
+  transitionRunnerState(jobKey, RUNNER_STATE.WAITING_SCHEDULE, {
+    nextActionAt: '2030-01-01T08:00:00.000Z',
+    stateSource: 'legacy-observer',
+  });
+  state = getRunnerState(jobKey);
+  assert.equal(state.state, RUNNER_STATE.WAITING_SCHEDULE);
+  assert.equal(state.metadata.claimRetryAt, new Date(expectedRetryAt).toISOString());
+  assert.equal(claimRetryAt(jobKey), expectedRetryAt);
 });
 
 test('rejected claim persists an API 4xx error category', () => {
