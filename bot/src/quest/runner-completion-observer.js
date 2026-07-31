@@ -1,5 +1,6 @@
 import * as legacyRunner from '../discord-runner.js';
 import { transientRetryDelayMs } from '../runner-schedule.js';
+import { discordRateLimitCoordinator } from './rate-limit-coordinator.js';
 import { getScheduledRunner } from '../scheduled-runner-store.js';
 import {
   getRunnerState,
@@ -167,7 +168,10 @@ export function observeRunnerCompletion(jobKey, mode, scheduleId = null) {
       () => runObserverHandler(jobKey, () => handleResolved(jobKey, mode, scheduleId)),
       (error) => runObserverHandler(jobKey, () => handleRejected(jobKey, error)),
     )
-    .finally(() => observedCompletions.delete(jobKey))
+    .finally(() => {
+      discordRateLimitCoordinator.releaseJob(jobKey);
+      observedCompletions.delete(jobKey);
+    })
     .catch((error) => reportSafely(error, jobKey));
   return true;
 }

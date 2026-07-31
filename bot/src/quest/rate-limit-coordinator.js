@@ -749,6 +749,11 @@ export class DiscordRateLimitCoordinator {
     this.scheduleWakeup();
   }
 
+  releaseJob(jobKey) {
+    if (typeof jobKey !== 'string' || jobKey.length === 0) return false;
+    return this.blockedMutationJobs.delete(jobKey);
+  }
+
   snapshot() {
     const circuits = [...this.circuits.values()];
     return {
