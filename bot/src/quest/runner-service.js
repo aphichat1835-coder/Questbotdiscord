@@ -303,7 +303,9 @@ export async function restoreScheduledRunners(client) {
   return result;
 }
 
-export async function shutdownRunners(timeoutMs = null) {
+export const DEFAULT_RUNNER_SHUTDOWN_TIMEOUT_MS = 15_000;
+
+export async function shutdownRunners(timeoutMs = DEFAULT_RUNNER_SHUTDOWN_TIMEOUT_MS) {
   for (const job of legacyRunner.listJobs()) {
     const current = getRunnerState(job.key);
     if (current) {
