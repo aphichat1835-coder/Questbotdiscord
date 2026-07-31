@@ -29,7 +29,7 @@ test('malformed fetch input returns a rejected promise instead of throwing synch
   await assert.rejects(request, TypeError);
 });
 
-test('streaming Request bodies survive Discord API version rewriting', async () => {
+test('streaming Request bodies survive Discord API coordination without version rewriting', async () => {
   const observed = [];
   installDiscordApiRuntime({
     coordinator: {
@@ -40,7 +40,7 @@ test('streaming Request bodies survive Discord API version rewriting', async () 
     },
     fetchFn: async (input) => {
       assert.equal(input instanceof Request, true);
-      assert.equal(input.url, 'https://discord.com/api/v10/quests/quest-stream/heartbeat');
+      assert.equal(input.url, 'https://discord.com/api/v9/quests/quest-stream/heartbeat');
       assert.equal(await input.text(), 'stream-payload');
       return new Response('{}', { status: 200 });
     },
@@ -65,7 +65,7 @@ test('streaming Request bodies survive Discord API version rewriting', async () 
   const response = await globalThis.fetch(request);
   assert.equal(response.status, 200);
   assert.deepEqual(observed, [{
-    url: 'https://discord.com/api/v10/quests/quest-stream/heartbeat',
+    url: 'https://discord.com/api/v9/quests/quest-stream/heartbeat',
     method: 'POST',
   }]);
 });
