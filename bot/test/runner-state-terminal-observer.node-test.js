@@ -1,6 +1,7 @@
 import './setup-env.js';
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { readFile } from 'node:fs/promises';
 import { syncRunnerState } from '../src/quest/runner-state-observer.js';
 import {
   beginRunnerState,
@@ -83,6 +84,16 @@ test('recoverable quest failure text cannot overwrite a durable retry state', ()
   assert.equal(state.state, RUNNER_STATE.WAITING_RETRY);
   assert.equal(state.next_action_at, retryAt);
   assert.equal(state.state_source, 'mutation-failure');
+});
+
+test('observer source does not classify generic failure wording as terminal', async () => {
+  const source = await readFile(
+    new URL('../src/quest/runner-state-observer.js', import.meta.url),
+    'utf8',
+  );
+
+  assert.match(source, /if \(\/TOKEN INVALID\/\.test\(status\)\)/);
+  assert.doesNotMatch(source, /TOKEN INVALID\|ERROR\|ไม่สำเร็จ/);
 });
 
 test('an already terminal durable state remains authoritative over stale running text', () => {
