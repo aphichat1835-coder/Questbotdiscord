@@ -38,7 +38,6 @@ test('mutating 429 preserves Discord Retry-After as the final durable deadline',
   });
   markRunnerMutationInFlight(jobKey, new Date(now));
 
-  let resolved = null;
   const response = new Response(JSON.stringify({ retry_after: retryAfterSeconds }), {
     status: 429,
     headers: {
@@ -47,7 +46,7 @@ test('mutating 429 preserves Discord Retry-After as the final durable deadline',
       'x-ratelimit-global': 'true',
     },
   });
-  await coordinator.handleResponse({
+  const handled = await coordinator.handleResponse({
     account: 'rate-limit-account-fingerprint',
     jobKey,
     mutation: {
@@ -58,10 +57,9 @@ test('mutating 429 preserves Discord Retry-After as the final durable deadline',
     method: 'POST',
     route: 'POST:/quests/:questId/enroll',
     url: `https://discord.com/api/v9/quests/${questId}/enroll`,
-    resolve(value) { resolved = value; },
   }, response);
 
-  assert.equal(resolved, response);
+  assert.equal(handled, response);
   const state = getRunnerState(jobKey);
   assert.equal(state.mutation_status, RUNNER_MUTATION_STATUS.UNCERTAIN);
   assert.equal(state.state, RUNNER_STATE.WAITING_RATE_LIMIT);
