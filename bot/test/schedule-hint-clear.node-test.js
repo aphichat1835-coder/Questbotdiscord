@@ -134,7 +134,7 @@ test('clearing a due hint cancels its stale smart wake timer', async () => {
   assert.equal(restarts, 0);
 });
 
-test('falling back from an urgent hint to baseline cancels the urgent wake timer', async () => {
+test('falling back from an urgent hint to baseline removes the urgent wake instead of scheduling baseline', async () => {
   const jobKey = 'scheduled:hint-baseline-fallback';
   const token = 'hint-baseline-fallback-token';
   const account = authorizationFingerprint(token);
@@ -145,7 +145,9 @@ test('falling back from an urgent hint to baseline cancels the urgent wake timer
     accountId: 'hint-account',
     mode: 'scheduled',
     scheduleId,
-    state: RUNNER_STATE.RUNNING,
+    state: RUNNER_STATE.WAITING_SCHEDULE,
+    nextActionAt: new Date(Date.now() + 60_000).toISOString(),
+    stateSource: 'test-sleep',
   });
 
   let restarts = 0;
@@ -166,16 +168,19 @@ test('falling back from an urgent hint to baseline cancels the urgent wake timer
     priority: 10,
   }), true);
   assert.equal(publishScheduleHint(account, {
-    nextActionAt: new Date(Date.now() - 1).toISOString(),
+    nextActionAt: new Date(Date.now() + 30).toISOString(),
     reason: 'recovery',
     source: 'recovery',
     priority: 99,
   }), true);
+  assert.equal(getRunnerState(jobKey).state, RUNNER_STATE.RECOVERING);
   assert.equal(clearScheduleHint(account, 'recovery'), true);
 
-  await new Promise((resolve) => setTimeout(resolve, 20));
+  await new Promise((resolve) => setTimeout(resolve, 60));
   assert.equal(restarts, 0);
-  assert.equal(getRunnerState(jobKey).state, RUNNER_STATE.RUNNING);
+  const state = getRunnerState(jobKey);
+  assert.equal(state.state, RUNNER_STATE.RECOVERING);
+  assert.equal(state.state_source, 'schedule-hint:recovery');
 });
 
 test('a schedule hint without reason safely uses the waiting-schedule state', () => {
