@@ -30,6 +30,9 @@ test('coordinator releases only the completed job mutation block', () => {
   assert.equal(coordinator.blockedMutationJobs.has('job-completed'), false);
   assert.equal(coordinator.blockedMutationJobs.has('job-active'), true);
   assert.equal(coordinator.releaseJob('job-completed'), false);
+  assert.equal(coordinator.releaseJob(''), false);
+  assert.equal(coordinator.releaseJob(null), false);
+  assert.equal(coordinator.blockedMutationJobs.has('job-active'), true);
 });
 
 test('runner completion releases its in-memory mutation block', async () => {
