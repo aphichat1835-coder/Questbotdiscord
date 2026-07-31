@@ -83,6 +83,8 @@ test('runner source uses the locked session and defers terminal issue details', 
   assert.match(source, /reportOneShotBotCompletion\(\)/);
   assert.match(source, /reportOneShotExternalCompletion\(\)/);
   assert.match(source, /recordOneShotRewardClaim/);
+  assert.match(source, /claimPendingCount/);
+  assert.match(source, /Quest และรับรางวัลทั้งหมดเสร็จสิ้นแล้ว/);
   assert.match(source, /addLog\('🧹 QUEST ACTIVITY CLEARED'\)/);
   assert.match(source, /getOneShotSessionSummary/);
   assert.match(source, /reportOneShotSummary\(\)/);
