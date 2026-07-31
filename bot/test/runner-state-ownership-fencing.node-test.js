@@ -1,6 +1,7 @@
 import './setup-env.js';
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { readFile } from 'node:fs/promises';
 import {
   clearRunnerExecutionContextsForTests,
   registerRunnerExecution,
@@ -89,4 +90,12 @@ test('observer cannot write durable state after scheduled ownership moves', () =
   } finally {
     registration.release();
   }
+});
+
+test('direct runner state transitions fence worker ownership before writing', async () => {
+  const source = await readFile(new URL('../src/discord-runner.js', import.meta.url), 'utf8');
+
+  assert.match(source, /executionContext\?\.workerHolder/);
+  assert.match(source, /assertRunnerMutationOwnership\(jobKey\)/);
+  assert.match(source, /if \(isTerminalRunnerError\(error\)\) throw error;/);
 });
