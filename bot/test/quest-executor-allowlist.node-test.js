@@ -23,5 +23,7 @@ test('unknown lookalike events are quarantined instead of executed automatically
     const executor = selectQuestExecutor({ eventName });
     assert.equal(executor.supportsAutomaticProgress, false);
     assert.equal(executor.id, 'unknown');
+    assert.equal(executor.mutation, null);
+    assert.equal(executor.describeUnsupportedReason({ eventName }), 'UNKNOWN_EVENT');
   }
 });
