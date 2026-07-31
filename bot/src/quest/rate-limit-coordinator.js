@@ -3,12 +3,14 @@ import { verifyRunnerMutationFromQuests } from './durable-mutation-verifier.js';
 import { resolveRunnerJobKey } from './runner-execution-context.js';
 import { assertRunnerMutationOwnership } from './runner-ownership-guard.js';
 import {
+  getRunnerState,
   markRunnerMutationAccepted,
   markRunnerMutationFailed,
   markRunnerMutationInFlight,
   markRunnerMutationUncertain,
   prepareRunnerMutation,
   RUNNER_MUTATION_KIND,
+  RUNNER_MUTATION_STATUS,
   RUNNER_STATE,
   transitionRunnerState,
 } from './runner-state-store.js';
@@ -166,6 +168,16 @@ function mutationFromRequest(url, method, options) {
   };
 }
 
+function mutationVerificationOptions(jobKey) {
+  const state = getRunnerState(jobKey);
+  return {
+    // Only an uncertain transport result may be finalized as NOT_APPLIED here.
+    // ACCEPTED responses stay blocked until the desired server state appears,
+    // protecting against eventual-consistency duplicates.
+    finalizeAbsent: state?.mutation_status === RUNNER_MUTATION_STATUS.UNCERTAIN,
+  };
+}
+
 async function publishQuestSchedule(task, response) {
   if (!response.ok || !isQuestListRequest(task)) {
     return { published: false, verification: null };
@@ -174,7 +186,11 @@ async function publishQuestSchedule(task, response) {
   const quests = questArray(candidate);
   if (!quests) return { published: false, verification: null };
   const verification = task.jobKey
-    ? verifyRunnerMutationFromQuests(task.jobKey, quests)
+    ? verifyRunnerMutationFromQuests(
+      task.jobKey,
+      quests,
+      mutationVerificationOptions(task.jobKey),
+    )
     : null;
   const enrollmentBlockedUntil = candidate?.quest_enrollment_blocked_until ?? null;
   const hint = chooseNextQuestAction({
@@ -537,7 +553,6 @@ export class DiscordRateLimitCoordinator {
       scope,
     });
   }
-
 
   enterHalfOpen(task) {
     const key = this.circuitKey(task);
