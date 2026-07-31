@@ -37,6 +37,7 @@ import {
   markOneShotProgressMutationSent,
   markOneShotQuestRunning,
   ONE_SHOT_QUEST_STATUS,
+  recordOneShotRewardClaim,
   recordOneShotVerifiedProgress,
 } from './one-shot-quest-session.js';
 import {
@@ -750,8 +751,12 @@ export async function startRunner({
 
   async function reportOneShotTerminalState() {
     const summary = oneShotSummary();
+    const completedCount = summary.completedByBotCount + summary.completedExternalCount;
     addLog(`🔎 ${username}: พบ ${summary.totalSupportedQuests} QUESTS`);
     addLog(`🎉 ${username}: ทำสำเร็จ ${summary.completedByBotCount} QUESTS`);
+    if (completedCount > 0) {
+      addLog(`🎁 ${username}: รับรางวัลสำเร็จ ${summary.claimedRewardCount}/${completedCount} QUESTS`);
+    }
     addLog('🧹 QUEST ACTIVITY CLEARED');
     await flush();
     return summary;
@@ -773,19 +778,21 @@ export async function startRunner({
     return oneShotOutcome();
   }
 
-  async function reportOneShotExternalCompletion(quest) {
+  async function completeAndClaimOneShotQuest(quest) {
+    const status = completeOneShotQuest(oneShotSession, quest.id);
+    const claimed = await claimSilently(quest);
+    recordOneShotRewardClaim(oneShotSession, quest.id, { claimed });
+    return status;
+  }
+
+  async function reportOneShotExternalCompletion() {
     if (mode !== 'oneshot') return null;
-    completeOneShotQuest(oneShotSession, quest.id);
     await reportOneShotTerminalState();
     return oneShotOutcome();
   }
 
-  async function reportOneShotBotCompletion(quest) {
+  async function reportOneShotBotCompletion() {
     if (mode !== 'oneshot') return null;
-    const status = completeOneShotQuest(oneShotSession, quest.id);
-    if (status !== ONE_SHOT_QUEST_STATUS.COMPLETED_BY_BOT) {
-      return reportOneShotExternalCompletion(quest);
-    }
     await reportOneShotTerminalState();
     return oneShotOutcome();
   }
@@ -794,8 +801,12 @@ export async function startRunner({
     if (mode !== 'oneshot' || oneShotSummaryReported) return;
     oneShotSummaryReported = true;
     const summary = oneShotSummary();
+    const completedCount = summary.completedByBotCount + summary.completedExternalCount;
     addLog(`🔎 ${username}: พบ ${summary.totalSupportedQuests} QUESTS`);
     addLog(`🎉 ${username}: ทำสำเร็จ ${summary.completedByBotCount} QUESTS`);
+    if (completedCount > 0) {
+      addLog(`🎁 ${username}: รับรางวัลสำเร็จ ${summary.claimedRewardCount}/${completedCount} QUESTS`);
+    }
     addLog('🧹 QUEST ACTIVITY CLEARED');
 
     if (summary.totalSupportedQuests === 0) {
@@ -805,15 +816,21 @@ export async function startRunner({
     }
 
     if (summary.issues.length === 0
+        && summary.claimPendingCount === 0
         && summary.completedByBotCount === summary.totalSupportedQuests) {
-      addLog('🎉 บอทได้เข้าไปทำ Quest ทั้งหมดเสร็จสิ้นทั้งหมดแล้ว');
+      addLog('🎉 บอทได้เข้าไปทำ Quest และรับรางวัลทั้งหมดเสร็จสิ้นแล้ว');
       await flush();
       return;
     }
 
-    addLog(summary.completedByBotCount === 0
-      ? '❌ บอทไม่สามารถดำเนินการ Quest ให้สำเร็จได้'
-      : '⚠️ มีบาง Quest ที่บอทดำเนินการไม่สำเร็จ');
+    if (summary.completedByBotCount === summary.totalSupportedQuests
+        && summary.claimPendingCount > 0) {
+      addLog('⚠️ Quest เสร็จแล้ว แต่มีรางวัลที่ยังรับไม่สำเร็จ');
+    } else {
+      addLog(summary.completedByBotCount === 0
+        ? '❌ บอทไม่สามารถดำเนินการ Quest ให้สำเร็จได้'
+        : '⚠️ มีบาง Quest ที่บอทดำเนินการไม่สำเร็จ');
+    }
     summary.issues.forEach((issue, index) => {
       addLog(`${index + 1}. ${issue.name}`);
       addLog(`   └ ${issue.reason}`);
@@ -887,8 +904,10 @@ export async function startRunner({
     if (!quest.completed && isRunnableQuest(quest)) return null;
     if (quest.completed) {
       if (mode === 'oneshot') {
-        await claimSilently(quest);
-        return reportOneShotExternalCompletion(quest);
+        const status = await completeAndClaimOneShotQuest(quest);
+        return status === ONE_SHOT_QUEST_STATUS.COMPLETED_BY_BOT
+          ? reportOneShotBotCompletion()
+          : reportOneShotExternalCompletion();
       }
       return idleQuestOutcome(selection.runnable.length);
     }
@@ -1139,11 +1158,10 @@ export async function startRunner({
     );
 
     if (mode === 'oneshot') {
-      const status = completeOneShotQuest(oneShotSession, fresh.id);
-      await claimSilently(fresh);
+      const status = await completeAndClaimOneShotQuest(fresh);
       return status === ONE_SHOT_QUEST_STATUS.COMPLETED_BY_BOT
-        ? reportOneShotBotCompletion(fresh)
-        : reportOneShotExternalCompletion(fresh);
+        ? reportOneShotBotCompletion()
+        : reportOneShotExternalCompletion();
     }
 
     await claimSilently(fresh);

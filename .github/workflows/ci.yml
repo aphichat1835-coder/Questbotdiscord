@@ -163,7 +163,6 @@ jobs:
             bot/test-output.log
             bot/mutation-output.log
             bot/coverage/lcov.info
-            bot/src/discord-runner.js
           if-no-files-found: error
           retention-days: 7
 
