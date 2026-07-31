@@ -101,11 +101,9 @@ async function verifyAfterUncertainFailure(verify) {
 }
 
 function handleVerificationFailure(error) {
-  // Fresh server evidence may already prove the mutation landed. If persisting
-  // VERIFIED fails, preserve the existing uncertain checkpoint for recovery
-  // instead of incorrectly downgrading it to FAILED.
-  if (error instanceof RunnerCheckpointError) throw error;
-  markFailed(error);
+  // A failed fresh read is not evidence that the earlier mutation was absent.
+  // Preserve UNCERTAIN so restart recovery must verify server state before any
+  // later mutation. A checkpoint persistence failure is likewise terminal.
   throw error;
 }
 
