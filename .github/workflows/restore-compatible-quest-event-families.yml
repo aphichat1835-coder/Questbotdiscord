@@ -1,0 +1,40 @@
+name: Restore compatible Quest event families
+
+on:
+  push:
+    branches:
+      - aa.1
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout aa.1
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: aa.1
+          fetch-depth: 0
+
+      - name: Restore compatible event families
+        run: python .github/scripts/restore-compatible-quest-event-families.py
+
+      - name: Validate executors and compatibility tests
+        run: |
+          node --check bot/src/quest/executors/video-executor.js
+          node --check bot/src/quest/executors/desktop-executor.js
+          node --check bot/test/quest-executor-allowlist.node-test.js
+          node --check bot/test/quest-executor-contract.node-test.js
+          node --check bot/test/quest-executors.node-test.js
+
+      - name: Commit change and remove temporary updater
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "fix preserve compatible Quest event families"
+          git push origin HEAD:aa.1
