@@ -75,13 +75,21 @@ test('discord runner delegates API, schema and progress execution to authoritati
   assert.doesNotMatch(runner, /\/api\/v9/);
 });
 
-test('Discord API v10, client headers and compatibility errors have one source of truth', async () => {
+test('Quest v9 transport, client headers and compatibility errors have one source of truth', async () => {
   const apiClient = await source('../src/quest/api/discord-client.js');
+  const runtime = await source('../src/quest/discord-api-runtime.js');
   const runner = await source('../src/discord-runner.js');
   const apiImports = namedImports(runner, './quest/api/discord-client.js');
   const localExports = localNamedExports(runner);
 
-  assert.match(apiClient, /export const DISCORD_API_BASE = 'https:\/\/discord\.com\/api\/v10'/);
+  assert.match(apiClient, /export const QUEST_API_VERSION = 9;/);
+  assert.match(
+    apiClient,
+    /export const DISCORD_API_BASE = `https:\/\/discord\.com\/api\/v\$\{QUEST_API_VERSION\}`;/,
+  );
+  assert.match(runtime, /export const DISCORD_API_VERSION = 10;/);
+  assert.match(runtime, /preservesRequestedVersion: true/);
+  assert.doesNotMatch(runtime, /pathname\.replace\(/);
   assert.match(apiClient, /export class DiscordApiError extends Error/);
   assert.match(apiClient, /export function isFatalAuthError\(/);
   assert.match(apiClient, /export function buildDiscordUserHeaders\(/);
