@@ -26,7 +26,7 @@ function fetchInputUrl(input) {
   throw new TypeError('Unsupported fetch input');
 }
 
-test('Discord API runtime rewrites older versioned URLs to v10 only', async () => {
+test('Discord API runtime coordinates older versioned URLs without rewriting them', async () => {
   const calls = [];
   installDiscordApiRuntime({
     fetchFn: async (input) => {
@@ -40,13 +40,13 @@ test('Discord API runtime rewrites older versioned URLs to v10 only', async () =
       headers: { Authorization: 'fixture-user-token' },
     });
     assert.equal(DISCORD_API_VERSION, 10);
-    assert.equal(calls[0], 'https://discord.com/api/v10/users/@me');
+    assert.equal(calls[0], 'https://discord.com/api/v9/users/@me');
   } finally {
     uninstallDiscordApiRuntime();
   }
 });
 
-test('Request input method reaches the coordinator when options do not override it', async () => {
+test('Request input method and requested API version reach the coordinator unchanged', async () => {
   const scheduled = [];
   const transported = [];
   const coordinator = {
@@ -71,11 +71,11 @@ test('Request input method reaches the coordinator when options do not override 
     });
     await globalThis.fetch(request);
     assert.deepEqual(scheduled, [{
-      url: 'https://discord.com/api/v10/quests/quest-1/claim-reward',
+      url: 'https://discord.com/api/v9/quests/quest-1/claim-reward',
       method: 'POST',
     }]);
     assert.deepEqual(transported, [{
-      url: 'https://discord.com/api/v10/quests/quest-1/claim-reward',
+      url: 'https://discord.com/api/v9/quests/quest-1/claim-reward',
       method: 'POST',
     }]);
   } finally {
@@ -83,7 +83,7 @@ test('Request input method reaches the coordinator when options do not override 
   }
 });
 
-test('non-Discord traffic is not rewritten or coordinated', async () => {
+test('non-Discord traffic is not coordinated', async () => {
   const calls = [];
   installDiscordApiRuntime({
     fetchFn: async (input) => {
