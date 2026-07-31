@@ -39,7 +39,9 @@ function hintState(rawReason) {
 }
 
 function runnerIsSleeping(jobKey) {
-  return SLEEPING_RUNNER_STATES.has(getRunnerState(jobKey)?.state);
+  const state = getRunnerState(jobKey);
+  return SLEEPING_RUNNER_STATES.has(state?.state)
+    || String(state?.state_source ?? '').startsWith('schedule-hint:');
 }
 
 function durableClaimRetryAt(state) {
