@@ -6,7 +6,14 @@ export const ONE_SHOT_QUEST_STATUS = Object.freeze({
   FAILED: 'failed',
 });
 
+export const ONE_SHOT_REWARD_STATUS = Object.freeze({
+  NOT_APPLICABLE: 'not_applicable',
+  PENDING: 'pending',
+  CLAIMED: 'claimed',
+});
+
 export const EXTERNAL_COMPLETION_REASON = 'Quest เสร็จจากภายนอก จึงไม่นับเป็น Quest ที่บอททำ';
+export const REWARD_PENDING_REASON = 'Quest เสร็จแล้ว แต่ยังรับรางวัลไม่สำเร็จ';
 
 const TERMINAL_STATUSES = new Set([
   ONE_SHOT_QUEST_STATUS.COMPLETED_BY_BOT,
@@ -29,6 +36,11 @@ function isTerminalStatus(status) {
   return TERMINAL_STATUSES.has(status);
 }
 
+function isCompletedStatus(status) {
+  return status === ONE_SHOT_QUEST_STATUS.COMPLETED_BY_BOT
+    || status === ONE_SHOT_QUEST_STATUS.COMPLETED_EXTERNAL;
+}
+
 export function createOneShotQuestSession(quests) {
   const questOrder = [];
   const questMap = new Map();
@@ -49,6 +61,8 @@ export function createOneShotQuestSession(quests) {
       progressMutationSent: false,
       botProgressVerified: false,
       reason: null,
+      rewardStatus: ONE_SHOT_REWARD_STATUS.NOT_APPLICABLE,
+      rewardReason: null,
     });
   }
 
@@ -128,7 +142,22 @@ export function completeOneShotQuest(session, questId) {
     ? ONE_SHOT_QUEST_STATUS.COMPLETED_BY_BOT
     : ONE_SHOT_QUEST_STATUS.COMPLETED_EXTERNAL;
   quest.reason = completedByBot ? null : EXTERNAL_COMPLETION_REASON;
+  quest.rewardStatus = ONE_SHOT_REWARD_STATUS.PENDING;
+  quest.rewardReason = REWARD_PENDING_REASON;
   return quest.status;
+}
+
+export function recordOneShotRewardClaim(session, questId, {
+  claimed,
+  reason = REWARD_PENDING_REASON,
+} = {}) {
+  const quest = getRequiredQuest(session, questId);
+  if (!isCompletedStatus(quest.status)) return false;
+  quest.rewardStatus = claimed
+    ? ONE_SHOT_REWARD_STATUS.CLAIMED
+    : ONE_SHOT_REWARD_STATUS.PENDING;
+  quest.rewardReason = claimed ? null : String(reason || REWARD_PENDING_REASON);
+  return true;
 }
 
 export function failOneShotQuest(session, questId, reason) {
@@ -136,7 +165,19 @@ export function failOneShotQuest(session, questId, reason) {
   if (isTerminalStatus(quest.status)) return false;
   quest.status = ONE_SHOT_QUEST_STATUS.FAILED;
   quest.reason = String(reason || 'ไม่สามารถดำเนินการ Quest ได้');
+  quest.rewardStatus = ONE_SHOT_REWARD_STATUS.NOT_APPLICABLE;
+  quest.rewardReason = null;
   return true;
+}
+
+function issueForQuest(quest) {
+  const reasons = [];
+  if (quest.reason) reasons.push(quest.reason);
+  if (quest.rewardStatus === ONE_SHOT_REWARD_STATUS.PENDING && quest.rewardReason) {
+    reasons.push(quest.rewardReason);
+  }
+  if (!reasons.length) return null;
+  return { id: quest.id, name: quest.name, reason: reasons.join(' — ') };
 }
 
 export function getOneShotSessionSummary(session) {
@@ -146,6 +187,8 @@ export function getOneShotSessionSummary(session) {
     completedExternalCount: 0,
     failedCount: 0,
     pendingCount: 0,
+    claimedRewardCount: 0,
+    claimPendingCount: 0,
     issues: [],
   };
 
@@ -158,15 +201,22 @@ export function getOneShotSessionSummary(session) {
         break;
       case ONE_SHOT_QUEST_STATUS.COMPLETED_EXTERNAL:
         summary.completedExternalCount++;
-        summary.issues.push({ id: quest.id, name: quest.name, reason: quest.reason });
         break;
       case ONE_SHOT_QUEST_STATUS.FAILED:
         summary.failedCount++;
-        summary.issues.push({ id: quest.id, name: quest.name, reason: quest.reason });
         break;
       default:
         summary.pendingCount++;
     }
+
+    if (quest.rewardStatus === ONE_SHOT_REWARD_STATUS.CLAIMED) {
+      summary.claimedRewardCount++;
+    } else if (quest.rewardStatus === ONE_SHOT_REWARD_STATUS.PENDING) {
+      summary.claimPendingCount++;
+    }
+
+    const issue = issueForQuest(quest);
+    if (issue) summary.issues.push(issue);
   }
   return summary;
 }
