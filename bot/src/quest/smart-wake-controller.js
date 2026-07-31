@@ -193,17 +193,24 @@ function scheduleSmartWake(args, incomingHint) {
   const wasSleepingBeforeHint = runnerIsSleeping(
     args.jobKey,
     existing?.wasSleepingBeforeHint ?? false,
-  );
+  ) || (Number.isFinite(currentNextAt) && currentNextAt > now);
+  if (at <= now && active && !wasSleepingBeforeHint) {
+    clearWakeTimer(args.jobKey);
+    return;
+  }
+
   if (existing?.timer) clearTimeout(existing.timer);
-  transitionRunnerState(args.jobKey, hintState(hint.reason), {
-    nextActionAt: hint.nextActionAt,
-    metadata: {
-      ...getRunnerState(args.jobKey)?.metadata,
-      reason: hint.reason,
-      priority: hint.priority,
-    },
-    stateSource: `schedule-hint:${hint.source ?? 'runner'}`,
-  });
+  if (!active || wasSleepingBeforeHint) {
+    transitionRunnerState(args.jobKey, hintState(hint.reason), {
+      nextActionAt: hint.nextActionAt,
+      metadata: {
+        ...getRunnerState(args.jobKey)?.metadata,
+        reason: hint.reason,
+        priority: hint.priority,
+      },
+      stateSource: `schedule-hint:${hint.source ?? 'runner'}`,
+    });
+  }
   installWakeTimer(args, hint, { ...existing, wasSleepingBeforeHint });
 }
 
