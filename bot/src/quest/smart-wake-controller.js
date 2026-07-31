@@ -38,10 +38,13 @@ function hintState(rawReason) {
   return RUNNER_STATE.WAITING_SCHEDULE;
 }
 
-function runnerIsSleeping(jobKey) {
+function runnerIsSleeping(jobKey, wasSleepingBeforeHint = false) {
   const state = getRunnerState(jobKey);
-  return SLEEPING_RUNNER_STATES.has(state?.state)
-    || String(state?.state_source ?? '').startsWith('schedule-hint:');
+  if (SLEEPING_RUNNER_STATES.has(state?.state)) return true;
+  if (String(state?.state_source ?? '').startsWith('schedule-hint:')) {
+    return wasSleepingBeforeHint;
+  }
+  return false;
 }
 
 function durableClaimRetryAt(state) {
@@ -88,12 +91,12 @@ export function smartWakeTimerDelay(nextActionAt, now = Date.now()) {
   return Math.max(0, Math.min(MAX_SMART_WAKE_TIMER_MS, at - now));
 }
 
-async function restartSleepingRunner(args) {
+async function restartSleepingRunner(args, wasSleepingBeforeHint) {
   if (typeof restartRunner !== 'function') {
     throw new TypeError('Smart wake restart handler is not configured');
   }
   const active = readActiveJob(args.jobKey);
-  if (!active || !runnerIsSleeping(args.jobKey)) {
+  if (!active || !runnerIsSleeping(args.jobKey, wasSleepingBeforeHint)) {
     clearWakeTimer(args.jobKey);
     return false;
   }
@@ -157,7 +160,8 @@ function installWakeTimer(args, hint, existing) {
       return;
     }
 
-    void restartSleepingRunner(args).catch((error) => recordWakeFailure(args.jobKey, error));
+    void restartSleepingRunner(args, entry.wasSleepingBeforeHint)
+      .catch((error) => recordWakeFailure(args.jobKey, error));
   }, delay);
   timer.unref?.();
   smartWakeups.set(args.jobKey, { ...existing, timer, args, hint });
@@ -186,6 +190,10 @@ function scheduleSmartWake(args, incomingHint) {
   }
 
   const existing = smartWakeups.get(args.jobKey);
+  const wasSleepingBeforeHint = runnerIsSleeping(
+    args.jobKey,
+    existing?.wasSleepingBeforeHint ?? false,
+  );
   if (existing?.timer) clearTimeout(existing.timer);
   transitionRunnerState(args.jobKey, hintState(hint.reason), {
     nextActionAt: hint.nextActionAt,
@@ -196,7 +204,7 @@ function scheduleSmartWake(args, incomingHint) {
     },
     stateSource: `schedule-hint:${hint.source ?? 'runner'}`,
   });
-  installWakeTimer(args, hint, existing);
+  installWakeTimer(args, hint, { ...existing, wasSleepingBeforeHint });
 }
 
 export function configureSmartWakeController(handler, {
