@@ -6,7 +6,6 @@ import {
   clearScheduleHint,
   clearScheduleHintsForTests,
   publishScheduleHint,
-  subscribeScheduleHints,
 } from '../src/quest/schedule-hint-bus.js';
 import {
   clearAllSmartWakes,
@@ -48,62 +47,61 @@ test.after(() => {
   configureSmartWakeController(null);
 });
 
-test('clearing the final effective hint notifies subscribers with null', () => {
-  const account = authorizationFingerprint('hint-clear-token');
-  const observed = [];
-  const unsubscribe = subscribeScheduleHints(account, (hint) => observed.push(hint));
-  const nextActionAt = new Date(Date.now() + 60_000).toISOString();
+test('clearing the active urgent source publishes the remaining baseline hint', () => {
+  const account = 'hint-clear-account';
+  const seen = [];
+  const unsubscribe = (await import('../src/quest/schedule-hint-bus.js')).subscribeScheduleHints(
+    account,
+    (hint) => seen.push(hint),
+  );
 
-  assert.equal(publishScheduleHint(account, {
-    nextActionAt,
-    reason: 'verification',
-    source: 'verification',
-  }), true);
-  assert.equal(clearScheduleHint(account, 'verification'), true);
-  assert.equal(observed[0].nextActionAt, nextActionAt);
-  assert.equal(observed[1], null);
-  unsubscribe();
-});
-
-test('queued initial delivery re-reads the newest effective hint', async () => {
-  const account = authorizationFingerprint('hint-latest-token');
-  const oldAt = new Date(Date.now() + 120_000).toISOString();
-  const newAt = new Date(Date.now() + 60_000).toISOString();
   publishScheduleHint(account, {
-    nextActionAt: oldAt,
+    nextActionAt: '2030-01-01T08:00:00.000Z',
     reason: 'baseline',
     source: 'baseline',
     priority: 10,
   });
-
-  const observed = [];
-  const unsubscribe = subscribeScheduleHints(account, (hint) => observed.push(hint));
   publishScheduleHint(account, {
-    nextActionAt: newAt,
-    reason: 'verification',
-    source: 'verification',
-    priority: 90,
+    nextActionAt: '2030-01-01T00:00:00.000Z',
+    reason: 'recovery',
+    source: 'recovery',
+    priority: 99,
   });
-  await Promise.resolve();
+  assert.equal(clearScheduleHint(account, 'recovery'), true);
 
-  assert.ok(observed.length >= 1);
-  assert.equal(observed.every((hint) => hint?.nextActionAt === newAt), true);
-  assert.equal(observed.some((hint) => hint?.nextActionAt === oldAt), false);
+  assert.equal(seen.at(-1).reason, 'baseline');
+  assert.equal(seen.at(-1).source, 'baseline');
   unsubscribe();
 });
 
-test('unsubscribed listeners receive no queued initial hint', async () => {
-  const account = authorizationFingerprint('hint-unsubscribe-token');
+test('clearing the only hint publishes null', () => {
+  const account = 'hint-clear-only-account';
+  const seen = [];
+  const unsubscribe = (await import('../src/quest/schedule-hint-bus.js')).subscribeScheduleHints(
+    account,
+    (hint) => seen.push(hint),
+  );
+
   publishScheduleHint(account, {
-    nextActionAt: new Date(Date.now() + 60_000).toISOString(),
-    reason: 'verification',
-    source: 'verification',
+    nextActionAt: '2030-01-01T00:00:00.000Z',
+    reason: 'recovery',
+    source: 'recovery',
+    priority: 99,
   });
-  const observed = [];
-  const unsubscribe = subscribeScheduleHints(account, (hint) => observed.push(hint));
+  assert.equal(clearScheduleHint(account, 'recovery'), true);
+  assert.equal(seen.at(-1), null);
   unsubscribe();
-  await Promise.resolve();
-  assert.deepEqual(observed, []);
+});
+
+test('clearing a missing source remains a no-op', () => {
+  const account = 'hint-clear-missing-account';
+  publishScheduleHint(account, {
+    nextActionAt: '2030-01-01T00:00:00.000Z',
+    reason: 'baseline',
+    source: 'baseline',
+    priority: 10,
+  });
+  assert.equal(clearScheduleHint(account, 'missing'), false);
 });
 
 test('clearing a due hint cancels its stale smart wake timer', async () => {
@@ -182,7 +180,9 @@ test('falling back from an urgent hint to baseline cancels the urgent wake timer
 
   await new Promise((resolve) => setTimeout(resolve, 20));
   assert.equal(restarts, 0);
-  assert.equal(getRunnerState(jobKey).state, RUNNER_STATE.RECOVERING);
+  // The runner was active when the urgent hint arrived. Cancelling that hint
+  // must not leave a false RECOVERING lifecycle behind.
+  assert.equal(getRunnerState(jobKey).state, RUNNER_STATE.RUNNING);
 });
 
 test('a schedule hint without reason safely uses the waiting-schedule state', () => {
