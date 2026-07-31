@@ -68,6 +68,7 @@ import {
   selectQuestExecutor,
 } from './quest/executors.js';
 import { currentRunnerExecutionContext } from './quest/runner-execution-context.js';
+import { assertRunnerMutationOwnership } from './quest/runner-ownership-guard.js';
 import { verifyRunnerMutationFromQuests } from './quest/durable-mutation-verifier.js';
 import { fetchDurableRecoveryQuests } from './quest/recovery-fetch.js';
 import {
@@ -195,10 +196,11 @@ const ACTIVE_MUTATION_STATUSES = new Set([
 ]);
 
 function transitionCurrentRunner(state, values = {}, { preserveMutation = false } = {}) {
-  const jobKey = currentRunnerExecutionContext()?.jobKey
-    ?? currentQuestStatusContext().jobKey;
+  const executionContext = currentRunnerExecutionContext();
+  const jobKey = executionContext?.jobKey ?? currentQuestStatusContext().jobKey;
   if (!jobKey) return null;
   try {
+    if (executionContext?.workerHolder) assertRunnerMutationOwnership(jobKey);
     const current = getRunnerState(jobKey);
     if (
       preserveMutation
@@ -212,6 +214,7 @@ function transitionCurrentRunner(state, values = {}, { preserveMutation = false 
       stateSource: 'quest-orchestrator',
     });
   } catch (error) {
+    if (isTerminalRunnerError(error)) throw error;
     console.warn(`[RunnerState:${jobKey}] direct transition failed — ${error?.message ?? 'unknown error'}`);
     return null;
   }
