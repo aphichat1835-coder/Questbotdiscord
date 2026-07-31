@@ -97,18 +97,16 @@ test('urgent claim hints cannot bypass a durable claim cooldown', async () => {
   assert.equal(registerSmartWake(runnerArgs()), true);
 
   const account = authorizationFingerprint(TOKEN);
-  assert.equal(publishScheduleHint(account, {
+  const repeatedClaimHint = {
     nextActionAt: new Date(Date.now() - 1).toISOString(),
     reason: 'claim:claim-wake-quest',
     source: 'quest-list',
     priority: 100,
-  }), true);
-  assert.equal(publishScheduleHint(account, {
-    nextActionAt: new Date(Date.now() - 2).toISOString(),
-    reason: 'claim:claim-wake-quest',
-    source: 'quest-list',
-    priority: 100,
-  }), true);
+  };
+  assert.equal(publishScheduleHint(account, repeatedClaimHint), true);
+  // The bus intentionally deduplicates an identical source hint. That no-op
+  // must still leave the durable claim cooldown authoritative.
+  assert.equal(publishScheduleHint(account, repeatedClaimHint), false);
 
   await new Promise((resolve) => setTimeout(resolve, 20));
   const state = getRunnerState(JOB_KEY);
