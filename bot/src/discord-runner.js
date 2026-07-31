@@ -49,6 +49,7 @@ import {
   sendHeartbeatRequest,
   sendVideoProgressRequest,
 } from './quest/api/discord-client.js';
+import { questActionFailureReason } from './quest/action-error-summary.js';
 import {
   claimRetryAt as durableClaimRetryAt,
   CLAIM_RETRY_DELAY_MS,
@@ -77,6 +78,17 @@ import {
 
 export { DiscordApiError } from './quest/api/discord-client.js';
 export { isFatalAuthError };
+
+const TERMINAL_RUNNER_ERROR_CODES = new Set([
+  'RUNNER_CHECKPOINT_FAILED',
+  'RUNNER_MUTATION_CHECKPOINT_FAILED',
+  'RUNNER_MUTATION_REQUIRES_VERIFICATION',
+  'RUNNER_OWNERSHIP_LOST',
+]);
+
+function isTerminalRunnerError(error) {
+  return TERMINAL_RUNNER_ERROR_CODES.has(error?.code);
+}
 
 /**
  * Keep one coherent client profile for the whole process. Override all related
@@ -120,7 +132,7 @@ function oneShotFreshQuestFailureReason(error) {
   if (error instanceof QuestCompatibilityError && /disappeared from Quest API/.test(error.message)) {
     return 'ไม่พบ Quest ในรายการล่าสุดจาก Discord';
   }
-  return 'ตรวจสอบสถานะ Quest ล่าสุดไม่สำเร็จ';
+  return questActionFailureReason(error, 'ตรวจสอบสถานะ Quest ล่าสุด');
 }
 
 function oneShotUnavailableReason(quest) {
@@ -698,6 +710,7 @@ export async function startRunner({
     } catch (error) {
       if (isAbortFailure(error, signal)) throw abortFailure();
       rethrowFatalAuth(error);
+      if (isTerminalRunnerError(error)) throw error;
       const retry = classifyClaimRetry(error);
       claimRetryAt.set(quest.id, Date.now() + retry.delayMs);
       persistClaimRetry(jobKey, quest, retry);
@@ -855,6 +868,7 @@ export async function startRunner({
       };
     } catch (error) {
       rethrowFatalAuth(error);
+      if (isTerminalRunnerError(error)) throw error;
       if (mode === 'oneshot') {
         return {
           outcome: await reportOneShotFailure(
@@ -936,12 +950,14 @@ export async function startRunner({
       };
     } catch (error) {
       rethrowFatalAuth(error);
+      if (isTerminalRunnerError(error)) throw error;
+      const reason = questActionFailureReason(error, 'รับ Quest');
       return {
         outcome: await questFailureOutcome(
           quest,
           selection,
-          'รับ Quest ไม่สำเร็จ',
-          `⚠️ ${username}: enroll failed — ${quest.name} — ${error.message}`,
+          reason,
+          `⚠️ ${username}: ${quest.name} — ${reason}`,
         ),
       };
     }
@@ -1060,11 +1076,15 @@ export async function startRunner({
     } catch (error) {
       rethrowFatalAuth(error);
       if (signal.aborted) throw new Error('aborted');
+      if (isTerminalRunnerError(error)) throw error;
       if (mode === 'oneshot') {
-        return reportOneShotFailure(quest, 'การส่งความคืบหน้าไม่สำเร็จ');
+        return reportOneShotFailure(
+          quest,
+          questActionFailureReason(error, 'ส่งความคืบหน้า'),
+        );
       }
       if (error.message !== 'aborted') {
-        addLog(`⚠️ ${username}: ERROR ${error.message}`);
+        addLog(`⚠️ ${username}: ERROR ${questActionFailureReason(error, 'ส่งความคืบหน้า')}`);
       }
       await render();
       return attemptedQuestOutcome(selection.runnable.length);
@@ -1097,12 +1117,14 @@ export async function startRunner({
       };
     } catch (error) {
       rethrowFatalAuth(error);
+      if (isTerminalRunnerError(error)) throw error;
+      const reason = questActionFailureReason(error, 'ตรวจสอบผลลัพธ์กับ Discord');
       return {
         outcome: await questFailureOutcome(
           quest,
           selection,
-          'ตรวจสอบผลลัพธ์กับ Discord ไม่สำเร็จ',
-          `⚠️ ${username}: verify failed — ${error.message}`,
+          reason,
+          `⚠️ ${username}: ${reason}`,
         ),
       };
     }
@@ -1228,7 +1250,12 @@ export async function startRunner({
       persistSchedule({ lastCheckAt: new Date().toISOString(), lastError: null });
       return outcome;
     } catch (error) {
-      if (error.message === 'aborted' || isFatalAuthError(error) || mode === 'oneshot') {
+      if (
+        error.message === 'aborted'
+        || isFatalAuthError(error)
+        || isTerminalRunnerError(error)
+        || mode === 'oneshot'
+      ) {
         throw error;
       }
       addLog(`⚠️ ${username}: CHECK ERROR — ${error.message}`);
@@ -1345,24 +1372,27 @@ export async function startRunner({
       );
       return;
     }
-    addLog(`❌ ${username}: ${error.message}`);
+    addLog(`❌ ${username}: ${questActionFailureReason(error, 'Runner')}`);
     await render();
     persistSchedule({ lastError: error.message });
   }
 
   async function cleanupRunnerSession() {
-    await reportOneShotLogout();
-    signal.removeEventListener('abort', clearPendingRender);
-    const hadPendingRender = Boolean(pendingTimer);
-    clearPendingRender();
-    await flushPromise;
-    if (hadPendingRender) await flush();
-    setQuestStatusLifecycle(runnerStatusContext.key, 'stopped', {
-      ...runnerStatusContext,
-      accountId,
-      username,
-    });
-    jobs.delete(jobKey);
+    try {
+      await reportOneShotLogout();
+      signal.removeEventListener('abort', clearPendingRender);
+      const hadPendingRender = Boolean(pendingTimer);
+      clearPendingRender();
+      await flushPromise;
+      if (hadPendingRender) await flush();
+      setQuestStatusLifecycle(runnerStatusContext.key, 'stopped', {
+        ...runnerStatusContext,
+        accountId,
+        username,
+      });
+    } finally {
+      jobs.delete(jobKey);
+    }
   }
 
   async function executeRunnerLifecycle() {
