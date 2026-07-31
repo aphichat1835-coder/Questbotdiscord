@@ -6,6 +6,7 @@ import {
   clearScheduleHint,
   clearScheduleHintsForTests,
   publishScheduleHint,
+  subscribeScheduleHints,
 } from '../src/quest/schedule-hint-bus.js';
 import {
   clearAllSmartWakes,
@@ -50,10 +51,7 @@ test.after(() => {
 test('clearing the active urgent source publishes the remaining baseline hint', () => {
   const account = 'hint-clear-account';
   const seen = [];
-  const unsubscribe = (await import('../src/quest/schedule-hint-bus.js')).subscribeScheduleHints(
-    account,
-    (hint) => seen.push(hint),
-  );
+  const unsubscribe = subscribeScheduleHints(account, (hint) => seen.push(hint));
 
   publishScheduleHint(account, {
     nextActionAt: '2030-01-01T08:00:00.000Z',
@@ -77,10 +75,7 @@ test('clearing the active urgent source publishes the remaining baseline hint', 
 test('clearing the only hint publishes null', () => {
   const account = 'hint-clear-only-account';
   const seen = [];
-  const unsubscribe = (await import('../src/quest/schedule-hint-bus.js')).subscribeScheduleHints(
-    account,
-    (hint) => seen.push(hint),
-  );
+  const unsubscribe = subscribeScheduleHints(account, (hint) => seen.push(hint));
 
   publishScheduleHint(account, {
     nextActionAt: '2030-01-01T00:00:00.000Z',
@@ -180,8 +175,6 @@ test('falling back from an urgent hint to baseline cancels the urgent wake timer
 
   await new Promise((resolve) => setTimeout(resolve, 20));
   assert.equal(restarts, 0);
-  // The runner was active when the urgent hint arrived. Cancelling that hint
-  // must not leave a false RECOVERING lifecycle behind.
   assert.equal(getRunnerState(jobKey).state, RUNNER_STATE.RUNNING);
 });
 
