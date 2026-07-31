@@ -663,6 +663,19 @@ export async function startRunner({
   }
 
   async function claimSilently(quest) {
+    if (quest.claimed) {
+      claimRetryAt.delete(quest.id);
+      recordQuestVerification(currentQuestStatusContext().key, 'claim', currentQuestStatusContext());
+      transitionCurrentRunner(RUNNER_STATE.RUNNING, {
+        questId: quest.id,
+        questName: quest.name,
+        questEvent: quest.eventName,
+        progress: 100,
+        serverProgressSeconds: quest.progressSecs,
+      });
+      return true;
+    }
+
     const retryAt = Math.max(
       claimRetryAt.get(quest.id) ?? 0,
       durableClaimRetryAt(jobKey) ?? 0,
