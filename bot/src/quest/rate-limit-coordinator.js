@@ -672,7 +672,7 @@ export class DiscordRateLimitCoordinator {
     } catch {
       this.stats.scheduleHintErrors++;
     }
-    task.resolve(response);
+    return response;
   }
 
   handleFailure(task, error) {
@@ -690,7 +690,7 @@ export class DiscordRateLimitCoordinator {
         this.blockedMutationJobs.add(task.jobKey);
       }
     }
-    task.reject(error);
+    throw error;
   }
 
   finishTask(task) {
@@ -734,7 +734,8 @@ export class DiscordRateLimitCoordinator {
         (response) => this.handleResponse(task, response),
         (error) => this.handleFailure(task, error),
       )
-      .finally(() => this.finishTask(task));
+      .finally(() => this.finishTask(task))
+      .then(task.resolve, task.reject);
   }
 
   pump() {
