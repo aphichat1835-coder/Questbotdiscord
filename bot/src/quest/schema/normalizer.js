@@ -31,10 +31,34 @@ function progressMapFromStatus(userStatus) {
   return progress;
 }
 
-function selectQuestTask(entries, progressMap) {
+function selectPreferredTask(supported, entries, preferredProgressKey, preferredEventName) {
+  if (preferredProgressKey) {
+    const byKey = supported.find(({ key }) => key === preferredProgressKey)
+      ?? entries.find(({ key }) => key === preferredProgressKey);
+    if (byKey) return byKey;
+  }
+  if (preferredEventName) {
+    const byEvent = supported.find(({ type }) => type === preferredEventName)
+      ?? entries.find(({ type }) => type === preferredEventName);
+    if (byEvent) return byEvent;
+  }
+  return null;
+}
+
+function selectQuestTask(entries, progressMap, {
+  preferredEventName = null,
+  preferredProgressKey = null,
+} = {}) {
   const supported = entries.filter(({ type }) => (
     selectQuestExecutor(type).supportsAutomaticProgress
   ));
+  const preferred = selectPreferredTask(
+    supported,
+    entries,
+    preferredProgressKey,
+    preferredEventName,
+  );
+  if (preferred) return preferred;
   const matching = supported.find(({ key, type }) => (
     progressMap[key] != null || progressMap[type] != null
   ));
@@ -113,7 +137,7 @@ function questProgressPercent(completedSeconds, secondsNeeded) {
   return Math.min(100, (completedSeconds / secondsNeeded) * 100);
 }
 
-export function normalizeQuest(raw) {
+export function normalizeQuest(raw, options = {}) {
   assertQuestObject(raw);
   const id = String(raw.id);
   const config = raw.config ?? {};
@@ -121,7 +145,11 @@ export function normalizeQuest(raw) {
   const taskConfig = config.task_config_v2 ?? config.task_config;
   const taskEntries = questTaskEntries(taskConfig);
   const normalizedEntries = normalizeTaskEntries(taskEntries);
-  const selectedTask = selectQuestTask(normalizedEntries, progressMapFromStatus(userStatus));
+  const selectedTask = selectQuestTask(
+    normalizedEntries,
+    progressMapFromStatus(userStatus),
+    options,
+  );
   const validation = validateQuestTask(id, taskConfig, taskEntries, selectedTask);
   const progress = progressSeconds(
     userStatus,
