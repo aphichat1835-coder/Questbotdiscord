@@ -69,6 +69,7 @@ test.afterEach(async () => {
 test('fresh already-claimed state completes one-shot without a duplicate claim mutation', async () => {
   let completed = false;
   let claimed = false;
+  let progressRequests = 0;
   let claimRequests = 0;
 
   globalThis.fetch = async (input) => {
@@ -77,6 +78,7 @@ test('fresh already-claimed state completes one-shot without a duplicate claim m
       return jsonResponse(questPayload({ completed, claimed }));
     }
     if (path.endsWith('/video-progress')) {
+      progressRequests++;
       completed = true;
       claimed = true;
       return jsonResponse({ ok: true });
@@ -102,5 +104,6 @@ test('fresh already-claimed state completes one-shot without a duplicate claim m
   await waitFor(() => getUserJobs('already-claimed-owner').length === 0);
   assert.equal(completed, true);
   assert.equal(claimed, true);
+  assert.equal(progressRequests, 1);
   assert.equal(claimRequests, 0);
 });
