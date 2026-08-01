@@ -76,6 +76,7 @@ test('user-scoped bucket blocks only the matching authorization fingerprint', as
   const order = [];
   coordinator.routeBuckets.set(route, bucket);
   coordinator.routeScopes.set(route, 'user');
+  coordinator.routeLastSeenAt.set(route, startedAt);
   coordinator.accountBucketResetAt.set(
     `${authorizationFingerprint(tokenA)}:${bucket}`,
     startedAt + 40,
