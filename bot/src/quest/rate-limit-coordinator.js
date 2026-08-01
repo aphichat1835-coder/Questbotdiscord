@@ -25,6 +25,8 @@ const DEFAULT_MAX_CONCURRENCY = 4;
 const DEFAULT_CIRCUIT_FAILURE_THRESHOLD = 3;
 const DEFAULT_CIRCUIT_OPEN_MS = 30_000;
 const DEFAULT_CIRCUIT_MAX_OPEN_MS = 5 * 60_000;
+export const DEFAULT_COORDINATOR_STATE_PRUNE_INTERVAL_MS = 60_000;
+export const DEFAULT_COORDINATOR_STATE_RETENTION_MS = 10 * 60_000;
 const CIRCUIT_STATE = Object.freeze({
   CLOSED: 'CLOSED',
   OPEN: 'OPEN',
@@ -49,6 +51,7 @@ function mergeCircuitEntries(left, right) {
     opens: Math.max(left.opens ?? 0, right.opens ?? 0),
     openUntil: Math.max(left.openUntil ?? 0, right.openUntil ?? 0),
     probeActive: Boolean(left.probeActive || right.probeActive),
+    lastTouchedAt: Math.max(left.lastTouchedAt ?? 0, right.lastTouchedAt ?? 0),
   };
 }
 
@@ -251,18 +254,24 @@ export class DiscordRateLimitCoordinator {
     circuitFailureThreshold = DEFAULT_CIRCUIT_FAILURE_THRESHOLD,
     circuitOpenMs = DEFAULT_CIRCUIT_OPEN_MS,
     circuitMaxOpenMs = DEFAULT_CIRCUIT_MAX_OPEN_MS,
+    statePruneIntervalMs = DEFAULT_COORDINATOR_STATE_PRUNE_INTERVAL_MS,
+    stateRetentionMs = DEFAULT_COORDINATOR_STATE_RETENTION_MS,
   } = {}) {
     this.maxConcurrency = maxConcurrency;
     this.now = now;
     this.circuitFailureThreshold = circuitFailureThreshold;
     this.circuitOpenMs = circuitOpenMs;
     this.circuitMaxOpenMs = circuitMaxOpenMs;
+    this.statePruneIntervalMs = Math.max(0, Number(statePruneIntervalMs) || 0);
+    this.stateRetentionMs = Math.max(0, Number(stateRetentionMs) || 0);
+    this.lastStatePruneAt = 0;
     this.queue = [];
     this.sequence = 0;
     this.activeCount = 0;
     this.activeAccounts = new Set();
     this.routeBuckets = new Map();
     this.routeScopes = new Map();
+    this.routeLastSeenAt = new Map();
     this.bucketResetAt = new Map();
     this.accountBucketResetAt = new Map();
     this.globalResetAt = 0;
@@ -280,6 +289,9 @@ export class DiscordRateLimitCoordinator {
       checkpointErrors: 0,
       ownershipLosses: 0,
       circuitOpens: 0,
+      statePrunes: 0,
+      prunedEntries: 0,
+      lastStatePruneAt: null,
       lastRateLimitAt: null,
       lastScheduleHintAt: null,
       lastCircuitOpenAt: null,
@@ -287,6 +299,7 @@ export class DiscordRateLimitCoordinator {
   }
 
   schedule(url, options, execute) {
+    this.pruneExpiredState();
     const method = String(options?.method ?? 'GET').toUpperCase();
     const account = authorizationFingerprint(options?.headers);
     const mutation = mutationFromRequest(url, method, options);
@@ -302,6 +315,7 @@ export class DiscordRateLimitCoordinator {
       priority: requestPriority(url, method),
       mutation,
     };
+    this.routeLastSeenAt.set(task.route, this.now());
 
     if (options?.signal?.aborted) return Promise.reject(abortError());
 
@@ -560,6 +574,7 @@ export class DiscordRateLimitCoordinator {
     if (circuit?.state !== CIRCUIT_STATE.OPEN || circuit.openUntil > this.now()) return;
     circuit.state = CIRCUIT_STATE.HALF_OPEN;
     circuit.probeActive = true;
+    circuit.lastTouchedAt = this.now();
   }
 
   closeCircuit(task) {
@@ -572,6 +587,7 @@ export class DiscordRateLimitCoordinator {
       opens: circuit.opens ?? 0,
       openUntil: 0,
       probeActive: false,
+      lastTouchedAt: this.now(),
     });
   }
 
@@ -583,10 +599,16 @@ export class DiscordRateLimitCoordinator {
       opens: 0,
       openUntil: 0,
       probeActive: false,
+      lastTouchedAt: this.now(),
     };
     const failures = previous.failures + 1;
     if (failures < this.circuitFailureThreshold && previous.state !== CIRCUIT_STATE.HALF_OPEN) {
-      this.circuits.set(key, { ...previous, failures, probeActive: false });
+      this.circuits.set(key, {
+        ...previous,
+        failures,
+        probeActive: false,
+        lastTouchedAt: this.now(),
+      });
       return;
     }
     const opens = previous.opens + 1;
@@ -601,6 +623,7 @@ export class DiscordRateLimitCoordinator {
       opens,
       openUntil,
       probeActive: false,
+      lastTouchedAt: this.now(),
     });
     this.stats.circuitOpens++;
     this.stats.lastCircuitOpenAt = new Date(this.now()).toISOString();
@@ -695,7 +718,10 @@ export class DiscordRateLimitCoordinator {
 
   finishTask(task) {
     const circuit = this.circuits.get(this.circuitKey(task));
-    if (circuit?.state === CIRCUIT_STATE.HALF_OPEN) circuit.probeActive = false;
+    if (circuit?.state === CIRCUIT_STATE.HALF_OPEN) {
+      circuit.probeActive = false;
+      circuit.lastTouchedAt = this.now();
+    }
     this.activeCount--;
     this.activeAccounts.delete(task.account);
     this.stats.active = this.activeCount;
@@ -739,6 +765,7 @@ export class DiscordRateLimitCoordinator {
   }
 
   pump() {
+    this.pruneExpiredState();
     while (this.activeCount < this.maxConcurrency) {
       const index = this.nextRunnableIndex();
       if (index < 0) break;
@@ -749,17 +776,81 @@ export class DiscordRateLimitCoordinator {
     this.scheduleWakeup();
   }
 
+  pruneExpiredState({ force = false } = {}) {
+    const now = this.now();
+    if (
+      !force
+      && this.lastStatePruneAt > 0
+      && now - this.lastStatePruneAt < this.statePruneIntervalMs
+    ) {
+      return { skipped: true, pruned: 0 };
+    }
+
+    this.lastStatePruneAt = now;
+    let pruned = 0;
+    const pruneExpiredResetMap = (map) => {
+      for (const [key, resetAt] of map) {
+        if (resetAt > now) continue;
+        map.delete(key);
+        pruned++;
+      }
+    };
+
+    pruneExpiredResetMap(this.bucketResetAt);
+    pruneExpiredResetMap(this.accountBucketResetAt);
+    if (this.globalResetAt > 0 && this.globalResetAt <= now) {
+      this.globalResetAt = 0;
+      pruned++;
+    }
+
+    if (this.activeCount === 0 && this.queue.length === 0) {
+      const cutoff = now - this.stateRetentionMs;
+      const knownRoutes = new Set([
+        ...this.routeBuckets.keys(),
+        ...this.routeScopes.keys(),
+        ...this.routeLastSeenAt.keys(),
+      ]);
+      for (const route of knownRoutes) {
+        const lastSeenAt = this.routeLastSeenAt.get(route) ?? 0;
+        if (lastSeenAt > cutoff) continue;
+        if (this.routeBuckets.delete(route)) pruned++;
+        if (this.routeScopes.delete(route)) pruned++;
+        if (this.routeLastSeenAt.delete(route)) pruned++;
+      }
+
+      for (const [key, circuit] of this.circuits) {
+        if (circuit.probeActive) continue;
+        const protectedUntil = Math.max(
+          circuit.openUntil ?? 0,
+          (circuit.lastTouchedAt ?? 0) + this.stateRetentionMs,
+        );
+        if (protectedUntil > now) continue;
+        this.circuits.delete(key);
+        pruned++;
+      }
+    }
+
+    this.stats.statePrunes++;
+    this.stats.prunedEntries += pruned;
+    this.stats.lastStatePruneAt = new Date(now).toISOString();
+    return { skipped: false, pruned };
+  }
+
   releaseJob(jobKey) {
     if (typeof jobKey !== 'string' || jobKey.length === 0) return false;
     return this.blockedMutationJobs.delete(jobKey);
   }
 
   snapshot() {
+    this.pruneExpiredState();
     const circuits = [...this.circuits.values()];
     return {
       ...this.stats,
       knownRoutes: this.routeBuckets.size,
       knownScopes: this.routeScopes.size,
+      routeMetadataEntries: this.routeLastSeenAt.size,
+      bucketResetEntries: this.bucketResetAt.size + this.accountBucketResetAt.size,
+      circuitEntries: this.circuits.size,
       blockedMutationJobs: this.blockedMutationJobs.size,
       blockedBuckets: [
         ...this.bucketResetAt.values(),
