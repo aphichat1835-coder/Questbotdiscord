@@ -80,7 +80,7 @@ test('pruning removes expired resets, stale routes and idle circuits without tou
   assert.ok(snapshot.prunedEntries >= 5);
 });
 
-test('active and queued routes are protected until work finishes', () => {
+test('route and circuit metadata are protected while any work remains active or queued', () => {
   let now = 50_000;
   const coordinator = new DiscordRateLimitCoordinator({
     now: () => now,
@@ -95,19 +95,29 @@ test('active and queued routes are protected until work finishes', () => {
     coordinator.routeScopes.set(route, 'shared');
     coordinator.routeLastSeenAt.set(route, now - 2_000);
   }
-  coordinator.activeRouteCounts.set(activeRoute, 1);
+  coordinator.circuits.set('shared:stale-during-work', {
+    state: 'CLOSED',
+    failures: 0,
+    opens: 0,
+    openUntil: 0,
+    probeActive: false,
+    lastTouchedAt: now - 2_000,
+  });
+  coordinator.activeCount = 1;
   coordinator.queue.push({ route: queuedRoute });
 
   coordinator.pruneExpiredState({ force: true });
   assert.equal(coordinator.routeBuckets.has(activeRoute), true);
   assert.equal(coordinator.routeBuckets.has(queuedRoute), true);
+  assert.equal(coordinator.circuits.has('shared:stale-during-work'), true);
 
-  coordinator.activeRouteCounts.delete(activeRoute);
+  coordinator.activeCount = 0;
   coordinator.queue.length = 0;
   now += 1;
   coordinator.pruneExpiredState({ force: true });
   assert.equal(coordinator.routeBuckets.has(activeRoute), false);
   assert.equal(coordinator.routeBuckets.has(queuedRoute), false);
+  assert.equal(coordinator.circuits.has('shared:stale-during-work'), false);
 });
 
 test('pruning is interval-gated unless explicitly forced', () => {
