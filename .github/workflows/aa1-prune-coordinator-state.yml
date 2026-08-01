@@ -1,0 +1,134 @@
+name: Patch aa.1 coordinator pruning
+
+on:
+  push:
+    branches: [aa.1]
+    paths:
+      - .github/workflows/aa1-prune-coordinator-state.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.ref_name == 'aa.1'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: aa.1
+          fetch-depth: 0
+
+      - name: Apply exact coordinator pruning patch
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('bot/src/quest/rate-limit-coordinator.js')
+          text = path.read_text()
+
+          replacements = [
+            (
+              "const DEFAULT_CIRCUIT_MAX_OPEN_MS = 5 * 60_000;\nconst CIRCUIT_STATE = Object.freeze({",
+              "const DEFAULT_CIRCUIT_MAX_OPEN_MS = 5 * 60_000;\nexport const DEFAULT_COORDINATOR_STATE_PRUNE_INTERVAL_MS = 60_000;\nexport const DEFAULT_COORDINATOR_STATE_RETENTION_MS = 10 * 60_000;\nconst CIRCUIT_STATE = Object.freeze({",
+            ),
+            (
+              "    probeActive: Boolean(left.probeActive || right.probeActive),\n  };",
+              "    probeActive: Boolean(left.probeActive || right.probeActive),\n    lastTouchedAt: Math.max(left.lastTouchedAt ?? 0, right.lastTouchedAt ?? 0),\n  };",
+            ),
+            (
+              "    circuitMaxOpenMs = DEFAULT_CIRCUIT_MAX_OPEN_MS,\n  } = {}) {",
+              "    circuitMaxOpenMs = DEFAULT_CIRCUIT_MAX_OPEN_MS,\n    statePruneIntervalMs = DEFAULT_COORDINATOR_STATE_PRUNE_INTERVAL_MS,\n    stateRetentionMs = DEFAULT_COORDINATOR_STATE_RETENTION_MS,\n  } = {}) {",
+            ),
+            (
+              "    this.circuitMaxOpenMs = circuitMaxOpenMs;\n    this.queue = [];",
+              "    this.circuitMaxOpenMs = circuitMaxOpenMs;\n    this.statePruneIntervalMs = Math.max(0, Number(statePruneIntervalMs) || 0);\n    this.stateRetentionMs = Math.max(0, Number(stateRetentionMs) || 0);\n    this.lastStatePruneAt = 0;\n    this.queue = [];",
+            ),
+            (
+              "    this.routeBuckets = new Map();\n    this.routeScopes = new Map();\n    this.bucketResetAt = new Map();",
+              "    this.routeBuckets = new Map();\n    this.routeScopes = new Map();\n    this.routeLastSeenAt = new Map();\n    this.activeRouteCounts = new Map();\n    this.bucketResetAt = new Map();",
+            ),
+            (
+              "      circuitOpens: 0,\n      lastRateLimitAt: null,",
+              "      circuitOpens: 0,\n      statePrunes: 0,\n      prunedEntries: 0,\n      lastStatePruneAt: null,\n      lastRateLimitAt: null,",
+            ),
+            (
+              "  schedule(url, options, execute) {\n    const method = String(options?.method ?? 'GET').toUpperCase();",
+              "  schedule(url, options, execute) {\n    this.pruneExpiredState();\n    const method = String(options?.method ?? 'GET').toUpperCase();",
+            ),
+            (
+              "      mutation,\n    };\n\n    if (options?.signal?.aborted)",
+              "      mutation,\n    };\n    this.routeLastSeenAt.set(task.route, this.now());\n\n    if (options?.signal?.aborted)",
+            ),
+            (
+              "    circuit.state = CIRCUIT_STATE.HALF_OPEN;\n    circuit.probeActive = true;",
+              "    circuit.state = CIRCUIT_STATE.HALF_OPEN;\n    circuit.probeActive = true;\n    circuit.lastTouchedAt = this.now();",
+            ),
+            (
+              "      probeActive: false,\n    });\n  }\n\n  recordCircuitFailure(task)",
+              "      probeActive: false,\n      lastTouchedAt: this.now(),\n    });\n  }\n\n  recordCircuitFailure(task)",
+            ),
+            (
+              "      probeActive: false,\n    };\n    const failures = previous.failures + 1;",
+              "      probeActive: false,\n      lastTouchedAt: this.now(),\n    };\n    const failures = previous.failures + 1;",
+            ),
+            (
+              "      this.circuits.set(key, { ...previous, failures, probeActive: false });",
+              "      this.circuits.set(key, {\n        ...previous,\n        failures,\n        probeActive: false,\n        lastTouchedAt: this.now(),\n      });",
+            ),
+            (
+              "      openUntil,\n      probeActive: false,\n    });",
+              "      openUntil,\n      probeActive: false,\n      lastTouchedAt: this.now(),\n    });",
+            ),
+            (
+              "  finishTask(task) {\n    const circuit = this.circuits.get(this.circuitKey(task));\n    if (circuit?.state === CIRCUIT_STATE.HALF_OPEN) circuit.probeActive = false;\n    this.activeCount--;\n    this.activeAccounts.delete(task.account);",
+              "  finishTask(task) {\n    const circuit = this.circuits.get(this.circuitKey(task));\n    if (circuit?.state === CIRCUIT_STATE.HALF_OPEN) {\n      circuit.probeActive = false;\n      circuit.lastTouchedAt = this.now();\n    }\n    this.activeCount--;\n    this.activeAccounts.delete(task.account);\n    const activeRouteCount = (this.activeRouteCounts.get(task.route) ?? 1) - 1;\n    if (activeRouteCount > 0) this.activeRouteCounts.set(task.route, activeRouteCount);\n    else this.activeRouteCounts.delete(task.route);",
+            ),
+            (
+              "    this.activeCount++;\n    this.activeAccounts.add(task.account);\n    this.enterHalfOpen(task);",
+              "    this.activeCount++;\n    this.activeAccounts.add(task.account);\n    this.activeRouteCounts.set(\n      task.route,\n      (this.activeRouteCounts.get(task.route) ?? 0) + 1,\n    );\n    this.enterHalfOpen(task);",
+            ),
+            (
+              "  pump() {\n    while (this.activeCount < this.maxConcurrency) {",
+              "  pump() {\n    this.pruneExpiredState();\n    while (this.activeCount < this.maxConcurrency) {",
+            ),
+            (
+              "  releaseJob(jobKey) {",
+              "  pruneExpiredState({ force = false } = {}) {\n    const now = this.now();\n    if (\n      !force\n      && this.lastStatePruneAt > 0\n      && now - this.lastStatePruneAt < this.statePruneIntervalMs\n    ) {\n      return { skipped: true, pruned: 0 };\n    }\n\n    this.lastStatePruneAt = now;\n    let pruned = 0;\n    const pruneExpiredResetMap = (map) => {\n      for (const [key, resetAt] of map) {\n        if (resetAt > now) continue;\n        map.delete(key);\n        pruned++;\n      }\n    };\n    pruneExpiredResetMap(this.bucketResetAt);\n    pruneExpiredResetMap(this.accountBucketResetAt);\n    if (this.globalResetAt > 0 && this.globalResetAt <= now) {\n      this.globalResetAt = 0;\n      pruned++;\n    }\n\n    const cutoff = now - this.stateRetentionMs;\n    const queuedRoutes = new Set(this.queue.map((task) => task.route));\n    const knownRoutes = new Set([\n      ...this.routeBuckets.keys(),\n      ...this.routeScopes.keys(),\n      ...this.routeLastSeenAt.keys(),\n    ]);\n    for (const route of knownRoutes) {\n      const lastSeenAt = this.routeLastSeenAt.get(route) ?? 0;\n      if (lastSeenAt > cutoff) continue;\n      if (queuedRoutes.has(route) || (this.activeRouteCounts.get(route) ?? 0) > 0) continue;\n      if (this.routeBuckets.delete(route)) pruned++;\n      if (this.routeScopes.delete(route)) pruned++;\n      if (this.routeLastSeenAt.delete(route)) pruned++;\n    }\n\n    if (this.activeCount === 0 && this.queue.length === 0) {\n      for (const [key, circuit] of this.circuits) {\n        if (circuit.probeActive) continue;\n        const protectedUntil = Math.max(\n          circuit.openUntil ?? 0,\n          (circuit.lastTouchedAt ?? 0) + this.stateRetentionMs,\n        );\n        if (protectedUntil > now) continue;\n        this.circuits.delete(key);\n        pruned++;\n      }\n    }\n\n    this.stats.statePrunes++;\n    this.stats.prunedEntries += pruned;\n    this.stats.lastStatePruneAt = new Date(now).toISOString();\n    return { skipped: false, pruned };\n  }\n\n  releaseJob(jobKey) {",
+            ),
+            (
+              "  snapshot() {\n    const circuits = [...this.circuits.values()];",
+              "  snapshot() {\n    this.pruneExpiredState();\n    const circuits = [...this.circuits.values()];",
+            ),
+            (
+              "      knownScopes: this.routeScopes.size,\n      blockedMutationJobs: this.blockedMutationJobs.size,",
+              "      knownScopes: this.routeScopes.size,\n      routeMetadataEntries: this.routeLastSeenAt.size,\n      bucketResetEntries: this.bucketResetAt.size + this.accountBucketResetAt.size,\n      circuitEntries: this.circuits.size,\n      blockedMutationJobs: this.blockedMutationJobs.size,",
+            ),
+          ]
+
+          for old, new in replacements:
+            count = text.count(old)
+            if count != 1:
+              raise SystemExit(f'expected one match, got {count}: {old[:100]!r}')
+            text = text.replace(old, new, 1)
+
+          path.write_text(text)
+          PY
+
+      - name: Run focused regression tests
+        run: |
+          node --check bot/src/quest/rate-limit-coordinator.js
+          node --test \
+            bot/test/rate-limit-coordinator-pruning.node-test.js \
+            bot/test/schedule-hint-memory-pruning.node-test.js \
+            bot/test/quest-executor-allowlist.node-test.js
+
+      - name: Commit patch and remove temporary workflow
+        run: |
+          rm .github/workflows/aa1-prune-coordinator-state.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add bot/src/quest/rate-limit-coordinator.js .github/workflows/aa1-prune-coordinator-state.yml
+          git commit -m "fix(quest): prune stale coordinator memory"
+          git push origin aa.1
