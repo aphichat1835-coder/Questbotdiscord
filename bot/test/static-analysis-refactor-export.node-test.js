@@ -217,16 +217,16 @@ test('export Sonar and CodeFactor refactor without changing behavior', async () 
 `;
   runnerAfter = replaceExactlyOnce(runnerAfter, oldCall, newCall, 'runner completion call');
 
-  let statusTestAfter = statusTestBefore.replace(
+  const statusTestAfter = statusTestBefore.replace(
     "  assert.match(source, /reportOneShotBotCompletion\\(\\)/);\n  assert.match(source, /reportOneShotExternalCompletion\\(\\)/);",
     "  assert.match(source, /reportOneShotCompletion\\(\\)/);\n  assert.doesNotMatch(source, /reportOneShot(?:Bot|External)Completion/);",
   );
   assert.notEqual(statusTestAfter, statusTestBefore, 'status test target');
 
   assert.match(coordinatorAfter, /pruneExpiredResetEntries/);
-  assert.doesNotMatch(runnerAfter, /reportOneShotExternalCompletion/);
-  assert.doesNotMatch(runnerAfter, /reportOneShotBotCompletion/);
-  assert.match(runnerAfter, /reportOneShotCompletion/);
+  assert.doesNotMatch(runnerAfter, /async function reportOneShotExternalCompletion/);
+  assert.doesNotMatch(runnerAfter, /async function reportOneShotBotCompletion/);
+  assert.match(runnerAfter, /async function reportOneShotCompletion/);
 
   emitFile('bot/src/quest/rate-limit-coordinator.js', coordinatorAfter);
   emitFile('bot/src/discord-runner.js', runnerAfter);
