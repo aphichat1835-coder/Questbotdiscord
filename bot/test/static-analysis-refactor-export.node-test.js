@@ -203,19 +203,43 @@ test('export Sonar and CodeFactor refactor without changing behavior', async () 
 `;
   let runnerAfter = replaceExactlyOnce(runnerBefore, oldHelpers, newHelpers, 'runner helpers');
 
-  const oldCall = `      if (mode === 'oneshot') {
+  const firstOldCall = `      if (mode === 'oneshot') {
         const status = await completeAndClaimOneShotQuest(quest);
         return status === ONE_SHOT_QUEST_STATUS.COMPLETED_BY_BOT
           ? reportOneShotBotCompletion()
           : reportOneShotExternalCompletion();
       }
 `;
-  const newCall = `      if (mode === 'oneshot') {
+  const firstNewCall = `      if (mode === 'oneshot') {
         await completeAndClaimOneShotQuest(quest);
         return reportOneShotCompletion();
       }
 `;
-  runnerAfter = replaceExactlyOnce(runnerAfter, oldCall, newCall, 'runner completion call');
+  runnerAfter = replaceExactlyOnce(
+    runnerAfter,
+    firstOldCall,
+    firstNewCall,
+    'runner pending completion call',
+  );
+
+  const secondOldCall = `    if (mode === 'oneshot') {
+      const status = await completeAndClaimOneShotQuest(fresh);
+      return status === ONE_SHOT_QUEST_STATUS.COMPLETED_BY_BOT
+        ? reportOneShotBotCompletion()
+        : reportOneShotExternalCompletion();
+    }
+`;
+  const secondNewCall = `    if (mode === 'oneshot') {
+      await completeAndClaimOneShotQuest(fresh);
+      return reportOneShotCompletion();
+    }
+`;
+  runnerAfter = replaceExactlyOnce(
+    runnerAfter,
+    secondOldCall,
+    secondNewCall,
+    'runner verified completion call',
+  );
 
   const statusTestAfter = statusTestBefore.replace(
     "  assert.match(source, /reportOneShotBotCompletion\\(\\)/);\n  assert.match(source, /reportOneShotExternalCompletion\\(\\)/);",
@@ -224,9 +248,9 @@ test('export Sonar and CodeFactor refactor without changing behavior', async () 
   assert.notEqual(statusTestAfter, statusTestBefore, 'status test target');
 
   assert.match(coordinatorAfter, /pruneExpiredResetEntries/);
-  assert.doesNotMatch(runnerAfter, /async function reportOneShotExternalCompletion/);
-  assert.doesNotMatch(runnerAfter, /async function reportOneShotBotCompletion/);
-  assert.match(runnerAfter, /async function reportOneShotCompletion/);
+  assert.doesNotMatch(runnerAfter, /reportOneShotExternalCompletion/);
+  assert.doesNotMatch(runnerAfter, /reportOneShotBotCompletion/);
+  assert.match(runnerAfter, /reportOneShotCompletion/);
 
   emitFile('bot/src/quest/rate-limit-coordinator.js', coordinatorAfter);
   emitFile('bot/src/discord-runner.js', runnerAfter);
