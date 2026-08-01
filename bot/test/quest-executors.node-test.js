@@ -7,13 +7,22 @@ import {
   selectQuestExecutor,
 } from '../src/quest/executors.js';
 
-test('executor registry keeps current video and desktop compatibility', () => {
+test('executor registry exposes only explicitly approved video and desktop events', () => {
   assert.equal(selectQuestExecutor('WATCH_VIDEO').id, 'video');
   assert.equal(selectQuestExecutor('WATCH_VIDEO_ON_MOBILE').id, 'video');
-  assert.equal(selectQuestExecutor('WATCH_VIDEO_V2').id, 'video');
   assert.equal(selectQuestExecutor('PLAY_ON_DESKTOP').id, 'desktop');
-  assert.equal(selectQuestExecutor('PLAY_ON_DESKTOP_V3').id, 'desktop');
+  assert.equal(selectQuestExecutor('PLAY_ON_DESKTOP_V2').id, 'desktop');
   assert.equal(isAutomaticallySupportedEvent('PLAY_ON_DESKTOP_V2'), true);
+
+  for (const eventName of [
+    'WATCH_VIDEO_V2',
+    'WATCH_VIDEO_NEW_PROTOCOL',
+    'PLAY_ON_DESKTOP_V3',
+    'PLAY_ON_DESKTOP_V99',
+  ]) {
+    assert.equal(selectQuestExecutor(eventName).id, 'unknown', eventName);
+    assert.equal(isAutomaticallySupportedEvent(eventName), false, eventName);
+  }
 });
 
 test('unsupported and unknown events never claim automatic support', () => {
