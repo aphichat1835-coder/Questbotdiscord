@@ -18,64 +18,183 @@ npm start
 
 ## Environment
 
-### จำเป็น
+### ค่าหลักที่จำเป็น 6 ค่า
 
 - `DISCORD_BOT_TOKEN` — Token ของ Bot
 - `DISCORD_CLIENT_ID` — Application/Client ID
 - `DISCORD_GUILD_ID` — Server ที่ลงทะเบียนคำสั่ง
 - `OWNER_ID` — Discord User ID ของเจ้าของระบบ
+- `RUNNER_TOKEN_SECRET` — Secret ยาวอย่างน้อย 16 ตัวอักษรสำหรับเข้ารหัส Token ของ Auto Daily
+- `LOG_WEBHOOK_URL` — Discord Incoming Webhook ส่วนตัวสำหรับ Backend incident log
 
-### Runner และสิทธิ์
+หากค่าหลักขาดหรือรูปแบบไม่ถูกต้อง Process จะหยุดตั้งแต่ Startup โดยไม่เริ่มระบบแบบตั้งค่าครึ่งเดียว
 
-- `RUNNER_TOKEN_SECRET` — Secret ยาวและสุ่มสำหรับเข้ารหัส Token ของ Auto Daily
-- `MANAGER_ROLE_ID` — Role ที่ใช้ Start/Stop Runner และดู `/api-status`; Owner/Admin ใช้ได้เสมอ
-- `TIMEZONE` — Timezone ของตารางเวลา ค่าเริ่มต้น `Asia/Bangkok`
-- `LOG_CHANNEL_ID` — ห้องสำรองสำหรับสถานะและ Error
+### Optional overrides
 
-### Database และ Backup
+- `MANAGER_ROLE_ID` — Role ที่ใช้ `/run`, `/panel` และ `/api-status`; `/stop` จำกัดเฉพาะเจ้าของ Runner ส่วน Owner/Admin ใช้คำสั่ง Manager ได้เสมอ
+- `TIMEZONE` — ค่าเริ่มต้น `Asia/Bangkok`
+- `LOG_CHANNEL_ID` — ห้องสำรองสำหรับข้อความสถานะ Runner ไม่ใช่ Incident Webhook
+- `DATABASE_PATH`, `DATABASE_BACKUP_ENABLED`, `DATABASE_BACKUP_RETENTION`
+- `HEALTH_STATUS_TOKEN` — เปิด HTTP `GET /api/status`
+- `PORT` — Port ของ Health server
+- `QUEST_PROCESS_ROLE` — `all`, `control` หรือ `worker`; ค่าเริ่มต้น `all`
+- `QUEST_WORKER_POLL_MS` — รอบ Reconcile ของ Worker ค่าเริ่มต้น 5000 ms
+- `DISCORD_LOCALE` — Locale ของ Discord client profile ค่าเริ่มต้น `en-US`
+- `DISCORD_TIMEZONE` — Timezone ของ Discord client profile ค่าเริ่มต้น `Asia/Bangkok`
+- Discord client profile overrides ต้องเปลี่ยนพร้อมกันทั้งชุดและ Restart
 
-- `DATABASE_PATH` — ค่าเริ่มต้น `./data/quests.db`
-- `DATABASE_BACKUP_ENABLED` — เปิด/ปิด Backup แบบ Slot
-- `DATABASE_BACKUP_RETENTION` — จำนวน Slot ที่เก็บ ค่า 1–7
+## Process topology
 
-ระบบไม่รองรับ `DATABASE_BACKUP_DIR` และไม่รับ Backup path อิสระจาก Environment
+### โหมดแนะนำ: All-in-one
 
-ตำแหน่งที่อนุญาตมีสองแบบ:
+```env
+QUEST_PROCESS_ROLE=all
+```
+
+```bash
+npm start
+```
+
+โหมดนี้เปิด Discord Gateway, Commands, One-shot และ Auto Daily ใน Process เดียว เหมาะกับ Deployment ปัจจุบันที่มี Service เดียวและเป็นค่าเริ่มต้นที่ปลอดภัยที่สุด
+
+### โหมดแยก Control + Worker
+
+Control plane:
+
+```env
+QUEST_PROCESS_ROLE=control
+PORT=3000
+```
+
+```bash
+npm run start:control
+```
+
+Scheduled Worker:
+
+```env
+QUEST_PROCESS_ROLE=worker
+PORT=3001
+```
+
+```bash
+npm run start:worker
+```
+
+พฤติกรรม:
+
+- Control เปิด Discord Gateway, Commands, Panel และ One-shot
+- `/run` ของ Control เข้ารหัส Token และสร้าง Scheduled row/Checkpoint
+- Worker ไม่เปิด Discord Gateway แต่ใช้ Discord REST v10 สำหรับข้อความสถานะ
+- Worker Reconcile Scheduled rows แล้ว Start/Stop/Retry งานจริง
+- One-shot ไม่ถูกส่งข้าม Process และไม่ Persist Token เพิ่ม
+
+ข้อกำหนด Split mode:
+
+1. Control และ Worker ต้องเห็น `DATABASE_PATH` เดียวกันจริง
+2. ใช้ `RUNNER_TOKEN_SECRET` เดียวกัน
+3. ใช้ Port คนละค่า
+4. ห้ามรัน `all` พร้อม `control` หรือ `worker`
+5. SQLite ต้องอยู่บน Filesystem ที่ทั้งสอง Process เข้าถึงได้อย่างน่าเชื่อถือ
+6. หากแต่ละ Hosting service มี Local disk แยกกัน ให้ใช้ `all` จนกว่าจะมี Shared durable store
+
+Runtime lease ป้องกัน Process Role ซ้ำและป้องกัน All-in-one ทำ Scheduled Quest ซ้ำกับ Worker
+
+## Safe bootstrap
+
+`index.js` ติดตั้ง Bootstrap handlers ก่อน Dynamic import ของ Config และ Runtime จากนั้นเลือก `app.js` หรือ `worker-app.js` ตาม Process role
+
+Startup หลัก:
+
+1. ติดตั้ง Bootstrap handlers
+2. โหลด Config และเลือก Process role
+3. เปิดฐานข้อมูลและ Migration
+4. Acquire topology lease
+5. Bind Health server
+6. ติดตั้ง Discord API v10 transport
+7. Control/All Login Discord Gateway; Worker ไม่ Login Gateway
+8. Restore Scheduled Runner และ Start Supervisor ตาม Role
+9. Mark Health ready เมื่อ Runtime พร้อมจริง
+
+Health bind, Database, Config, Login หรือ Lease failure ทำให้ Startup ล้มและเข้าสู่ Fatal shutdown เดียว ไม่ปล่อยระบบทำงานครึ่งหนึ่ง
+
+## Discord API v10 และ Rate limit
+
+Outbound Discord API request ถูก Rewrite เป็น v10 ก่อนส่งจริง โดยไม่แก้ Webhook หรือ URL ภายนอก
+
+Global coordinator:
+
+- บัญชีเดียวส่ง Request พร้อมกันได้หนึ่งรายการ
+- หลายบัญชีทำงานพร้อมกันได้ตาม Concurrency limit
+- จดจำ Route/Bucket และเคารพ Retry headers
+- Global 429 หยุด Queue ทั้งหมด
+- Claim/Verification มี Priority สูงกว่า Background request
+- Queue timer ปรับตาม Bucket ที่ปลดเร็วที่สุด
+- Authorization ถูกเก็บใน Queue เป็น Fingerprint ไม่ใช่ Raw token
+
+## Durable Runner state
+
+SQLite ตาราง `runner_states` เก็บ Lifecycle, Quest, Progress, Next action, Retry และ Error โดยไม่เพิ่ม Token
+
+Scheduled Runner ที่ Process หยุดกลางงานเข้า `RECOVERING` และกู้จาก Scheduled row ส่วน One-shot เข้า `FAILED` เพราะไม่มี Token สำหรับ Restore
+
+Partial transition ไม่ล้าง Checkpoint โดยไม่ตั้งใจ และ Observer แยก Error ต่อ Job ไม่ทำให้บอททั้ง Processปิดจาก Checkpoint รายการเดียว
+
+## Smart Scheduler
+
+ระบบอ่าน Quest response ผ่าน `response.clone()` แล้วสร้าง Wake-up hint จาก:
+
+1. Claim พร้อม
+2. Quest ใกล้หมดอายุแต่ยังไม่หมดอายุ
+3. Verification/Retry
+4. Enrollment เปิด
+5. Quest เริ่ม
+6. รอบตรวจพื้นฐาน
+
+Scheduled Runner ถูกปลุกเฉพาะเมื่อกำลังหลับ ไม่ตัด Progress mutation กลางทาง
+
+## Backend Incident Webhook
+
+Render/Console logs บันทึก Error ทุกระดับ ส่วน Webhook รับเฉพาะ Structured Incident:
+
+- Incident มี Code, Incident ID, Impact, Action, Runtime และ Deployment
+- Context ใช้ Deep-frozen allowlist
+- ปิด Mentions และ Redirect
+- HTTP 429/502/503/504 Retry ได้สูงสุดหนึ่งครั้ง
+- Network timeout หลังเริ่ม POST เป็น `delivery_unknown` และไม่ส่งซ้ำแบบเดา
+- Concurrent incident เดียวกันมี Network delivery เพียงหนึ่งรายการ
+- Webhook ล้มไม่ทำให้ Bot ดับ
+
+รายละเอียดอยู่ที่ [`INCIDENT-DESIGN.md`](INCIDENT-DESIGN.md)
+
+## Storage และ Backup
+
+ระบบใช้ Storage profile เป็น Source of truth เดียวและไม่เขียนค่าอัตโนมัติกลับเข้า `process.env`
+
+| Mode | ความหมาย |
+|---|---|
+| `memory` | ไม่มี Durability และ Backup ปิด |
+| `local-development` | Local file สำหรับพัฒนา |
+| `hosted-ephemeral` | Hosting ไม่มี Persistent mount และไฟล์อาจหายหลัง Redeploy |
+| `persistent-candidate` | `/var/data` เขียนได้ แต่ต้อง Controlled restart ก่อนถือว่า Verified |
+
+Fixed mapping:
 
 | Database | Backup |
 |---|---|
-| `./data/quests.db` หรือ Path ทั่วไป | `./data/backups` |
-| Path ใต้ `/var/data/` | `/var/data/backups` |
+| นอก `/var/data/` | `./data/backups` |
+| ใต้ `/var/data/` | `/var/data/backups` |
 
-แนะนำบน Hosting ที่มี Persistent Volume:
+Backup มีสูงสุด 7 Slot, Threshold incident, Fast retry จำกัด และ Recovery lifecycle
 
-```env
-DATABASE_PATH=/var/data/quests.db
-DATABASE_BACKUP_ENABLED=true
-DATABASE_BACKUP_RETENTION=7
-```
+## Health และ Status
 
-ต้อง Mount `/var/data` แบบ Persistent ไม่เช่นนั้นทั้ง Database และ Backup จะหายเมื่อ Redeploy
-
-### Health endpoint
-
-- `HEALTH_STATUS_TOKEN` — Bearer token สำหรับ HTTP `GET /api/status`
-- หากไม่ตั้งค่า Endpoint รายละเอียดจะปิด
-- `GET /healthz` เปิดสาธารณะและตอบเฉพาะสถานะรวม
-
-## Discord client profile
-
-Runner ใช้ Client profile กลางหนึ่งชุดตลอดอายุ Process ค่าจะถูกอ่านตอนเริ่ม Bot และ **ไม่ Refresh อัตโนมัติทุก 6 ชั่วโมงอีกแล้ว** การแก้ค่าต้องทำพร้อมกันทั้งชุดแล้ว Restart:
-
-- `DISCORD_CLIENT_VERSION`
-- `DISCORD_CHROME_VERSION`
-- `DISCORD_ELECTRON_VERSION`
-- `DISCORD_BUILD_NUMBER`
-- `DISCORD_NATIVE_BUILD_NUMBER`
-- `DISCORD_LOCALE`
-- `DISCORD_TIMEZONE`
-
-ถ้าไม่กำหนด ระบบใช้ Profile สำรองใน Source code ห้ามเปลี่ยนเพียงค่าเดียวแบบเดาสุ่ม เพราะ Header จะไม่สอดคล้องกัน
+- `GET /healthz` เปิดสาธารณะและตอบเฉพาะ `{ ok }`
+- Worker ตอบ Ready หลัง Restore และ Supervisor พร้อมจริงเท่านั้น
+- HTTP `/api/status` ปิดเมื่อไม่มี `HEALTH_STATUS_TOKEN`
+- Protected status แสดง Process role/active leases, Storage, Backup, Runner และ Quest API
+- Slash `/api-status` แสดง API v10, Queue, 429, Durable states, Recovering และ Stopping
+- Status ไม่แสดง Token, Webhook URL, Full database path หรือ Backup directory
 
 ## คำสั่งและสิทธิ์
 
@@ -83,135 +202,75 @@ Runner ใช้ Client profile กลางหนึ่งชุดตลอด
 |---|---|---|
 | `/panel` | แผง One-shot: `START NOW` และ `STOP ALL` | Action ตรวจ Manager |
 | `/run` | เริ่ม Auto Daily | Owner/Admin/Manager |
-| `/stop` | เลือกหยุด Runner | เจ้าของ Runner; Action ตรวจสิทธิ์ |
-| `/api-status` | สถานะ Database, Runner และ Quest API | Owner/Admin/Manager เท่านั้น |
+| `/stop` | เลือกหยุด Auto Daily | เจ้าของ Runner |
+| `/api-status` | สถานะระบบหลังบ้าน | Owner/Admin/Manager |
 | `/ping` | ตรวจว่า Bot ออนไลน์ | ทั่วไป |
 | `/help` | แสดงคำสั่ง | ทั่วไป |
 
 Interaction ที่มีข้อมูลส่วนตัวตอบแบบ Ephemeral
 
-## One-shot Runner
+## One-shot และ Auto Daily
 
-เปิด `/panel` แล้วกด `START NOW` กรอกหนึ่ง Token ต่อหนึ่งบรรทัด ระบบหยุดเองเมื่อไม่มี Quest ที่รองรับหรือเมื่อกด `STOP ALL`
+One-shot รับหนึ่ง Token ต่อหนึ่งบรรทัด ทำ Quest ที่รองรับ และหยุดเมื่อไม่มี Quest หรือถูก Stop
 
-## Auto Daily Runner
-
-ใช้ `/run` ระบบจะ:
+Auto Daily:
 
 1. ตรวจ Token และบัญชี
 2. เข้ารหัส Token ก่อนบันทึก SQLite
 3. ตรวจ Quest ทันที
 4. ตรวจตามเวลา 00:00 / 08:00 / 16:00 ตาม `TIMEZONE`
-5. ตรวจซ้ำทุกช่วง Recheck ที่กำหนดเมื่อจำเป็น
-6. Restore Scheduled Runner หลัง Bot Restart
+5. Recheck ตาม Policy
+6. Restore หลัง Restart
+7. ใน Split mode Worker รับงานผ่าน SQLite
 
-ใช้ `/stop` เพื่อหยุดหนึ่งบัญชี หลายบัญชี หรือทั้งหมด
-
-## ขีดจำกัดและการป้องกันคำสั่งพร้อมกัน
-
-รองรับสูงสุด 10 Runner ต่อ Owner โดยนับรวม:
-
-- One-shot ที่กำลังทำงาน
-- Auto Daily ในหน่วยความจำ
-- Auto Daily ที่บันทึกไว้แต่ยัง Offline
-- Runner ที่กำลัง Stop/Cleanup
-
-การนับช่องและเริ่ม Runner ถูก Serialize ต่อ Owner จึงไม่เกิดกรณี Modal สองชุดคำนวณช่องว่างเดียวกันแล้วเปิดเกิน 10 ตัว Owner คนละคนยังทำงานพร้อมกันได้
+รองรับสูงสุด 10 Runner ต่อ Owner โดยนับ Local jobs, Persisted rows และงานที่กำลัง Cleanup การ Admission ถูก Serialize ป้องกัน Race condition
 
 ## Stop lifecycle
 
-เมื่อสั่ง Stop ระบบจะคงสถานะบัญชีว่า “กำลังหยุด” จน `job.done` จบจริง แม้หน้าจอรอผลหมดเวลาแล้วก็ตาม บัญชีเดิมจึงเริ่มซ้ำไม่ได้ระหว่าง Cleanup
+Local job อยู่สถานะกำลังหยุดจน `job.done` จบจริง
+
+Split mode:
+
+1. Control ลบ Scheduled row และตั้ง Durable state เป็น `STOPPING`
+2. Worker Supervisor พบ row หายแล้ว Abort job
+3. เมื่อทั้ง row และ Worker job หาย Durable state เปลี่ยนเป็น `STOPPED`
+4. `/stop` รายงาน Pending หากยังไม่ได้รับ Terminal confirmation ภายในเวลารอ
+
+บัญชีเดิมจึงไม่ถูกประกาศว่าหยุดเสร็จก่อน Cleanup จริง
 
 ## การยืนยันผล Quest
 
-ระบบไม่ถือว่าคำขอ POST สำเร็จเพียงเพราะส่ง Request ได้:
+ระบบไม่ถือว่า POST สำเร็จเพียงเพราะส่ง Request ได้:
+
 - Progress ต้องดึง State ใหม่และเห็นค่าจาก Discord
 - Quest เสร็จเมื่อเห็น `completed_at`
 - Claim สำเร็จเมื่อเห็น `claimed_at`
 
-Enroll, Claim, Video Progress และ Heartbeat ใช้ Verified mutation retry:
+Enroll, Claim, Video Progress และ Heartbeat ใช้ Verified mutation retry โดยตรวจ Fresh state ก่อนส่งซ้ำ และไม่ Retry HTTP 4xx แบบแน่นอน
 
-1. เมื่อ Network error, Timeout, HTTP 429 หรือ 5xx ให้ดึง State ล่าสุด
-2. ถ้า State เปลี่ยนแล้ว ไม่ส่งซ้ำ
-3. ถ้ายังไม่เปลี่ยน รอตาม Retry delay และส่งซ้ำได้อีกหนึ่งครั้ง
-4. HTTP 4xx แบบแน่นอน เช่น 400 ไม่ Retry
+## ตรวจคุณภาพ
 
-## สถานะหลายบัญชี
-
-Quest API status ถูกเก็บแยกตาม Job/Account:
-
-- `/api-status` แสดง Aggregate และสถานะบัญชีของผู้เรียก แต่ใช้ได้เฉพาะ Manager ขึ้นไป
-- HTTP `/api/status` แสดง `questApi.aggregate` และ `questApi.accounts` เมื่อ Bearer token ถูกต้อง
-- Status ไม่มี Token หรือ Ciphertext
-- ประวัติ Job ที่หยุดแล้วถูกจำกัดจำนวน
-
-## ฐานข้อมูลและ Migration
-
-ระบบใช้ตาราง `scheduled_runners` สำหรับ Auto Daily เมื่อพบตาราง Tracker เก่า (`quests`, `guild_settings`, `quest_logs`) ระบบจะ:
-
-1. สำรอง Database ไปยัง Backup directory ที่อนุญาต
-2. ลบเฉพาะตาราง Tracker เก่า
-3. คง `scheduled_runners` ไว้
-
-Backup รายวันใช้ชื่อ Slot คงที่สูงสุด 7 ไฟล์ ไม่สะสมไม่สิ้นสุด และไม่รับ Destination จากผู้ใช้
-
-## Sanitized Quest fixture
-
-`fixtures/quest-api.sample.json` เป็น Fixture ที่ไม่มี Token, Cookie, Email, Username หรือ Account ID จริง
+รันจากโฟลเดอร์ `bot`:
 
 ```bash
-npm run validate:quest-fixture
-```
-
-CI จะล้มเมื่อ Fixture หาย, Schema หลักเสีย, Parser อ่านไม่ได้ หรือมีชื่อ Field ข้อมูลลับที่ห้ามเก็บ
-
-## Read-only Quest API smoke
-
-Smoke Test ตรวจบัญชีและดึงรายการ Quest จริงเท่านั้น ไม่ Enroll, Progress, Heartbeat หรือ Claim
-
-```bash
-export DISCORD_USER_TOKEN='REPLACE_WITH_TOKEN_FROM_SECRET_STORE'
-npm run smoke:quest
-```
-
-แนะนำให้ตั้ง `EXPECTED_DISCORD_ACCOUNT_ID` เพื่อป้องกัน Token ผิดบัญชี Script จะไม่พิมพ์ Token, Username หรือ Account ID ลง Log
-
-GitHub Actions Workflow `Quest API smoke` อ่าน Secrets:
-
-- `DISCORD_USER_TOKEN`
-- `EXPECTED_DISCORD_ACCOUNT_ID` — แนะนำให้ตั้ง
-
-Smoke แบบ Read-only ไม่ใช่หลักฐานว่าการเปลี่ยนข้อมูลจริงผ่านครบทุก Flow ดูขอบเขตการตรวจรับที่ [`PRODUCTION-CHECKLIST.md`](PRODUCTION-CHECKLIST.md)
-
-## ทดสอบก่อน Commit/PR
-
-```bash
-npm ci --ignore-scripts --no-fund --no-audit
-npm rebuild better-sqlite3 --foreground-scripts
 npm run validate:quest-fixture
 npm test
 npm run check
 npm audit --omit=dev --audit-level=high
 ```
 
-`npm run check` ตรวจ Syntax ทั้ง `src` และ `scripts`
+CI ตรวจ Repository safety, Fixture, Backup paths, Architecture boundaries, Bootstrap, Topology, Worker REST/readiness, Durable state, Fault injection, Coverage, Syntax และ Production dependency audit
+
+`npm run smoke:quest` เป็น Read-only: ตรวจบัญชีและอ่านรายการ Quest เท่านั้น ไม่ Enroll, Progress, Heartbeat หรือ Claim
 
 ## Production และ Rollback
 
-ใช้ [`PRODUCTION-CHECKLIST.md`](PRODUCTION-CHECKLIST.md) เพื่อตรวจ Environment, Persistent storage, Permission, Runner limit, Stop lifecycle, Restart/Restore, Health endpoint และ Rollback
+ก่อน Merge/Deploy ต้องทำตาม [`PRODUCTION-CHECKLIST.md`](PRODUCTION-CHECKLIST.md):
+
+- CI/Snyk/Codacy/SonarCloud/CodeRabbit ต้องเป็นของ HEAD ล่าสุด
+- ไม่มี Review thread ที่ยังใช้ได้ค้าง
+- Restart แล้ว Database, Backup และ Scheduled Runner ยังอยู่
+- Split mode ต้องทดสอบ Control/Worker กับ Database เดียวกันจริง
+- เก็บ Commit SHA และ Backup สำหรับ Rollback
 
 > **คำเตือน:** การทำงานอัตโนมัติด้วยข้อมูลรับรองของบัญชีผู้ใช้มีความเสี่ยงด้านบัญชีและข้อกำหนดของแพลตฟอร์ม Unit Test และ CI ไม่สามารถทำให้ความเสี่ยงนี้หายไป ผู้ดูแลต้องตรวจสอบกฎปัจจุบันและยอมรับความเสี่ยงก่อนใช้งานจริง
-
-## Runtime lease และข้อกำหนด Replica
-
-ระบบใช้ Lease ใน SQLite เพื่ออนุญาต Bot process เดียวต่อฐานข้อมูล หาก Process อื่นใช้ `DATABASE_PATH` เดียวกัน ระบบจะหยุดตั้งแต่ Startup
-
-Production ต้องตั้ง Replica เป็น 1 เว้นแต่ทุก Replica ใช้ Persistent SQLite ไฟล์เดียวกันจริง การใช้ Local database แยกกันในหลาย Replica ไม่รองรับ
-
-Runtime database และ Backup ห้าม Commit เข้า Git โดยเด็ดขาด CI จะตรวจ `.db`, `.sqlite`, WAL/SHM และโฟลเดอร์ `data/backups`
-
-## ขอบเขต Input และบัญชี
-
-- Modal รับสูงสุด 10 Token ต่อครั้ง
-- Discord account เดียวเปิด Runner ได้เพียงหนึ่งตัวทั้งระบบ แม้ผู้สั่งเป็น Manager คนละคน
-- Restore จำกัดไม่เกิน 10 Runner ต่อ Owner และข้าม Account ที่ซ้ำ

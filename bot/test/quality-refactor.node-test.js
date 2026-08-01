@@ -37,12 +37,18 @@ test('settleWithTimeout does not report a timeout after tasks finish', async () 
 
 test('runner quality refactor keeps static-analysis regressions out', async () => {
   const runner = await readFile(new URL('../src/discord-runner.js', import.meta.url), 'utf8');
+  const videoExecutor = await readFile(
+    new URL('../src/quest/executors/video-executor.js', import.meta.url),
+    'utf8',
+  );
   const worker = await readFile(new URL('../src/worker.js', import.meta.url), 'utf8');
   const httpRetry = await readFile(new URL('../src/http-retry.js', import.meta.url), 'utf8');
   const mutationRetry = await readFile(new URL('../src/mutation-retry.js', import.meta.url), 'utf8');
   const stopCommand = await readFile(new URL('../src/commands/stop.js', import.meta.url), 'utf8');
   const db = await readFile(new URL('../src/db.js', import.meta.url), 'utf8');
   const errorReporter = await readFile(new URL('../src/error-reporter.js', import.meta.url), 'utf8');
+  const incidentCatalog = await readFile(new URL('../src/incident-catalog.js', import.meta.url), 'utf8');
+  const webhookDelivery = await readFile(new URL('../src/webhook-delivery.js', import.meta.url), 'utf8');
   const backupPathsTest = await readFile(new URL('./backup-paths.node-test.js', import.meta.url), 'utf8');
   const auditHardeningTest = await readFile(new URL('./audit-hardening.node-test.js', import.meta.url), 'utf8');
 
@@ -72,8 +78,11 @@ test('runner quality refactor keeps static-analysis regressions out', async () =
   assert.match(runner, /async function refreshRoundQuest\(/);
   assert.match(runner, /async function ensureQuestEnrollment\(/);
   assert.match(runner, /async function verifyQuestCompletion\(/);
-  assert.match(runner, /function nextVideoTimestamp\(/);
-  assert.match(runner, /async function submitVideoProgressStep\(/);
+  assert.doesNotMatch(runner, /function nextVideoTimestamp\(/);
+  assert.doesNotMatch(runner, /async function submitVideoProgressStep\(/);
+  assert.match(videoExecutor, /export function nextVideoTimestamp\(/);
+  assert.match(videoExecutor, /async function submitProgress\(/);
+  assert.match(videoExecutor, /export async function executeVideoQuest\(/);
   const executeProgressIndex = runner.indexOf('async function executeQuestProgress');
   const abortAfterRunnerIndex = runner.indexOf(
     "if (signal.aborted) throw new Error('aborted');",
@@ -93,8 +102,9 @@ test('runner quality refactor keeps static-analysis regressions out', async () =
   assert.match(mutationRetry, /abortableDelay\(ms, signal, \{ unref: true \}\)/);
   assert.doesNotMatch(stopCommand, /function summarizeStopResults/);
   assert.match(db, /resolveDatabaseBackupSlotPath/);
-  assert.match(db, /LOCAL_BACKUP_SLOT_PATHS/);
-  assert.match(db, /PERSISTENT_BACKUP_SLOT_PATHS/);
+  assert.match(db, /LOCAL_BACKUP_PROFILE/);
+  assert.match(db, /PERSISTENT_BACKUP_PROFILE/);
+  assert.match(db, /validateBackupProfile/);
   assert.doesNotMatch(db, /questbot-slot-\$\{/);
   assert.doesNotMatch(db, /DATABASE_BACKUP_DIR/);
   assert.doesNotMatch(db, /backupLocalSlot|backupPersistentSlot|clearLocalInactiveSlots|clearPersistentInactiveSlots/);
@@ -103,7 +113,19 @@ test('runner quality refactor keeps static-analysis regressions out', async () =
   assert.match(backupPathsTest, /fs\.mkdir\('\.\/test\/\.backup-path-workspace'/);
   assert.match(backupPathsTest, /cwd: '\.\/test\/\.backup-path-workspace'/);
   assert.doesNotMatch(auditHardeningTest, /140\.1\.2\.3/);
-  assert.match(errorReporter, /function reserveCriticalErrorReport/);
+
+  assert.match(errorReporter, /function incidentIdentity\(code, scope\)/);
+  assert.match(errorReporter, /state = 'delivering'/);
+  assert.match(errorReporter, /export async function reportIncident/);
+  assert.match(errorReporter, /export async function reportRecovery/);
+  assert.match(errorReporter, /allowlistedIncidentContext/);
+  assert.match(incidentCatalog, /export const INCIDENT/);
+  assert.match(incidentCatalog, /Object\.hasOwn\(DEFINITIONS, code\)/);
+  assert.match(incidentCatalog, /export function allowlistedIncidentContext/);
+  assert.match(webhookDelivery, /redirect: 'error'/);
+  assert.match(webhookDelivery, /RETRYABLE_STATUSES/);
+  assert.doesNotMatch(webhookDelivery, /status\s*>=\s*500/);
+
   assert.match(httpRetry, /async function consumeRetryableResponse/);
   assert.match(httpRetry, /async function handleFetchFailure/);
 });

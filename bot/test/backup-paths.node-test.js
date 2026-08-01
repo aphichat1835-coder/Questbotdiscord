@@ -2,8 +2,17 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import test from 'node:test';
+import { createFakeDiscordWebhookUrl } from '../test-support/fake-webhook.js';
 
+process.env.DISCORD_BOT_TOKEN ??= 'backup-test-bot-token';
+process.env.DISCORD_CLIENT_ID ??= '12345678901234567';
+process.env.DISCORD_GUILD_ID ??= '22345678901234567';
+process.env.OWNER_ID ??= '32345678901234567';
+process.env.RUNNER_TOKEN_SECRET ??= 'backup-test-runner-secret-32-characters';
+process.env.LOG_WEBHOOK_URL ??= createFakeDiscordWebhookUrl('backup');
 process.env.DATABASE_PATH = ':memory:';
+process.env.QUESTBOT_TEST_MODE = 'true';
+
 const {
   closeDatabase,
   DATABASE_BACKUP_SLOT_COUNT,
@@ -67,24 +76,36 @@ test('backup destination resolver permits only the fixed local and persistent ro
   }
 });
 
-test('backupDatabaseSlot writes and clears a backup beneath the resolved local root', async () => {
+test('backup operations copy, timestamp and clean every local slot through the runtime API', async () => {
   const script = `
     const db = await import('../../src/db.js');
-    const destination = await db.backupDatabaseSlot(0);
     const fs = await import('node:fs');
-    const existed = fs.existsSync('./data/backups/questbot-slot-1.db');
+    const destinations = [];
+    const existed = [];
+    for (let slot = 0; slot < db.DATABASE_BACKUP_SLOT_COUNT; slot++) {
+      const destination = await db.backupDatabaseSlot(slot);
+      destinations.push(destination);
+      existed.push(fs.existsSync(destination));
+    }
+    const latest = db.getLatestDatabaseBackupAt();
+    await db.clearInactiveDatabaseBackupSlots(3);
+    const retained = destinations.map((destination) => fs.existsSync(destination));
     await db.clearAllDatabaseBackupSlots();
-    const removed = !fs.existsSync('./data/backups/questbot-slot-1.db');
+    const removed = destinations.map((destination) => !fs.existsSync(destination));
     db.closeDatabase();
-    console.log(JSON.stringify({ destination, existed, removed }));
+    console.log(JSON.stringify({ destinations, existed, latest, retained, removed }));
   `;
 
   try {
     const child = spawnSync(process.execPath, ['--input-type=module', '--eval', script], {
       cwd: './test/.backup-path-workspace',
-      env: { ...process.env, DATABASE_PATH: './runtime.db' },
+      env: {
+        ...process.env,
+        DATABASE_PATH: './runtime.db',
+        DATABASE_BACKUP_ENABLED: 'true',
+      },
       encoding: 'utf8',
-      timeout: 10_000,
+      timeout: 20_000,
     });
     assert.equal(
       child.status,
@@ -92,9 +113,11 @@ test('backupDatabaseSlot writes and clears a backup beneath the resolved local r
       child.error?.message || child.stderr || child.stdout,
     );
     const output = JSON.parse(child.stdout.trim().split('\n').at(-1));
-    assert.equal(output.destination, './data/backups/questbot-slot-1.db');
-    assert.equal(output.existed, true);
-    assert.equal(output.removed, true);
+    assert.deepEqual(output.destinations, EXPECTED_LOCAL_BACKUP_PATHS);
+    assert.equal(output.existed.every(Boolean), true);
+    assert.equal(typeof output.latest, 'string');
+    assert.deepEqual(output.retained, [true, true, true, false, false, false, false]);
+    assert.equal(output.removed.every(Boolean), true);
   } finally {
     await fs.rm('./test/.backup-path-workspace', { recursive: true, force: true });
   }

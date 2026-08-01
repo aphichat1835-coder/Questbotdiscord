@@ -1,11 +1,14 @@
 import assert from 'node:assert/strict';
+import { createFakeDiscordWebhookUrl } from './support/fake-webhook.mjs';
 
 process.env.DISCORD_BOT_TOKEN ??= 'fixture-bot-token';
 process.env.DISCORD_CLIENT_ID ??= '12345678901234567';
 process.env.DISCORD_GUILD_ID ??= '22345678901234567';
 process.env.OWNER_ID ??= '32345678901234567';
 process.env.RUNNER_TOKEN_SECRET ??= 'fixture-secret-at-least-16-chars';
+process.env.LOG_WEBHOOK_URL = createFakeDiscordWebhookUrl('fixture');
 process.env.DATABASE_PATH ??= ':memory:';
+process.env.QUESTBOT_TEST_MODE = 'true';
 
 const { default: raw } = await import(
   '../fixtures/quest-api.sample.json',

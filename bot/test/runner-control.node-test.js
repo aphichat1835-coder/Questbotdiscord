@@ -12,6 +12,7 @@ process.env.RUNNER_TOKEN_SECRET = 'runner-control-test-secret-123456';
 
 const { getUserJobs, startRunner, shutdownRunners } = await import('../src/discord-runner.js');
 const {
+  durableStopTimeoutMs,
   isAccountStopping,
   stopRunnerAndWait,
   summarizeStopResults,
@@ -57,6 +58,12 @@ test('stop result summary is shared by runner control and stop command flows', (
     { accepted: true, cleanupComplete: false },
     { accepted: false, cleanupComplete: false },
   ]), { accepted: 2, completed: 1, pending: 1 });
+});
+
+test('durable stop timeout covers at least two worker polls plus cleanup margin', () => {
+  assert.equal(durableStopTimeoutMs(5_000), 15_000);
+  assert.equal(durableStopTimeoutMs(30_000), 65_000);
+  assert.equal(durableStopTimeoutMs(60_000), 125_000);
 });
 
 test('stop control blocks restart state until runner cleanup finishes', async () => {

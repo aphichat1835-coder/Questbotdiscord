@@ -1,4 +1,6 @@
 import 'dotenv/config';
+import { resolveStorageProfile } from './storage-profile.js';
+import { validateDiscordWebhookUrl } from './webhook-delivery.js';
 
 function configurationError(message) {
   throw new Error(`Invalid environment configuration: ${message}`);
@@ -12,6 +14,14 @@ function readRequired(name) {
 
 function readOptional(name, fallback = '') {
   return process.env[name]?.trim() || fallback;
+}
+
+function readChoice(name, allowed, fallback) {
+  const value = readOptional(name, fallback).toLowerCase();
+  if (!allowed.includes(value)) {
+    configurationError(`${name} must be one of: ${allowed.join(', ')}`);
+  }
+  return value;
 }
 
 function validateSnowflake(name, value, { optional = false } = {}) {
@@ -51,8 +61,8 @@ function validateTimeZone(name, value) {
 }
 
 function validateSecret(name, value, minLength = 16) {
-  if (value && value.length < minLength) {
-    configurationError(`${name} must be at least ${minLength} characters when configured`);
+  if (value.length < minLength) {
+    configurationError(`${name} must be at least ${minLength} characters`);
   }
   return value;
 }
@@ -77,11 +87,28 @@ const logChannelId = validateSnowflake(
   readOptional('LOG_CHANNEL_ID'),
   { optional: true },
 );
+const logWebhookUrl = validateDiscordWebhookUrl(
+  'LOG_WEBHOOK_URL',
+  readRequired('LOG_WEBHOOK_URL'),
+);
 const timezone = validateTimeZone('TIMEZONE', readOptional('TIMEZONE', 'Asia/Bangkok'));
 const discordTimezone = validateTimeZone(
   'DISCORD_TIMEZONE',
   readOptional('DISCORD_TIMEZONE', timezone),
 );
+const processRole = readChoice('QUEST_PROCESS_ROLE', ['all', 'control', 'worker'], 'all');
+const resolvedStorageProfile = resolveStorageProfile({ env: process.env });
+const requestedBackupEnabled = readBoolean(
+  'DATABASE_BACKUP_ENABLED',
+  resolvedStorageProfile.backupEnabled,
+);
+const databaseBackupEnabled = resolvedStorageProfile.mode === 'memory'
+  ? false
+  : requestedBackupEnabled;
+const storageProfile = Object.freeze({
+  ...resolvedStorageProfile,
+  backupEnabled: databaseBackupEnabled,
+});
 
 const discordClientVersion = validateVersion(
   'DISCORD_CLIENT_VERSION',
@@ -108,6 +135,8 @@ export const config = Object.freeze({
   clientId,
   guildId,
   ownerId,
+  processRole,
+  workerPollIntervalMs: readInteger('QUEST_WORKER_POLL_MS', 5000, { min: 1000, max: 60_000 }),
   timezone,
   discordTimezone,
   discordLocale,
@@ -117,19 +146,20 @@ export const config = Object.freeze({
   discordBuildNumber,
   discordNativeBuildNumber,
   logChannelId,
+  logWebhookUrl,
   managerRoleId,
-  databasePath: readOptional('DATABASE_PATH', './data/quests.db'),
-  databaseBackupEnabled: readBoolean('DATABASE_BACKUP_ENABLED', false),
+  storageProfile,
+  databasePath: storageProfile.databasePath,
+  databaseBackupEnabled,
   databaseBackupRetention: readInteger('DATABASE_BACKUP_RETENTION', 7, { min: 1, max: 7 }),
   runnerTokenSecret: validateSecret(
     'RUNNER_TOKEN_SECRET',
-    readOptional('RUNNER_TOKEN_SECRET'),
+    readRequired('RUNNER_TOKEN_SECRET'),
     16,
   ),
-  healthStatusToken: validateSecret(
-    'HEALTH_STATUS_TOKEN',
-    readOptional('HEALTH_STATUS_TOKEN'),
-    16,
-  ),
+  healthStatusToken: (() => {
+    const value = readOptional('HEALTH_STATUS_TOKEN');
+    return value ? validateSecret('HEALTH_STATUS_TOKEN', value, 16) : '';
+  })(),
   port: readInteger('PORT', 3000, { min: 1, max: 65535 }),
 });
