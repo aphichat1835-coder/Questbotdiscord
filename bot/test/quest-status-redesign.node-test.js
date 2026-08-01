@@ -80,8 +80,8 @@ test('runner source uses the locked session and defers terminal issue details', 
   const source = await readFile(new URL('../src/discord-runner.js', import.meta.url), 'utf8');
   assert.match(source, /createOneShotQuestSession/);
   assert.match(source, /completeAndClaimOneShotQuest\(fresh\)/);
-  assert.match(source, /reportOneShotBotCompletion\(\)/);
-  assert.match(source, /reportOneShotExternalCompletion\(\)/);
+  assert.match(source, /reportOneShotCompletion\(\)/);
+  assert.doesNotMatch(source, /reportOneShot(?:Bot|External)Completion/);
   assert.match(source, /recordOneShotRewardClaim/);
   assert.match(source, /claimPendingCount/);
   assert.match(source, /Quest และรับรางวัลทั้งหมดเสร็จสิ้นแล้ว/);

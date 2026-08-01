@@ -795,19 +795,12 @@ export async function startRunner({
   }
 
   async function completeAndClaimOneShotQuest(quest) {
-    const status = completeOneShotQuest(oneShotSession, quest.id);
+    completeOneShotQuest(oneShotSession, quest.id);
     const claimed = await claimSilently(quest);
     recordOneShotRewardClaim(oneShotSession, quest.id, { claimed });
-    return status;
   }
 
-  async function reportOneShotExternalCompletion() {
-    if (mode !== 'oneshot') return null;
-    await reportOneShotTerminalState();
-    return oneShotOutcome();
-  }
-
-  async function reportOneShotBotCompletion() {
+  async function reportOneShotCompletion() {
     if (mode !== 'oneshot') return null;
     await reportOneShotTerminalState();
     return oneShotOutcome();
@@ -920,10 +913,8 @@ export async function startRunner({
     if (!quest.completed && isRunnableQuest(quest)) return null;
     if (quest.completed) {
       if (mode === 'oneshot') {
-        const status = await completeAndClaimOneShotQuest(quest);
-        return status === ONE_SHOT_QUEST_STATUS.COMPLETED_BY_BOT
-          ? reportOneShotBotCompletion()
-          : reportOneShotExternalCompletion();
+        await completeAndClaimOneShotQuest(quest);
+        return reportOneShotCompletion();
       }
       return idleQuestOutcome(selection.runnable.length);
     }
@@ -1174,10 +1165,8 @@ export async function startRunner({
     );
 
     if (mode === 'oneshot') {
-      const status = await completeAndClaimOneShotQuest(fresh);
-      return status === ONE_SHOT_QUEST_STATUS.COMPLETED_BY_BOT
-        ? reportOneShotBotCompletion()
-        : reportOneShotExternalCompletion();
+      await completeAndClaimOneShotQuest(fresh);
+      return reportOneShotCompletion();
     }
 
     await claimSilently(fresh);

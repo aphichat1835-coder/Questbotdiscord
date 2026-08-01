@@ -776,63 +776,82 @@ export class DiscordRateLimitCoordinator {
     this.scheduleWakeup();
   }
 
+  shouldSkipStatePrune(now, force) {
+    return !force
+      && this.lastStatePruneAt > 0
+      && now - this.lastStatePruneAt < this.statePruneIntervalMs;
+  }
+
+  pruneExpiredResetEntries(map, now) {
+    let pruned = 0;
+    for (const [key, resetAt] of map) {
+      if (resetAt > now) continue;
+      if (map.delete(key)) pruned++;
+    }
+    return pruned;
+  }
+
+  pruneExpiredGlobalReset(now) {
+    if (this.globalResetAt <= 0 || this.globalResetAt > now) return 0;
+    this.globalResetAt = 0;
+    return 1;
+  }
+
+  pruneStaleRouteMetadata(now) {
+    const cutoff = now - this.stateRetentionMs;
+    const knownRoutes = new Set([
+      ...this.routeBuckets.keys(),
+      ...this.routeScopes.keys(),
+      ...this.routeLastSeenAt.keys(),
+    ]);
+    let pruned = 0;
+    for (const route of knownRoutes) {
+      const lastSeenAt = this.routeLastSeenAt.get(route) ?? 0;
+      if (lastSeenAt > cutoff) continue;
+      pruned += Number(this.routeBuckets.delete(route));
+      pruned += Number(this.routeScopes.delete(route));
+      pruned += Number(this.routeLastSeenAt.delete(route));
+    }
+    return pruned;
+  }
+
+  pruneIdleCircuits(now) {
+    let pruned = 0;
+    for (const [key, circuit] of this.circuits) {
+      if (circuit.probeActive) continue;
+      const protectedUntil = Math.max(
+        circuit.openUntil ?? 0,
+        (circuit.lastTouchedAt ?? 0) + this.stateRetentionMs,
+      );
+      if (protectedUntil > now) continue;
+      if (this.circuits.delete(key)) pruned++;
+    }
+    return pruned;
+  }
+
+  pruneIdleMetadata(now) {
+    if (this.activeCount !== 0 || this.queue.length !== 0) return 0;
+    return this.pruneStaleRouteMetadata(now) + this.pruneIdleCircuits(now);
+  }
+
+  recordStatePrune(now, pruned) {
+    this.stats.statePrunes++;
+    this.stats.prunedEntries += pruned;
+    this.stats.lastStatePruneAt = new Date(now).toISOString();
+  }
+
   pruneExpiredState({ force = false } = {}) {
     const now = this.now();
-    if (
-      !force
-      && this.lastStatePruneAt > 0
-      && now - this.lastStatePruneAt < this.statePruneIntervalMs
-    ) {
+    if (this.shouldSkipStatePrune(now, force)) {
       return { skipped: true, pruned: 0 };
     }
 
     this.lastStatePruneAt = now;
-    let pruned = 0;
-    const pruneExpiredResetMap = (map) => {
-      for (const [key, resetAt] of map) {
-        if (resetAt > now) continue;
-        map.delete(key);
-        pruned++;
-      }
-    };
-
-    pruneExpiredResetMap(this.bucketResetAt);
-    pruneExpiredResetMap(this.accountBucketResetAt);
-    if (this.globalResetAt > 0 && this.globalResetAt <= now) {
-      this.globalResetAt = 0;
-      pruned++;
-    }
-
-    if (this.activeCount === 0 && this.queue.length === 0) {
-      const cutoff = now - this.stateRetentionMs;
-      const knownRoutes = new Set([
-        ...this.routeBuckets.keys(),
-        ...this.routeScopes.keys(),
-        ...this.routeLastSeenAt.keys(),
-      ]);
-      for (const route of knownRoutes) {
-        const lastSeenAt = this.routeLastSeenAt.get(route) ?? 0;
-        if (lastSeenAt > cutoff) continue;
-        if (this.routeBuckets.delete(route)) pruned++;
-        if (this.routeScopes.delete(route)) pruned++;
-        if (this.routeLastSeenAt.delete(route)) pruned++;
-      }
-
-      for (const [key, circuit] of this.circuits) {
-        if (circuit.probeActive) continue;
-        const protectedUntil = Math.max(
-          circuit.openUntil ?? 0,
-          (circuit.lastTouchedAt ?? 0) + this.stateRetentionMs,
-        );
-        if (protectedUntil > now) continue;
-        this.circuits.delete(key);
-        pruned++;
-      }
-    }
-
-    this.stats.statePrunes++;
-    this.stats.prunedEntries += pruned;
-    this.stats.lastStatePruneAt = new Date(now).toISOString();
+    const pruned = this.pruneExpiredResetEntries(this.bucketResetAt, now)
+      + this.pruneExpiredResetEntries(this.accountBucketResetAt, now)
+      + this.pruneExpiredGlobalReset(now)
+      + this.pruneIdleMetadata(now);
+    this.recordStatePrune(now, pruned);
     return { skipped: false, pruned };
   }
 
