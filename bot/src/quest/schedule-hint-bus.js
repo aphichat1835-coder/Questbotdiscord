@@ -2,6 +2,8 @@ const listeners = new Map();
 const hintsByAccount = new Map();
 const effectiveHints = new Map();
 const URGENT_WINDOW_MS = 30 * 60 * 1000;
+export const DEFAULT_SCHEDULE_HINT_PRUNE_INTERVAL_MS = 60_000;
+let lastGlobalPruneAt = 0;
 
 function notifyListener(listener, hint) {
   try {
@@ -67,8 +69,8 @@ export function selectEffectiveScheduleHint(accountKey, now = Date.now()) {
   return selected ? { ...selected } : null;
 }
 
-function publishEffectiveChange(accountKey, previous) {
-  const selected = selectEffectiveScheduleHint(accountKey);
+function publishEffectiveChange(accountKey, previous, now = Date.now()) {
+  const selected = selectEffectiveScheduleHint(accountKey, now);
   if (sameHint(previous, selected)) return false;
   if (selected) effectiveHints.set(accountKey, selected);
   else effectiveHints.delete(accountKey);
@@ -76,22 +78,54 @@ function publishEffectiveChange(accountKey, previous) {
   return true;
 }
 
+export function pruneExpiredScheduleHints(now = Date.now(), { force = false } = {}) {
+  if (
+    !force
+    && lastGlobalPruneAt > 0
+    && now - lastGlobalPruneAt < DEFAULT_SCHEDULE_HINT_PRUNE_INTERVAL_MS
+  ) {
+    return { skipped: true, removedHints: 0, removedAccounts: 0 };
+  }
+
+  lastGlobalPruneAt = now;
+  let removedHints = 0;
+  let removedAccounts = 0;
+  const accounts = new Set([...hintsByAccount.keys(), ...effectiveHints.keys()]);
+
+  for (const accountKey of accounts) {
+    const previous = effectiveHints.get(accountKey) ?? null;
+    const hints = hintsByAccount.get(accountKey);
+    const beforeSize = hints?.size ?? 0;
+    validHints(accountKey, now);
+    const afterSize = hintsByAccount.get(accountKey)?.size ?? 0;
+    removedHints += Math.max(0, beforeSize - afterSize);
+    if (beforeSize > 0 && afterSize === 0) removedAccounts++;
+    publishEffectiveChange(accountKey, previous, now);
+  }
+
+  return { skipped: false, removedHints, removedAccounts };
+}
+
 export function publishScheduleHint(accountKey, hint) {
+  const now = Date.now();
+  pruneExpiredScheduleHints(now);
   if (!accountKey || !hint?.nextActionAt || timestamp(hint.nextActionAt) == null) return false;
+  const expiresAt = timestamp(hint.expiresAt);
+  if (expiresAt != null && expiresAt <= now) return false;
   const source = sourceForHint(hint);
   const normalized = {
     ...hint,
     source,
     priority: Number.isFinite(Number(hint.priority)) ? Number(hint.priority) : 0,
-    publishedAtMs: Date.now(),
+    publishedAtMs: now,
   };
-  const previousEffective = effectiveHints.get(accountKey) ?? selectEffectiveScheduleHint(accountKey);
+  const previousEffective = effectiveHints.get(accountKey) ?? selectEffectiveScheduleHint(accountKey, now);
   if (!hintsByAccount.has(accountKey)) hintsByAccount.set(accountKey, new Map());
   const hints = hintsByAccount.get(accountKey);
   const previousSource = hints.get(source);
   if (sameHint(previousSource, normalized)) return false;
   hints.set(source, normalized);
-  publishEffectiveChange(accountKey, previousEffective);
+  publishEffectiveChange(accountKey, previousEffective, now);
   return true;
 }
 
@@ -106,6 +140,7 @@ export function clearScheduleHint(accountKey, source) {
 }
 
 export function subscribeScheduleHints(accountKey, listener) {
+  pruneExpiredScheduleHints();
   if (!listeners.has(accountKey)) listeners.set(accountKey, new Set());
   listeners.get(accountKey).add(listener);
   queueMicrotask(() => {
@@ -121,16 +156,30 @@ export function subscribeScheduleHints(accountKey, listener) {
 }
 
 export function getLatestScheduleHint(accountKey) {
+  pruneExpiredScheduleHints();
   const hint = selectEffectiveScheduleHint(accountKey);
   return hint ? { ...hint } : null;
 }
 
 export function listScheduleHints(accountKey) {
+  pruneExpiredScheduleHints();
   return validHints(accountKey).map((hint) => ({ ...hint }));
+}
+
+export function scheduleHintMemorySnapshot({ prune = true } = {}) {
+  if (prune) pruneExpiredScheduleHints();
+  return {
+    listenerAccounts: listeners.size,
+    hintAccounts: hintsByAccount.size,
+    effectiveAccounts: effectiveHints.size,
+    hints: [...hintsByAccount.values()].reduce((total, hints) => total + hints.size, 0),
+    lastPruneAt: lastGlobalPruneAt || null,
+  };
 }
 
 export function clearScheduleHintsForTests() {
   listeners.clear();
   hintsByAccount.clear();
   effectiveHints.clear();
+  lastGlobalPruneAt = 0;
 }
