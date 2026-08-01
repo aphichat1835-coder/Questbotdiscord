@@ -18,6 +18,7 @@ const coordinatorHelperDefinitions = [
 test('one-shot completion uses one shared reporter at both completion call sites', async () => {
   const source = await readFile(runnerUrl, 'utf8');
 
+  assert.doesNotMatch(source, /ONE_SHOT_QUEST_STATUS/);
   assert.doesNotMatch(source, /reportOneShotExternalCompletion/);
   assert.doesNotMatch(source, /reportOneShotBotCompletion/);
   assert.equal(
