@@ -1,0 +1,244 @@
+name: Apply static analysis refactor
+
+on:
+  push:
+    branches: [aa.1]
+    paths:
+      - .github/workflows/apply-static-analysis-refactor.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: aa.1
+          fetch-depth: 0
+
+      - name: Refactor flagged methods
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          coordinator_path = Path('bot/src/quest/rate-limit-coordinator.js')
+          coordinator = coordinator_path.read_text()
+          old_coordinator = '''  pruneExpiredState({ force = false } = {}) {
+            const now = this.now();
+            if (
+              !force
+              && this.lastStatePruneAt > 0
+              && now - this.lastStatePruneAt < this.statePruneIntervalMs
+            ) {
+              return { skipped: true, pruned: 0 };
+            }
+
+            this.lastStatePruneAt = now;
+            let pruned = 0;
+            const pruneExpiredResetMap = (map) => {
+              for (const [key, resetAt] of map) {
+                if (resetAt > now) continue;
+                map.delete(key);
+                pruned++;
+              }
+            };
+
+            pruneExpiredResetMap(this.bucketResetAt);
+            pruneExpiredResetMap(this.accountBucketResetAt);
+            if (this.globalResetAt > 0 && this.globalResetAt <= now) {
+              this.globalResetAt = 0;
+              pruned++;
+            }
+
+            if (this.activeCount === 0 && this.queue.length === 0) {
+              const cutoff = now - this.stateRetentionMs;
+              const knownRoutes = new Set([
+                ...this.routeBuckets.keys(),
+                ...this.routeScopes.keys(),
+                ...this.routeLastSeenAt.keys(),
+              ]);
+              for (const route of knownRoutes) {
+                const lastSeenAt = this.routeLastSeenAt.get(route) ?? 0;
+                if (lastSeenAt > cutoff) continue;
+                if (this.routeBuckets.delete(route)) pruned++;
+                if (this.routeScopes.delete(route)) pruned++;
+                if (this.routeLastSeenAt.delete(route)) pruned++;
+              }
+
+              for (const [key, circuit] of this.circuits) {
+                if (circuit.probeActive) continue;
+                const protectedUntil = Math.max(
+                  circuit.openUntil ?? 0,
+                  (circuit.lastTouchedAt ?? 0) + this.stateRetentionMs,
+                );
+                if (protectedUntil > now) continue;
+                this.circuits.delete(key);
+                pruned++;
+              }
+            }
+
+            this.stats.statePrunes++;
+            this.stats.prunedEntries += pruned;
+            this.stats.lastStatePruneAt = new Date(now).toISOString();
+            return { skipped: false, pruned };
+          }
+'''
+          new_coordinator = '''  shouldSkipStatePrune(now, force) {
+            return !force
+              && this.lastStatePruneAt > 0
+              && now - this.lastStatePruneAt < this.statePruneIntervalMs;
+          }
+
+          pruneExpiredResetEntries(map, now) {
+            let pruned = 0;
+            for (const [key, resetAt] of map) {
+              if (resetAt > now) continue;
+              if (map.delete(key)) pruned++;
+            }
+            return pruned;
+          }
+
+          pruneExpiredGlobalReset(now) {
+            if (this.globalResetAt <= 0 || this.globalResetAt > now) return 0;
+            this.globalResetAt = 0;
+            return 1;
+          }
+
+          pruneStaleRouteMetadata(now) {
+            const cutoff = now - this.stateRetentionMs;
+            const knownRoutes = new Set([
+              ...this.routeBuckets.keys(),
+              ...this.routeScopes.keys(),
+              ...this.routeLastSeenAt.keys(),
+            ]);
+            let pruned = 0;
+            for (const route of knownRoutes) {
+              const lastSeenAt = this.routeLastSeenAt.get(route) ?? 0;
+              if (lastSeenAt > cutoff) continue;
+              pruned += Number(this.routeBuckets.delete(route));
+              pruned += Number(this.routeScopes.delete(route));
+              pruned += Number(this.routeLastSeenAt.delete(route));
+            }
+            return pruned;
+          }
+
+          pruneIdleCircuits(now) {
+            let pruned = 0;
+            for (const [key, circuit] of this.circuits) {
+              if (circuit.probeActive) continue;
+              const protectedUntil = Math.max(
+                circuit.openUntil ?? 0,
+                (circuit.lastTouchedAt ?? 0) + this.stateRetentionMs,
+              );
+              if (protectedUntil > now) continue;
+              if (this.circuits.delete(key)) pruned++;
+            }
+            return pruned;
+          }
+
+          pruneIdleMetadata(now) {
+            if (this.activeCount !== 0 || this.queue.length !== 0) return 0;
+            return this.pruneStaleRouteMetadata(now) + this.pruneIdleCircuits(now);
+          }
+
+          recordStatePrune(now, pruned) {
+            this.stats.statePrunes++;
+            this.stats.prunedEntries += pruned;
+            this.stats.lastStatePruneAt = new Date(now).toISOString();
+          }
+
+          pruneExpiredState({ force = false } = {}) {
+            const now = this.now();
+            if (this.shouldSkipStatePrune(now, force)) {
+              return { skipped: true, pruned: 0 };
+            }
+
+            this.lastStatePruneAt = now;
+            const pruned = this.pruneExpiredResetEntries(this.bucketResetAt, now)
+              + this.pruneExpiredResetEntries(this.accountBucketResetAt, now)
+              + this.pruneExpiredGlobalReset(now)
+              + this.pruneIdleMetadata(now);
+            this.recordStatePrune(now, pruned);
+            return { skipped: false, pruned };
+          }
+'''
+          if coordinator.count(old_coordinator) != 1:
+              raise SystemExit('coordinator target not found exactly once')
+          coordinator_path.write_text(coordinator.replace(old_coordinator, new_coordinator))
+
+          runner_path = Path('bot/src/discord-runner.js')
+          runner = runner_path.read_text()
+          old_helpers = '''  async function completeAndClaimOneShotQuest(quest) {
+            const status = completeOneShotQuest(oneShotSession, quest.id);
+            const claimed = await claimSilently(quest);
+            recordOneShotRewardClaim(oneShotSession, quest.id, { claimed });
+            return status;
+          }
+
+          async function reportOneShotExternalCompletion() {
+            if (mode !== 'oneshot') return null;
+            await reportOneShotTerminalState();
+            return oneShotOutcome();
+          }
+
+          async function reportOneShotBotCompletion() {
+            if (mode !== 'oneshot') return null;
+            await reportOneShotTerminalState();
+            return oneShotOutcome();
+          }
+'''
+          new_helpers = '''  async function completeAndClaimOneShotQuest(quest) {
+            completeOneShotQuest(oneShotSession, quest.id);
+            const claimed = await claimSilently(quest);
+            recordOneShotRewardClaim(oneShotSession, quest.id, { claimed });
+          }
+
+          async function reportOneShotCompletion() {
+            if (mode !== 'oneshot') return null;
+            await reportOneShotTerminalState();
+            return oneShotOutcome();
+          }
+'''
+          if runner.count(old_helpers) != 1:
+              raise SystemExit('runner helper target not found exactly once')
+          runner = runner.replace(old_helpers, new_helpers)
+
+          old_call = '''      if (mode === 'oneshot') {
+                const status = await completeAndClaimOneShotQuest(quest);
+                return status === ONE_SHOT_QUEST_STATUS.COMPLETED_BY_BOT
+                  ? reportOneShotBotCompletion()
+                  : reportOneShotExternalCompletion();
+              }
+'''
+          new_call = '''      if (mode === 'oneshot') {
+                await completeAndClaimOneShotQuest(quest);
+                return reportOneShotCompletion();
+              }
+'''
+          if runner.count(old_call) != 1:
+              raise SystemExit('runner call target not found exactly once')
+          runner_path.write_text(runner.replace(old_call, new_call))
+          PY
+
+      - name: Verify syntax and focused source contracts
+        shell: bash
+        run: |
+          node --check bot/src/quest/rate-limit-coordinator.js
+          node --check bot/src/discord-runner.js
+          grep -q 'pruneExpiredResetEntries' bot/src/quest/rate-limit-coordinator.js
+          grep -q 'reportOneShotCompletion' bot/src/discord-runner.js
+          ! grep -q 'reportOneShotExternalCompletion' bot/src/discord-runner.js
+          ! grep -q 'reportOneShotBotCompletion' bot/src/discord-runner.js
+
+      - name: Commit source refactor and remove temporary workflow
+        shell: bash
+        run: |
+          rm .github/workflows/apply-static-analysis-refactor.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add bot/src/quest/rate-limit-coordinator.js bot/src/discord-runner.js .github/workflows/apply-static-analysis-refactor.yml
+          git commit -m 'refactor: reduce static analysis complexity'
+          git push origin HEAD:aa.1
