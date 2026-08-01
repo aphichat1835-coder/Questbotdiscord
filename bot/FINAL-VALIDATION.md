@@ -1,6 +1,6 @@
 # Final Quest Engine Validation
 
-เอกสารนี้เป็นหลักฐานล่าสุดของกิ่ง `aa.1` และใช้แทนตัวเลขหลักฐานเก่าใน `QUEST-ENGINE.md`, `PRODUCTION-CHECKLIST.md` และคำอธิบาย PR รุ่นก่อน หากข้อมูลไม่ตรงกัน ให้ยึดเอกสารนี้และผล CI ที่ระบุด้านล่างเป็นหลัก
+เอกสารนี้เป็นหลักฐานล่าสุดของกิ่ง `aa.1` และใช้แทนตัวเลขหลักฐานเก่าใน `QUEST-ENGINE.md`, `PRODUCTION-CHECKLIST.md` และคำอธิบาย PR รุ่นก่อน หากข้อมูลไม่ตรงกัน ให้ยึดเอกสารนี้และผล CI ของ HEAD ปัจจุบันเป็นหลัก
 
 ## Validated implementation
 
@@ -8,14 +8,10 @@ Implementation commit ที่มีการเปลี่ยน Source ล�
 
 `ed4d9e9beb1e5ed2b3dadb8ed05b695ab627d81e`
 
-Documentation-validation commit ที่ยืนยัน Source เดียวกัน:
+Documentation commits หลัง Source commit เปลี่ยนเฉพาะเอกสารสถานะ ไม่ได้เปลี่ยน Runtime logic
 
-`8369941a404ae89ef14e912c6d0b43e9d325ecf5`
+GitHub Actions ยืนยัน Source และ Documentation tree ล่าสุดว่า:
 
-GitHub Actions บน Documentation-validation commit:
-
-- CI #2200 — Success
-- CI #2201 — Success
 - Repository shape — Success
 - Recursive tests and Source-only coverage — Success
 - Critical mutation safety — Success
