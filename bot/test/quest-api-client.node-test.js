@@ -10,6 +10,7 @@ import {
   discordFetch,
   enrollQuestRequest,
   fetchQuestPayload,
+  QUEST_API_VERSION,
   sendHeartbeatRequest,
   sendVideoProgressRequest,
 } from '../src/quest/api/discord-client.js';
@@ -27,8 +28,9 @@ test.afterEach(() => {
   globalThis.fetch = originalFetch;
 });
 
-test('Quest client source uses API v10 directly and builds coherent headers', () => {
-  assert.equal(DISCORD_API_BASE, 'https://discord.com/api/v10');
+test('Quest client preserves the production API v9 transport and coherent headers', () => {
+  assert.equal(QUEST_API_VERSION, 9);
+  assert.equal(DISCORD_API_BASE, 'https://discord.com/api/v9');
   const headers = buildDiscordUserHeaders('fixture-token', '/quests/@me', {
     clientVersion: '1.0.1',
     chromeVersion: '138.0.1',
@@ -45,7 +47,7 @@ test('Quest client source uses API v10 directly and builds coherent headers', ()
   assert.equal(properties.native_build_number, 2);
 });
 
-test('discordFetch sends Quest traffic to v10 without relying on runtime rewriting', async () => {
+test('discordFetch sends Quest traffic to v9 without runtime rewriting', async () => {
   const calls = [];
   globalThis.fetch = async (url, options) => {
     calls.push({ url: fetchInputUrl(url), method: options.method ?? 'GET' });
@@ -57,13 +59,13 @@ test('discordFetch sends Quest traffic to v10 without relying on runtime rewriti
   const result = await discordFetch('fixture-token', '/users/@me');
   assert.equal(result.id, 'me');
   assert.deepEqual(calls, [{
-    url: 'https://discord.com/api/v10/users/@me',
+    url: 'https://discord.com/api/v9/users/@me',
     method: 'GET',
   }]);
 });
 
 test('API URL builder rejects authority, query, fragment and traversal injection', () => {
-  assert.equal(String(buildDiscordApiUrl('/users/@me')), 'https://discord.com/api/v10/users/@me');
+  assert.equal(String(buildDiscordApiUrl('/users/@me')), 'https://discord.com/api/v9/users/@me');
   for (const unsafePath of [
     '//attacker.example/quests',
     '/../users/@me',
@@ -86,7 +88,7 @@ test('external Quest identifiers are encoded as one URL path segment', async () 
   await enrollQuestRequest('fixture-token', 'quest/../../escape?next=https://attacker.example');
   assert.equal(
     requestUrl,
-    'https://discord.com/api/v10/quests/quest%2F..%2F..%2Fescape%3Fnext%3Dhttps%3A%2F%2Fattacker.example/enroll',
+    'https://discord.com/api/v9/quests/quest%2F..%2F..%2Fescape%3Fnext%3Dhttps%3A%2F%2Fattacker.example/enroll',
   );
 });
 
@@ -146,7 +148,7 @@ test('Quest endpoint search propagates abort errors without trying another endpo
   assert.equal(calls, 1);
 });
 
-test('enroll and video progress mutations are built by the authoritative API client', async () => {
+test('enroll and video progress mutations use the production Quest v9 transport', async () => {
   const calls = [];
   globalThis.fetch = async (url, options) => {
     calls.push({
@@ -161,15 +163,15 @@ test('enroll and video progress mutations are built by the authoritative API cli
   await sendVideoProgressRequest('fixture-token', 'quest-video', 30);
   await sendVideoProgressRequest('fixture-token', 'quest-video-string', '30');
 
-  assert.equal(calls[0].url, 'https://discord.com/api/v10/quests/quest-enroll/enroll');
+  assert.equal(calls[0].url, 'https://discord.com/api/v9/quests/quest-enroll/enroll');
   assert.deepEqual(calls[0].body, {
     location: 11,
     is_targeted: false,
     metadata_raw: null,
   });
-  assert.equal(calls[1].url, 'https://discord.com/api/v10/quests/quest-video/video-progress');
+  assert.equal(calls[1].url, 'https://discord.com/api/v9/quests/quest-video/video-progress');
   assert.deepEqual(calls[1].body, { timestamp: 30 });
-  assert.equal(calls[2].url, 'https://discord.com/api/v10/quests/quest-video-string/video-progress');
+  assert.equal(calls[2].url, 'https://discord.com/api/v9/quests/quest-video-string/video-progress');
   assert.deepEqual(calls[2].body, { timestamp: 30 });
 });
 
@@ -204,11 +206,11 @@ test('claim falls back from claim-reward to the legacy claim endpoint only on 40
   await claimQuestRequest('fixture-token', 'quest-claim', 4);
   assert.deepEqual(calls, [
     {
-      url: 'https://discord.com/api/v10/quests/quest-claim/claim-reward',
+      url: 'https://discord.com/api/v9/quests/quest-claim/claim-reward',
       body: { location: 11, platform: 4 },
     },
     {
-      url: 'https://discord.com/api/v10/quests/quest-claim/claim',
+      url: 'https://discord.com/api/v9/quests/quest-claim/claim',
       body: { location: 1, platform: 4 },
     },
   ]);

@@ -4,11 +4,19 @@ import { authorizationFingerprint } from './authorization-fingerprint.js';
 import { subscribeScheduleHints } from './schedule-hint-bus.js';
 import {
   getRunnerState,
+  RUNNER_MUTATION_KIND,
   RUNNER_STATE,
   transitionRunnerState,
 } from './runner-state-store.js';
 
 export const MAX_SMART_WAKE_TIMER_MS = 24 * 60 * 60 * 1000;
+
+const SLEEPING_RUNNER_STATES = new Set([
+  RUNNER_STATE.WAITING_SCHEDULE,
+  RUNNER_STATE.WAITING_RETRY,
+  RUNNER_STATE.WAITING_RATE_LIMIT,
+  RUNNER_STATE.WAITING_ENROLLMENT,
+]);
 
 const smartWakeups = new Map();
 const restartingJobs = new Set();
@@ -30,9 +38,40 @@ function hintState(rawReason) {
   return RUNNER_STATE.WAITING_SCHEDULE;
 }
 
-function runnerIsSleeping(job) {
-  const status = String(job?.summary?.().status ?? '');
-  return /NEXT CHECK|AUTO DAILY ACTIVE/.test(status);
+function runnerIsSleeping(jobKey, wasSleepingBeforeHint = false) {
+  const state = getRunnerState(jobKey);
+  if (SLEEPING_RUNNER_STATES.has(state?.state)) return true;
+  if (String(state?.state_source ?? '').startsWith('schedule-hint:')) {
+    return wasSleepingBeforeHint;
+  }
+  return false;
+}
+
+function durableClaimRetryAt(state) {
+  const metadataAt = Date.parse(state?.metadata?.claimRetryAt);
+  if (Number.isFinite(metadataAt)) return metadataAt;
+  if (
+    state?.state === RUNNER_STATE.WAITING_RETRY
+    && state?.mutation_kind === RUNNER_MUTATION_KIND.CLAIM
+  ) {
+    const stateAt = Date.parse(state.next_action_at);
+    return Number.isFinite(stateAt) ? stateAt : null;
+  }
+  return null;
+}
+
+function respectClaimCooldown(jobKey, hint, now = Date.now()) {
+  if (!String(hint?.reason ?? '').startsWith('claim:')) return hint;
+  const retryAt = durableClaimRetryAt(getRunnerState(jobKey));
+  const hintedAt = Date.parse(hint.nextActionAt);
+  if (!Number.isFinite(retryAt) || retryAt <= now || retryAt <= hintedAt) return hint;
+  return {
+    ...hint,
+    nextActionAt: new Date(retryAt).toISOString(),
+    reason: 'claim-retry',
+    priority: 96,
+    source: 'claim-retry',
+  };
 }
 
 function recordWakeFailure(jobKey, error) {
@@ -52,12 +91,12 @@ export function smartWakeTimerDelay(nextActionAt, now = Date.now()) {
   return Math.max(0, Math.min(MAX_SMART_WAKE_TIMER_MS, at - now));
 }
 
-async function restartSleepingRunner(args) {
+async function restartSleepingRunner(args, wasSleepingBeforeHint) {
   if (typeof restartRunner !== 'function') {
     throw new TypeError('Smart wake restart handler is not configured');
   }
   const active = readActiveJob(args.jobKey);
-  if (!active || !runnerIsSleeping(active)) {
+  if (!active || !runnerIsSleeping(args.jobKey, wasSleepingBeforeHint)) {
     clearWakeTimer(args.jobKey);
     return false;
   }
@@ -121,15 +160,17 @@ function installWakeTimer(args, hint, existing) {
       return;
     }
 
-    void restartSleepingRunner(args).catch((error) => recordWakeFailure(args.jobKey, error));
+    void restartSleepingRunner(args, entry.wasSleepingBeforeHint)
+      .catch((error) => recordWakeFailure(args.jobKey, error));
   }, delay);
   timer.unref?.();
   smartWakeups.set(args.jobKey, { ...existing, timer, args, hint });
   return true;
 }
 
-function scheduleSmartWake(args, hint) {
+function scheduleSmartWake(args, incomingHint) {
   if (args.mode !== 'scheduled') return;
+  const hint = respectClaimCooldown(args.jobKey, incomingHint);
   if (!hint || hint.reason === 'baseline') {
     clearWakeTimer(args.jobKey);
     return;
@@ -140,21 +181,37 @@ function scheduleSmartWake(args, hint) {
     return;
   }
 
+  const now = Date.now();
   const active = readActiveJob(args.jobKey);
   const currentNextAt = Date.parse(active?.summary?.().nextCheckAt);
-  if (Number.isFinite(currentNextAt) && currentNextAt <= at) {
+  if (Number.isFinite(currentNextAt) && currentNextAt > now && currentNextAt <= at) {
     clearWakeTimer(args.jobKey);
     return;
   }
 
   const existing = smartWakeups.get(args.jobKey);
+  const wasSleepingBeforeHint = runnerIsSleeping(
+    args.jobKey,
+    existing?.wasSleepingBeforeHint ?? false,
+  ) || (Number.isFinite(currentNextAt) && currentNextAt > now);
+  if (at <= now && active && !wasSleepingBeforeHint) {
+    clearWakeTimer(args.jobKey);
+    return;
+  }
+
   if (existing?.timer) clearTimeout(existing.timer);
-  transitionRunnerState(args.jobKey, hintState(hint.reason), {
-    nextActionAt: hint.nextActionAt,
-    metadata: { reason: hint.reason, priority: hint.priority },
-    stateSource: `schedule-hint:${hint.source ?? 'runner'}`,
-  });
-  installWakeTimer(args, hint, existing);
+  if (!active || wasSleepingBeforeHint) {
+    transitionRunnerState(args.jobKey, hintState(hint.reason), {
+      nextActionAt: hint.nextActionAt,
+      metadata: {
+        ...getRunnerState(args.jobKey)?.metadata,
+        reason: hint.reason,
+        priority: hint.priority,
+      },
+      stateSource: `schedule-hint:${hint.source ?? 'runner'}`,
+    });
+  }
+  installWakeTimer(args, hint, { ...existing, wasSleepingBeforeHint });
 }
 
 export function configureSmartWakeController(handler, {

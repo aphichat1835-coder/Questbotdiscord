@@ -6,6 +6,8 @@ import {
   RUNNER_STATE,
   transitionRunnerState,
 } from './runner-state-store.js';
+import { resolveRunnerExecutionContext } from './runner-execution-context.js';
+import { assertRunnerMutationOwnership } from './runner-ownership-guard.js';
 import { stateScheduleReason } from './smart-scheduler.js';
 
 const OBSERVER_INTERVAL_MS = 1000;
@@ -35,7 +37,7 @@ let observerTimer = null;
 function stateFromStatus(job) {
   const status = String(job.status ?? '');
   if (job.lifecycle === 'stopping') return RUNNER_STATE.STOPPING;
-  if (/TOKEN INVALID|ERROR|ไม่สำเร็จ/.test(status)) return RUNNER_STATE.FAILED;
+  if (/TOKEN INVALID/.test(status)) return RUNNER_STATE.FAILED;
   if (/STOPPED BY USER/.test(status)) return RUNNER_STATE.STOPPED;
   if (/NETWORK RETRY/.test(status)) return RUNNER_STATE.WAITING_RETRY;
   if (/NEXT CHECK|AUTO DAILY ACTIVE/.test(status)) return RUNNER_STATE.WAITING_SCHEDULE;
@@ -147,6 +149,8 @@ function observedTransition(job, current, observedState) {
 }
 
 export function syncRunnerState(job) {
+  const executionContext = resolveRunnerExecutionContext(job.key);
+  if (executionContext?.workerHolder) assertRunnerMutationOwnership(job.key);
   let current = getRunnerState(job.key);
   if (!current && (!job.ownerId || !job.mode)) return null;
   if (!current) {

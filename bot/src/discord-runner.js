@@ -36,7 +36,7 @@ import {
   isOneShotSessionComplete,
   markOneShotProgressMutationSent,
   markOneShotQuestRunning,
-  ONE_SHOT_QUEST_STATUS,
+  recordOneShotRewardClaim,
   recordOneShotVerifiedProgress,
 } from './one-shot-quest-session.js';
 import {
@@ -49,6 +49,7 @@ import {
   sendHeartbeatRequest,
   sendVideoProgressRequest,
 } from './quest/api/discord-client.js';
+import { questActionFailureReason } from './quest/action-error-summary.js';
 import {
   claimRetryAt as durableClaimRetryAt,
   CLAIM_RETRY_DELAY_MS,
@@ -66,6 +67,7 @@ import {
   selectQuestExecutor,
 } from './quest/executors.js';
 import { currentRunnerExecutionContext } from './quest/runner-execution-context.js';
+import { assertRunnerMutationOwnership } from './quest/runner-ownership-guard.js';
 import { verifyRunnerMutationFromQuests } from './quest/durable-mutation-verifier.js';
 import { fetchDurableRecoveryQuests } from './quest/recovery-fetch.js';
 import {
@@ -77,6 +79,17 @@ import {
 
 export { DiscordApiError } from './quest/api/discord-client.js';
 export { isFatalAuthError };
+
+const TERMINAL_RUNNER_ERROR_CODES = new Set([
+  'RUNNER_CHECKPOINT_FAILED',
+  'RUNNER_MUTATION_CHECKPOINT_FAILED',
+  'RUNNER_MUTATION_REQUIRES_VERIFICATION',
+  'RUNNER_OWNERSHIP_LOST',
+]);
+
+function isTerminalRunnerError(error) {
+  return TERMINAL_RUNNER_ERROR_CODES.has(error?.code);
+}
 
 /**
  * Keep one coherent client profile for the whole process. Override all related
@@ -120,7 +133,7 @@ function oneShotFreshQuestFailureReason(error) {
   if (error instanceof QuestCompatibilityError && /disappeared from Quest API/.test(error.message)) {
     return 'ไม่พบ Quest ในรายการล่าสุดจาก Discord';
   }
-  return 'ตรวจสอบสถานะ Quest ล่าสุดไม่สำเร็จ';
+  return questActionFailureReason(error, 'ตรวจสอบสถานะ Quest ล่าสุด');
 }
 
 function oneShotUnavailableReason(quest) {
@@ -182,10 +195,11 @@ const ACTIVE_MUTATION_STATUSES = new Set([
 ]);
 
 function transitionCurrentRunner(state, values = {}, { preserveMutation = false } = {}) {
-  const jobKey = currentRunnerExecutionContext()?.jobKey
-    ?? currentQuestStatusContext().jobKey;
+  const executionContext = currentRunnerExecutionContext();
+  const jobKey = executionContext?.jobKey ?? currentQuestStatusContext().jobKey;
   if (!jobKey) return null;
   try {
+    if (executionContext?.workerHolder) assertRunnerMutationOwnership(jobKey);
     const current = getRunnerState(jobKey);
     if (
       preserveMutation
@@ -199,6 +213,7 @@ function transitionCurrentRunner(state, values = {}, { preserveMutation = false 
       stateSource: 'quest-orchestrator',
     });
   } catch (error) {
+    if (isTerminalRunnerError(error)) throw error;
     console.warn(`[RunnerState:${jobKey}] direct transition failed — ${error?.message ?? 'unknown error'}`);
     return null;
   }
@@ -647,6 +662,19 @@ export async function startRunner({
   }
 
   async function claimSilently(quest) {
+    if (quest.claimed) {
+      claimRetryAt.delete(quest.id);
+      recordQuestVerification(currentQuestStatusContext().key, 'claim', currentQuestStatusContext());
+      transitionCurrentRunner(RUNNER_STATE.RUNNING, {
+        questId: quest.id,
+        questName: quest.name,
+        questEvent: quest.eventName,
+        progress: 100,
+        serverProgressSeconds: quest.progressSecs,
+      });
+      return true;
+    }
+
     const retryAt = Math.max(
       claimRetryAt.get(quest.id) ?? 0,
       durableClaimRetryAt(jobKey) ?? 0,
@@ -698,6 +726,7 @@ export async function startRunner({
     } catch (error) {
       if (isAbortFailure(error, signal)) throw abortFailure();
       rethrowFatalAuth(error);
+      if (isTerminalRunnerError(error)) throw error;
       const retry = classifyClaimRetry(error);
       claimRetryAt.set(quest.id, Date.now() + retry.delayMs);
       persistClaimRetry(jobKey, quest, retry);
@@ -737,8 +766,12 @@ export async function startRunner({
 
   async function reportOneShotTerminalState() {
     const summary = oneShotSummary();
+    const completedCount = summary.completedByBotCount + summary.completedExternalCount;
     addLog(`🔎 ${username}: พบ ${summary.totalSupportedQuests} QUESTS`);
     addLog(`🎉 ${username}: ทำสำเร็จ ${summary.completedByBotCount} QUESTS`);
+    if (completedCount > 0) {
+      addLog(`🎁 ${username}: รับรางวัลสำเร็จ ${summary.claimedRewardCount}/${completedCount} QUESTS`);
+    }
     addLog('🧹 QUEST ACTIVITY CLEARED');
     await flush();
     return summary;
@@ -760,19 +793,14 @@ export async function startRunner({
     return oneShotOutcome();
   }
 
-  async function reportOneShotExternalCompletion(quest) {
-    if (mode !== 'oneshot') return null;
+  async function completeAndClaimOneShotQuest(quest) {
     completeOneShotQuest(oneShotSession, quest.id);
-    await reportOneShotTerminalState();
-    return oneShotOutcome();
+    const claimed = await claimSilently(quest);
+    recordOneShotRewardClaim(oneShotSession, quest.id, { claimed });
   }
 
-  async function reportOneShotBotCompletion(quest) {
+  async function reportOneShotCompletion() {
     if (mode !== 'oneshot') return null;
-    const status = completeOneShotQuest(oneShotSession, quest.id);
-    if (status !== ONE_SHOT_QUEST_STATUS.COMPLETED_BY_BOT) {
-      return reportOneShotExternalCompletion(quest);
-    }
     await reportOneShotTerminalState();
     return oneShotOutcome();
   }
@@ -781,8 +809,12 @@ export async function startRunner({
     if (mode !== 'oneshot' || oneShotSummaryReported) return;
     oneShotSummaryReported = true;
     const summary = oneShotSummary();
+    const completedCount = summary.completedByBotCount + summary.completedExternalCount;
     addLog(`🔎 ${username}: พบ ${summary.totalSupportedQuests} QUESTS`);
     addLog(`🎉 ${username}: ทำสำเร็จ ${summary.completedByBotCount} QUESTS`);
+    if (completedCount > 0) {
+      addLog(`🎁 ${username}: รับรางวัลสำเร็จ ${summary.claimedRewardCount}/${completedCount} QUESTS`);
+    }
     addLog('🧹 QUEST ACTIVITY CLEARED');
 
     if (summary.totalSupportedQuests === 0) {
@@ -792,15 +824,21 @@ export async function startRunner({
     }
 
     if (summary.issues.length === 0
+        && summary.claimPendingCount === 0
         && summary.completedByBotCount === summary.totalSupportedQuests) {
-      addLog('🎉 บอทได้เข้าไปทำ Quest ทั้งหมดเสร็จสิ้นทั้งหมดแล้ว');
+      addLog('🎉 บอทได้เข้าไปทำ Quest และรับรางวัลทั้งหมดเสร็จสิ้นแล้ว');
       await flush();
       return;
     }
 
-    addLog(summary.completedByBotCount === 0
-      ? '❌ บอทไม่สามารถดำเนินการ Quest ให้สำเร็จได้'
-      : '⚠️ มีบาง Quest ที่บอทดำเนินการไม่สำเร็จ');
+    if (summary.completedByBotCount === summary.totalSupportedQuests
+        && summary.claimPendingCount > 0) {
+      addLog('⚠️ Quest เสร็จแล้ว แต่มีรางวัลที่ยังรับไม่สำเร็จ');
+    } else {
+      addLog(summary.completedByBotCount === 0
+        ? '❌ บอทไม่สามารถดำเนินการ Quest ให้สำเร็จได้'
+        : '⚠️ มีบาง Quest ที่บอทดำเนินการไม่สำเร็จ');
+    }
     summary.issues.forEach((issue, index) => {
       addLog(`${index + 1}. ${issue.name}`);
       addLog(`   └ ${issue.reason}`);
@@ -855,6 +893,7 @@ export async function startRunner({
       };
     } catch (error) {
       rethrowFatalAuth(error);
+      if (isTerminalRunnerError(error)) throw error;
       if (mode === 'oneshot') {
         return {
           outcome: await reportOneShotFailure(
@@ -873,8 +912,8 @@ export async function startRunner({
     if (!quest.completed && isRunnableQuest(quest)) return null;
     if (quest.completed) {
       if (mode === 'oneshot') {
-        await claimSilently(quest);
-        return reportOneShotExternalCompletion(quest);
+        await completeAndClaimOneShotQuest(quest);
+        return reportOneShotCompletion();
       }
       return idleQuestOutcome(selection.runnable.length);
     }
@@ -936,12 +975,14 @@ export async function startRunner({
       };
     } catch (error) {
       rethrowFatalAuth(error);
+      if (isTerminalRunnerError(error)) throw error;
+      const reason = questActionFailureReason(error, 'รับ Quest');
       return {
         outcome: await questFailureOutcome(
           quest,
           selection,
-          'รับ Quest ไม่สำเร็จ',
-          `⚠️ ${username}: enroll failed — ${quest.name} — ${error.message}`,
+          reason,
+          `⚠️ ${username}: ${quest.name} — ${reason}`,
         ),
       };
     }
@@ -1060,11 +1101,15 @@ export async function startRunner({
     } catch (error) {
       rethrowFatalAuth(error);
       if (signal.aborted) throw new Error('aborted');
+      if (isTerminalRunnerError(error)) throw error;
       if (mode === 'oneshot') {
-        return reportOneShotFailure(quest, 'การส่งความคืบหน้าไม่สำเร็จ');
+        return reportOneShotFailure(
+          quest,
+          questActionFailureReason(error, 'ส่งความคืบหน้า'),
+        );
       }
       if (error.message !== 'aborted') {
-        addLog(`⚠️ ${username}: ERROR ${error.message}`);
+        addLog(`⚠️ ${username}: ERROR ${questActionFailureReason(error, 'ส่งความคืบหน้า')}`);
       }
       await render();
       return attemptedQuestOutcome(selection.runnable.length);
@@ -1097,12 +1142,14 @@ export async function startRunner({
       };
     } catch (error) {
       rethrowFatalAuth(error);
+      if (isTerminalRunnerError(error)) throw error;
+      const reason = questActionFailureReason(error, 'ตรวจสอบผลลัพธ์กับ Discord');
       return {
         outcome: await questFailureOutcome(
           quest,
           selection,
-          'ตรวจสอบผลลัพธ์กับ Discord ไม่สำเร็จ',
-          `⚠️ ${username}: verify failed — ${error.message}`,
+          reason,
+          `⚠️ ${username}: ${reason}`,
         ),
       };
     }
@@ -1117,11 +1164,8 @@ export async function startRunner({
     );
 
     if (mode === 'oneshot') {
-      const status = completeOneShotQuest(oneShotSession, fresh.id);
-      await claimSilently(fresh);
-      return status === ONE_SHOT_QUEST_STATUS.COMPLETED_BY_BOT
-        ? reportOneShotBotCompletion(fresh)
-        : reportOneShotExternalCompletion(fresh);
+      await completeAndClaimOneShotQuest(fresh);
+      return reportOneShotCompletion();
     }
 
     await claimSilently(fresh);
@@ -1228,7 +1272,12 @@ export async function startRunner({
       persistSchedule({ lastCheckAt: new Date().toISOString(), lastError: null });
       return outcome;
     } catch (error) {
-      if (error.message === 'aborted' || isFatalAuthError(error) || mode === 'oneshot') {
+      if (
+        error.message === 'aborted'
+        || isFatalAuthError(error)
+        || isTerminalRunnerError(error)
+        || mode === 'oneshot'
+      ) {
         throw error;
       }
       addLog(`⚠️ ${username}: CHECK ERROR — ${error.message}`);
@@ -1345,24 +1394,27 @@ export async function startRunner({
       );
       return;
     }
-    addLog(`❌ ${username}: ${error.message}`);
+    addLog(`❌ ${username}: ${questActionFailureReason(error, 'Runner')}`);
     await render();
     persistSchedule({ lastError: error.message });
   }
 
   async function cleanupRunnerSession() {
-    await reportOneShotLogout();
-    signal.removeEventListener('abort', clearPendingRender);
-    const hadPendingRender = Boolean(pendingTimer);
-    clearPendingRender();
-    await flushPromise;
-    if (hadPendingRender) await flush();
-    setQuestStatusLifecycle(runnerStatusContext.key, 'stopped', {
-      ...runnerStatusContext,
-      accountId,
-      username,
-    });
-    jobs.delete(jobKey);
+    try {
+      await reportOneShotLogout();
+      signal.removeEventListener('abort', clearPendingRender);
+      const hadPendingRender = Boolean(pendingTimer);
+      clearPendingRender();
+      await flushPromise;
+      if (hadPendingRender) await flush();
+      setQuestStatusLifecycle(runnerStatusContext.key, 'stopped', {
+        ...runnerStatusContext,
+        accountId,
+        username,
+      });
+    } finally {
+      jobs.delete(jobKey);
+    }
   }
 
   async function executeRunnerLifecycle() {

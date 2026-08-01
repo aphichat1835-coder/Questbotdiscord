@@ -143,6 +143,10 @@ export function persistClaimRetry(jobKey, quest, {
 
 export function claimRetryAt(jobKey) {
   const state = getRunnerState(jobKey);
+  const durableMetadataAt = Date.parse(state?.metadata?.claimRetryAt);
+  if (Number.isFinite(durableMetadataAt) && durableMetadataAt > Date.now()) {
+    return durableMetadataAt;
+  }
   if (
     state?.state !== RUNNER_STATE.WAITING_RETRY
     || state?.mutation_kind !== RUNNER_MUTATION_KIND.CLAIM
@@ -150,5 +154,5 @@ export function claimRetryAt(jobKey) {
     return null;
   }
   const value = Date.parse(state.next_action_at);
-  return Number.isFinite(value) ? value : null;
+  return Number.isFinite(value) && value > Date.now() ? value : null;
 }

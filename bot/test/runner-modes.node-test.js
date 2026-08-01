@@ -537,7 +537,7 @@ test('one-shot runner rescans after each quest and reports the requested flow in
     '⌛ Quest B 75%',
     '⌛ Quest B 100%',
     '🎉 multi-quest-user: ทำสำเร็จ 2 QUESTS',
-    '🎉 บอทได้เข้าไปทำ Quest ทั้งหมดเสร็จสิ้นทั้งหมดแล้ว',
+    '🎉 บอทได้เข้าไปทำ Quest และรับรางวัลทั้งหมดเสร็จสิ้นแล้ว',
     '🔒 LOGOUT : multi-quest-user',
   ];
   let previousIndex = -1;

@@ -1,3 +1,4 @@
+import { normalizeQuest } from './schema/normalizer.js';
 import {
   clearRunnerMutationCheckpoint,
   getRunnerState,
@@ -18,39 +19,85 @@ export const RUNNER_MUTATION_EVIDENCE = Object.freeze({
   CLAIMED: 'CLAIMED',
 });
 
+const PROGRESS_MUTATION_KINDS = new Set([
+  RUNNER_MUTATION_KIND.VIDEO_PROGRESS,
+  RUNNER_MUTATION_KIND.HEARTBEAT,
+]);
+
 function rawUserStatus(quest) {
   return quest?.user_status ?? null;
 }
 
-function maxNumericProgress(value) {
-  if (typeof value === 'number' && Number.isFinite(value)) return value;
-  if (typeof value === 'string') {
-    const parsed = Number.parseFloat(value);
-    return Number.isFinite(parsed) ? parsed : 0;
-  }
-  if (!value || typeof value !== 'object') return 0;
-  if (Array.isArray(value)) return Math.max(0, ...value.map(maxNumericProgress));
-  return Math.max(0, ...Object.values(value).map((entry) => (
-    entry && typeof entry === 'object' && Object.hasOwn(entry, 'value')
-      ? maxNumericProgress(entry.value)
-      : maxNumericProgress(entry)
-  )));
+function finiteProgress(value) {
+  if (value == null || value === '') return null;
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 ? number : null;
 }
 
-export function questServerProgressSeconds(quest) {
-  const directProgress = quest?.progressSecs;
-  if (
-    directProgress != null
-    && directProgress !== ''
-    && Number.isFinite(Number(directProgress))
-  ) {
-    return Number(directProgress);
+function nestedProgress(value) {
+  const direct = finiteProgress(value);
+  if (direct != null) return direct;
+  if (!value || typeof value !== 'object') return 0;
+  if (Object.hasOwn(value, 'value')) return nestedProgress(value.value);
+  const values = Object.values(value).map(nestedProgress);
+  return values.length ? Math.max(0, ...values) : 0;
+}
+
+function directProgressSeconds(quest) {
+  return finiteProgress(quest?.progressSecs);
+}
+
+function hasTaskDefinitions(quest) {
+  const tasks = quest?.config?.task_config_v2?.tasks
+    ?? quest?.config?.task_config?.tasks;
+  return Boolean(tasks && typeof tasks === 'object' && !Array.isArray(tasks));
+}
+
+function alreadyNormalizedQuest(quest) {
+  return Boolean(quest && directProgressSeconds(quest) != null);
+}
+
+function normalizedQuestForState(state, quest) {
+  if (!quest) return null;
+  if (alreadyNormalizedQuest(quest)) return quest;
+  if (!hasTaskDefinitions(quest)) return null;
+  try {
+    return normalizeQuest(quest, {
+      preferredEventName: state?.quest_event ?? null,
+      preferredProgressKey: state?.metadata?.progressKey ?? null,
+    });
+  } catch {
+    return null;
   }
+}
+
+function rawProgressForState(quest, state) {
   const status = rawUserStatus(quest) ?? {};
-  return Math.max(
-    maxNumericProgress(status.progress),
-    Number(status.stream_progress_seconds) || 0,
-  );
+  const progress = status.progress;
+  if (progress && typeof progress === 'object' && !Array.isArray(progress)) {
+    const preferredKeys = [
+      state?.metadata?.progressKey,
+      state?.quest_event,
+    ].filter(Boolean);
+    for (const key of preferredKeys) {
+      if (Object.hasOwn(progress, key)) return nestedProgress(progress[key]);
+    }
+    // Legacy or partial fixtures may not carry a task definition/event mapping.
+    // Use the aggregate only when no exact persisted task key can be selected.
+    return nestedProgress(progress);
+  }
+  const scalar = finiteProgress(progress);
+  if (scalar != null) return scalar;
+  return finiteProgress(status.stream_progress_seconds) ?? 0;
+}
+
+export function questServerProgressSeconds(quest, state = null) {
+  const direct = directProgressSeconds(quest);
+  if (direct != null) return direct;
+  const normalized = normalizedQuestForState(state, quest);
+  const normalizedProgress = directProgressSeconds(normalized);
+  if (normalizedProgress != null) return normalizedProgress;
+  return rawProgressForState(quest, state);
 }
 
 function questEnrolled(quest) {
@@ -78,10 +125,23 @@ function questExpired(quest, now) {
   return Number.isFinite(expiresAt) && expiresAt <= now.getTime();
 }
 
-function questIncompatible(quest) {
+function explicitCompatibilityIssue(quest) {
   return quest?.autoSupported === false
     || (Array.isArray(quest?.compatibilityIssues) && quest.compatibilityIssues.length > 0)
     || (Array.isArray(quest?.schemaIssues) && quest.schemaIssues.length > 0);
+}
+
+function progressQuestIncompatible(quest, normalizedQuest) {
+  if (explicitCompatibilityIssue(quest)) return true;
+  if (!hasTaskDefinitions(quest)) return false;
+  if (!normalizedQuest || normalizedQuest.autoSupported === false) return true;
+  return (
+    Array.isArray(normalizedQuest.compatibilityIssues)
+    && normalizedQuest.compatibilityIssues.length > 0
+  ) || (
+    Array.isArray(normalizedQuest.schemaIssues)
+    && normalizedQuest.schemaIssues.length > 0
+  );
 }
 
 export function isRunnerMutationVerifiedByQuest(state, quest) {
@@ -90,7 +150,7 @@ export function isRunnerMutationVerifiedByQuest(state, quest) {
   if (state.mutation_kind === RUNNER_MUTATION_KIND.CLAIM) return questClaimed(quest);
   if (questCompleted(quest)) return true;
 
-  const progress = questServerProgressSeconds(quest);
+  const progress = questServerProgressSeconds(quest, state);
   if (state.mutation_kind === RUNNER_MUTATION_KIND.VIDEO_PROGRESS) {
     const target = Number(state.mutation_payload?.timestamp);
     return Number.isFinite(target) && progress >= Math.floor(target);
@@ -103,28 +163,44 @@ export function isRunnerMutationVerifiedByQuest(state, quest) {
 
 export function evaluateRunnerMutationEvidence(state, quests, now = new Date()) {
   if (!state?.quest_id || !state.mutation_kind) {
-    return { outcome: RUNNER_MUTATION_EVIDENCE.NO_CHECKPOINT, quest: null };
+    return {
+      outcome: RUNNER_MUTATION_EVIDENCE.NO_CHECKPOINT,
+      quest: null,
+      normalizedQuest: null,
+    };
   }
 
   const quest = (quests ?? []).find((item) => String(item?.id) === String(state.quest_id)) ?? null;
-  if (!quest) return { outcome: RUNNER_MUTATION_EVIDENCE.QUEST_MISSING, quest: null };
+  if (!quest) {
+    return {
+      outcome: RUNNER_MUTATION_EVIDENCE.QUEST_MISSING,
+      quest: null,
+      normalizedQuest: null,
+    };
+  }
+  const normalizedQuest = PROGRESS_MUTATION_KINDS.has(state.mutation_kind)
+    ? normalizedQuestForState(state, quest)
+    : null;
 
   if (state.mutation_kind === RUNNER_MUTATION_KIND.CLAIM && questClaimed(quest)) {
-    return { outcome: RUNNER_MUTATION_EVIDENCE.CLAIMED, quest };
+    return { outcome: RUNNER_MUTATION_EVIDENCE.CLAIMED, quest, normalizedQuest };
   }
   if (state.mutation_kind !== RUNNER_MUTATION_KIND.CLAIM && questCompleted(quest)) {
-    return { outcome: RUNNER_MUTATION_EVIDENCE.COMPLETED, quest };
+    return { outcome: RUNNER_MUTATION_EVIDENCE.COMPLETED, quest, normalizedQuest };
   }
   if (isRunnerMutationVerifiedByQuest(state, quest)) {
-    return { outcome: RUNNER_MUTATION_EVIDENCE.VERIFIED, quest };
+    return { outcome: RUNNER_MUTATION_EVIDENCE.VERIFIED, quest, normalizedQuest };
   }
   if (questExpired(quest, now)) {
-    return { outcome: RUNNER_MUTATION_EVIDENCE.QUEST_EXPIRED, quest };
+    return { outcome: RUNNER_MUTATION_EVIDENCE.QUEST_EXPIRED, quest, normalizedQuest };
   }
-  if (questIncompatible(quest)) {
-    return { outcome: RUNNER_MUTATION_EVIDENCE.QUEST_INCOMPATIBLE, quest };
+  if (
+    PROGRESS_MUTATION_KINDS.has(state.mutation_kind)
+    && progressQuestIncompatible(quest, normalizedQuest)
+  ) {
+    return { outcome: RUNNER_MUTATION_EVIDENCE.QUEST_INCOMPATIBLE, quest, normalizedQuest };
   }
-  return { outcome: RUNNER_MUTATION_EVIDENCE.NOT_APPLIED, quest };
+  return { outcome: RUNNER_MUTATION_EVIDENCE.NOT_APPLIED, quest, normalizedQuest };
 }
 
 function evidenceError(outcome, questId) {
@@ -158,7 +234,7 @@ export function verifyRunnerMutationFromQuests(jobKey, quests, {
 } = {}) {
   const state = getRunnerState(jobKey);
   const evidence = evaluateRunnerMutationEvidence(state, quests, now);
-  const { outcome, quest } = evidence;
+  const { outcome, quest, normalizedQuest } = evidence;
 
   if (outcome === RUNNER_MUTATION_EVIDENCE.NO_CHECKPOINT) {
     return { checked: false, verified: false, retryAllowed: false, ...evidence, state };
@@ -169,9 +245,12 @@ export function verifyRunnerMutationFromQuests(jobKey, quests, {
     RUNNER_MUTATION_EVIDENCE.COMPLETED,
     RUNNER_MUTATION_EVIDENCE.CLAIMED,
   ].includes(outcome)) {
+    const progressQuest = normalizedQuest ?? quest;
     const updated = markRunnerMutationVerified(jobKey, {
-      serverProgressSeconds: questServerProgressSeconds(quest),
-      progress: Number.isFinite(Number(quest?.progress)) ? Number(quest.progress) : undefined,
+      serverProgressSeconds: questServerProgressSeconds(progressQuest, state),
+      progress: Number.isFinite(Number(normalizedQuest?.progress))
+        ? Number(normalizedQuest.progress)
+        : undefined,
       state: verifiedStateFor(outcome, quest, verifiedState),
     });
     return {

@@ -7,7 +7,8 @@ import {
 } from './quest-endpoints.js';
 import { extractQuestArray, QuestCompatibilityError } from '../schema/compatibility.js';
 
-export const DISCORD_API_BASE = 'https://discord.com/api/v10';
+export const QUEST_API_VERSION = 9;
+export const DISCORD_API_BASE = `https://discord.com/api/v${QUEST_API_VERSION}`;
 const DISCORD_API_URL = new URL(DISCORD_API_BASE);
 
 export class DiscordApiError extends Error {
@@ -104,8 +105,9 @@ export function buildDiscordApiUrl(path) {
   const safePath = requireDiscordApiPath(path);
   const url = new URL(DISCORD_API_URL);
   url.pathname = `${DISCORD_API_URL.pathname}${safePath}`;
-  if (url.origin !== DISCORD_API_URL.origin || !url.pathname.startsWith('/api/v10/')) {
-    throw new TypeError('Discord API URL escaped the v10 boundary');
+  const expectedPrefix = `/api/v${QUEST_API_VERSION}/`;
+  if (url.origin !== DISCORD_API_URL.origin || !url.pathname.startsWith(expectedPrefix)) {
+    throw new TypeError(`Quest API URL escaped the v${QUEST_API_VERSION} boundary`);
   }
   return url;
 }

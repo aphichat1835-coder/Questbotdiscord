@@ -20,6 +20,7 @@ import {
   clearRunnerStatesForTests,
   getRunnerState,
   RUNNER_STATE,
+  transitionRunnerState,
 } from '../src/quest/runner-state-store.js';
 
 const ENROLLMENT_JOB_KEY = 'scheduled:smart-wake-enrollment';
@@ -50,6 +51,13 @@ function beginScheduled(jobKey, scheduleId) {
     mode: 'scheduled',
     scheduleId,
     state: RUNNER_STATE.RUNNING,
+  });
+}
+
+function markSleeping(jobKey) {
+  transitionRunnerState(jobKey, RUNNER_STATE.WAITING_SCHEDULE, {
+    nextActionAt: new Date(Date.now() + 60_000).toISOString(),
+    stateSource: 'test-sleep',
   });
 }
 
@@ -199,6 +207,7 @@ test('a due wake stops a sleeping job, waits for cleanup and restarts without a 
   const token = 'smart-wake-restart-token';
   const args = scheduledArgs(jobKey, token, 6);
   beginScheduled(jobKey, 6);
+  markSleeping(jobKey);
 
   const stops = [];
   let restartedWith = null;
@@ -235,6 +244,37 @@ test('a due wake stops a sleeping job, waits for cleanup and restarts without a 
   assert.equal(isSmartWakeRestarting(jobKey), false);
 });
 
+test('a due hint does not interrupt an active runner', async () => {
+  const jobKey = 'scheduled:smart-wake-active';
+  const token = 'smart-wake-active-token';
+  beginScheduled(jobKey, 61);
+  let stopped = false;
+  let restarted = false;
+  configureSmartWakeController(async () => { restarted = true; }, {
+    getJob: () => ({
+      done: Promise.resolve(),
+      summary: () => ({ status: 'RUNNING', nextCheckAt: null }),
+    }),
+    stopJob: () => {
+      stopped = true;
+      return true;
+    },
+    getScheduled: () => ({ id: 61 }),
+  });
+
+  registerSmartWake(scheduledArgs(jobKey, token, 61));
+  publishScheduleHint(authorizationFingerprint(token), {
+    nextActionAt: new Date(Date.now() - 1).toISOString(),
+    reason: 'recovery',
+    priority: 99,
+  });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  assert.equal(stopped, false);
+  assert.equal(restarted, false);
+  assert.equal(getRunnerState(jobKey).state, RUNNER_STATE.RUNNING);
+});
+
 test('a fixed schedule earlier than the hint prevents an unnecessary restart', async () => {
   const jobKey = 'scheduled:smart-wake-fixed-earlier';
   const token = 'smart-wake-fixed-earlier-token';
@@ -264,10 +304,40 @@ test('a fixed schedule earlier than the hint prevents an unnecessary restart', a
   assert.equal(getRunnerState(jobKey).state, RUNNER_STATE.RUNNING);
 });
 
+test('a stale past nextCheckAt no longer suppresses a future smart hint', () => {
+  const jobKey = 'scheduled:smart-wake-stale-past';
+  const token = 'smart-wake-stale-past-token';
+  beginScheduled(jobKey, 71);
+  configureSmartWakeController(async () => {}, {
+    getJob: () => ({
+      done: Promise.resolve(),
+      summary: () => ({
+        status: 'RUNNING',
+        nextCheckAt: new Date(Date.now() - 60_000).toISOString(),
+      }),
+    }),
+    stopJob: () => true,
+    getScheduled: () => ({ id: 71 }),
+  });
+
+  registerSmartWake(scheduledArgs(jobKey, token, 71));
+  publishScheduleHint(authorizationFingerprint(token), {
+    nextActionAt: new Date(Date.now() + 60_000).toISOString(),
+    reason: 'verification',
+    priority: 90,
+    source: 'test-source',
+  });
+
+  const state = getRunnerState(jobKey);
+  assert.equal(state.state, RUNNER_STATE.RUNNING);
+  assert.equal(state.state_source, 'runner-service');
+});
+
 test('a deleted scheduled row cancels the due wake before stopping the job', async () => {
   const jobKey = 'scheduled:smart-wake-row-deleted';
   const token = 'smart-wake-row-deleted-token';
   beginScheduled(jobKey, 8);
+  markSleeping(jobKey);
   let stopped = false;
   let restarted = false;
   configureSmartWakeController(async () => { restarted = true; }, {
@@ -299,6 +369,7 @@ test('restart failure becomes a durable FAILED state after rejected cleanup is s
   const jobKey = 'scheduled:smart-wake-restart-failure';
   const token = 'smart-wake-restart-failure-token';
   beginScheduled(jobKey, 9);
+  markSleeping(jobKey);
   let rejectCleanup;
   const cleanup = new Promise((_, reject) => { rejectCleanup = reject; });
   const active = {

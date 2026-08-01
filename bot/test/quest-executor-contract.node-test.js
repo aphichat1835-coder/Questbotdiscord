@@ -29,7 +29,7 @@ test('video executor owns progress submission and fresh-state verification', asy
   const calls = [];
   const quest = {
     id: 'video-1',
-    eventName: 'WATCH_VIDEO_V2',
+    eventName: 'WATCH_VIDEO',
     secondsNeeded: 10,
     progressSecs: 0,
     enrolledAt: '2029-01-01T00:00:00.000Z',

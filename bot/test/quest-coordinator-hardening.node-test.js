@@ -76,6 +76,7 @@ test('user-scoped bucket blocks only the matching authorization fingerprint', as
   const order = [];
   coordinator.routeBuckets.set(route, bucket);
   coordinator.routeScopes.set(route, 'user');
+  coordinator.routeLastSeenAt.set(route, startedAt);
   coordinator.accountBucketResetAt.set(
     `${authorizationFingerprint(tokenA)}:${bucket}`,
     startedAt + 40,
@@ -132,10 +133,18 @@ test('circuit breaker opens after repeated server failures and permits one delay
   await coordinator.schedule(url, options, async () => response(500));
   assert.equal(coordinator.snapshot().openCircuits, 1);
 
-  const startedAt = Date.now();
-  await coordinator.schedule(url, options, async () => response(200));
-  assert.ok(Date.now() - startedAt >= 20);
+  // Hold the cooldown with a test-owned referenced timer. Queue timer behaviour
+  // is covered separately by the bucket and global-rate-limit tests; this case
+  // focuses on the single HALF_OPEN probe and circuit closure contract.
+  await new Promise((resolve) => setTimeout(resolve, 35));
+  let probes = 0;
+  await coordinator.schedule(url, options, async () => {
+    probes++;
+    return response(200);
+  });
+  assert.equal(probes, 1);
   assert.equal(coordinator.snapshot().openCircuits, 0);
+  assert.equal(coordinator.snapshot().halfOpenCircuits, 0);
   assert.equal(coordinator.snapshot().circuitOpens, 1);
 });
 

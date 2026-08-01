@@ -10,10 +10,12 @@ function response() {
 test('aborting a blocked request removes it from the queue without executing transport', async () => {
   const coordinator = new DiscordRateLimitCoordinator();
   const controller = new AbortController();
+  const now = Date.now();
   let executed = false;
 
   coordinator.routeBuckets.set('GET:/blocked', 'bucket-blocked');
-  coordinator.bucketResetAt.set('bucket-blocked', Date.now() + 10 * 60_000);
+  coordinator.routeLastSeenAt.set('GET:/blocked', now);
+  coordinator.bucketResetAt.set('bucket-blocked', now + 10 * 60_000);
 
   const pending = coordinator.schedule('https://discord.com/api/v10/blocked', {
     headers: { Authorization: 'queued-abort-account' },
