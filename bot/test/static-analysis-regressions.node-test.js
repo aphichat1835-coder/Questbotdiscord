@@ -5,6 +5,16 @@ import test from 'node:test';
 const runnerUrl = new URL('../src/discord-runner.js', import.meta.url);
 const coordinatorUrl = new URL('../src/quest/rate-limit-coordinator.js', import.meta.url);
 
+const coordinatorHelperDefinitions = [
+  /\n {2}shouldSkipStatePrune\(/,
+  /\n {2}pruneExpiredResetEntries\(/,
+  /\n {2}pruneExpiredGlobalReset\(/,
+  /\n {2}pruneStaleRouteMetadata\(/,
+  /\n {2}pruneIdleCircuits\(/,
+  /\n {2}pruneIdleMetadata\(/,
+  /\n {2}recordStatePrune\(/,
+];
+
 test('one-shot completion uses one shared reporter at both completion call sites', async () => {
   const source = await readFile(runnerUrl, 'utf8');
 
@@ -27,19 +37,11 @@ test('one-shot completion uses one shared reporter at both completion call sites
 test('coordinator state pruning delegates independent responsibilities to helpers', async () => {
   const source = await readFile(coordinatorUrl, 'utf8');
 
-  for (const helper of [
-    'shouldSkipStatePrune',
-    'pruneExpiredResetEntries',
-    'pruneExpiredGlobalReset',
-    'pruneStaleRouteMetadata',
-    'pruneIdleCircuits',
-    'pruneIdleMetadata',
-    'recordStatePrune',
-  ]) {
-    assert.match(source, new RegExp(`\\n  ${helper}\\(`));
+  for (const helperDefinition of coordinatorHelperDefinitions) {
+    assert.match(source, helperDefinition);
   }
 
-  const method = /\n  pruneExpiredState\(\{ force = false \} = \{\}\) \{([\s\S]*?)\n  \}\n\n  releaseJob/.exec(source);
+  const method = /\n {2}pruneExpiredState\(\{ force = false \} = \{\}\) \{([\s\S]*?)\n {2}\}\n\n {2}releaseJob/.exec(source);
   assert.ok(method, 'pruneExpiredState source contract must remain discoverable');
   assert.match(method[1], /this\.shouldSkipStatePrune\(now, force\)/);
   assert.match(method[1], /this\.pruneExpiredResetEntries\(this\.bucketResetAt, now\)/);
