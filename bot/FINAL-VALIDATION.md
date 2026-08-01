@@ -1,17 +1,21 @@
 # Final Quest Engine Validation
 
-เอกสารนี้เป็นหลักฐานล่าสุดของกิ่ง `aa.1` และใช้แทนตัวเลขหลักฐานเก่าใน `QUEST-ENGINE.md`, `PRODUCTION-CHECKLIST.md` และคำอธิบาย PR รุ่นก่อน หากข้อมูลไม่ตรงกัน ให้ยึดเอกสารนี้และผล CI บน HEAD ล่าสุดเป็นหลัก
+เอกสารนี้เป็นหลักฐานล่าสุดของกิ่ง `aa.1` และใช้แทนตัวเลขหลักฐานเก่าใน `QUEST-ENGINE.md`, `PRODUCTION-CHECKLIST.md` และคำอธิบาย PR รุ่นก่อน หากข้อมูลไม่ตรงกัน ให้ยึดเอกสารนี้และผล CI ที่ระบุด้านล่างเป็นหลัก
 
-## Current validated implementation
+## Validated implementation
 
-Implementation HEAD ที่ตรวจโดย CI:
+Implementation commit ที่มีการเปลี่ยน Source ล่าสุด:
 
 `807e2bed943e7bad9fe97a1aa7cfb6a88c730b0c`
 
-GitHub Actions บน HEAD นี้:
+Documentation-validation commit ที่ยืนยัน Source เดียวกันพร้อมเอกสารสถานะใหม่:
 
-- CI #2143 — Success
-- CI #2144 — Success
+`b9c20cde7470bb608a670ddb9bab6d2ea8c2190b`
+
+GitHub Actions บน Documentation-validation commit:
+
+- CI #2146 — Success
+- CI #2147 — Success
 - Repository shape — Success
 - Recursive tests and Source-only coverage — Success
 - Critical mutation safety — Success
@@ -27,15 +31,23 @@ GitHub Actions บน HEAD นี้:
 - 0 skipped
 - 0 todo
 - Source-only LCOV: 72 files
-- Source-only line coverage: 11,083/12,480 — 88.81%
-- Source-only branch coverage: 2,698/3,359 — 80.32%
+- Source-only line coverage: 11,085/12,480 — 88.82%
+- Source-only branch coverage: 2,698/3,358 — 80.35%
 - Source-only function coverage: 979/1,142 — 85.73%
 - Mutation baseline passed
 - 15 primary critical mutations were killed
 - 26 review/regression mutations were killed
 - Recovery metadata mutation was killed
 - Mutation scripts restored source successfully
-- `npm audit --omit=dev --audit-level=high` found 0 vulnerabilities
+- Sanitized Quest fixture passed
+- Repository shape passed
+- Backup destination boundaries passed
+- Incident and storage boundaries passed
+- JavaScript, MJS and Bash syntax passed
+- Production dependency audit found 0 vulnerabilities at the configured High gate
+- Snyk passed
+- CodeRabbit passed
+- SonarQube Cloud was skipped because `SONAR_TOKEN` is unavailable
 
 ## Durable retry and recovery evidence
 
@@ -75,7 +87,7 @@ Automated tests do not prove live Discord enrollment, progress or reward claimin
 Still required:
 
 - Configure repository secret `SONAR_TOKEN` and run CI-based Sonar analysis; the Sonar step is currently skipped.
-- Confirm fresh CodeFactor, Codacy and CodeRabbit results on the current final HEAD.
+- Confirm fresh CodeFactor and Codacy results on the final integration candidate.
 - Controlled Discord UAT for enrollment, video progress, desktop heartbeat and reward claim.
 - CAPTCHA and non-CAPTCHA HTTP 400 validation.
 - HTTP 429 above 60 seconds and queued cancellation.
