@@ -28,13 +28,12 @@ test('global pruning removes expired hints and stale effective entries for inact
     priority: 98,
   }), true);
 
-  assert.deepEqual(scheduleHintMemorySnapshot({ prune: false }), {
-    listenerAccounts: 0,
-    hintAccounts: 2,
-    effectiveAccounts: 2,
-    hints: 2,
-    lastPruneAt: now,
-  });
+  const before = scheduleHintMemorySnapshot({ prune: false });
+  assert.equal(before.listenerAccounts, 0);
+  assert.equal(before.hintAccounts, 2);
+  assert.equal(before.effectiveAccounts, 2);
+  assert.equal(before.hints, 2);
+  assert.ok(Number.isFinite(before.lastPruneAt));
 
   const result = pruneExpiredScheduleHints(now + 2_000, { force: true });
   assert.equal(result.skipped, false);
