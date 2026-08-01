@@ -6,16 +6,12 @@
 
 Implementation commit ที่มีการเปลี่ยน Source ล่าสุด:
 
-`807e2bed943e7bad9fe97a1aa7cfb6a88c730b0c`
+`ed4d9e9beb1e5ed2b3dadb8ed05b695ab627d81e`
 
-Documentation-validation commit ที่ยืนยัน Source เดียวกันพร้อมเอกสารสถานะใหม่:
+GitHub Actions บน Source commit นี้:
 
-`b9c20cde7470bb608a670ddb9bab6d2ea8c2190b`
-
-GitHub Actions บน Documentation-validation commit:
-
-- CI #2146 — Success
-- CI #2147 — Success
+- CI #2197 — Success
+- CI #2198 — Success
 - Repository shape — Success
 - Recursive tests and Source-only coverage — Success
 - Critical mutation safety — Success
@@ -25,19 +21,14 @@ GitHub Actions บน Documentation-validation commit:
 
 ## Automated evidence
 
-- 499/499 tests passed
+- 505/505 tests passed
 - 0 failed
 - 0 cancelled
 - 0 skipped
 - 0 todo
-- Source-only LCOV: 72 files
-- Source-only line coverage: 11,085/12,480 — 88.82%
-- Source-only branch coverage: 2,698/3,358 — 80.35%
-- Source-only function coverage: 979/1,142 — 85.73%
+- Source-only coverage gate passed
 - Mutation baseline passed
-- 15 primary critical mutations were killed
-- 26 review/regression mutations were killed
-- Recovery metadata mutation was killed
+- Critical and review/regression mutations were killed
 - Mutation scripts restored source successfully
 - Sanitized Quest fixture passed
 - Repository shape passed
@@ -45,8 +36,6 @@ GitHub Actions บน Documentation-validation commit:
 - Incident and storage boundaries passed
 - JavaScript, MJS and Bash syntax passed
 - Production dependency audit found 0 vulnerabilities at the configured High gate
-- Snyk passed
-- CodeRabbit passed
 - SonarQube Cloud was skipped because `SONAR_TOKEN` is unavailable
 
 ## Durable retry and recovery evidence
@@ -70,10 +59,35 @@ A controlled comparison found that the previously merged `aa` state discovered s
 - restores user Quest traffic to the working Discord API v9 behavior,
 - prevents the global Discord runtime from rewriting versioned Quest URLs,
 - preserves rate-limit coordination without rewriting transport,
-- keeps supported Quest protocol variants fail-closed on invalid schema,
+- permits automatic progress only for explicitly approved Quest events,
+- quarantines future lookalike event names until they are reviewed and added deliberately,
+- validates Quest schema before every supported progress path,
 - adds integration coverage for mutation retry, verification, Smart Wake, claim retry and ownership boundaries.
 
+The current explicit automatic-event allowlist is:
+
+- `WATCH_VIDEO`
+- `WATCH_VIDEO_ON_MOBILE`
+- `PLAY_ON_DESKTOP`
+- `PLAY_ON_DESKTOP_V2`
+
 Automated tests do not prove live Discord enrollment, progress or reward claiming. The same-account seven-Quest scenario must pass controlled UAT before integration.
+
+## In-memory lifecycle hardening
+
+The current implementation now performs bounded opportunistic pruning without adding a permanent background timer:
+
+- expired schedule hints are removed across inactive accounts,
+- stale effective hints are removed and listeners receive a cleared state,
+- already-expired hints are rejected before entering memory,
+- expired shared and per-account rate-limit reset entries are removed,
+- expired global rate-limit state is cleared,
+- stale route-to-bucket and route-scope metadata is removed after the retention window,
+- idle closed circuits are removed after the retention window,
+- open, half-open, queued and active state remains protected,
+- completed jobs still release their job-specific mutation locks separately.
+
+Coordinator pruning is interval-gated and defaults to a 60-second opportunity interval with a 10-minute metadata retention window.
 
 ## Repository cleanliness
 
