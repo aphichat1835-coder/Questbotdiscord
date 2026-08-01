@@ -5,7 +5,7 @@ const DESKTOP_UNCHANGED_CHECK_LIMIT = 5;
 
 export function matchesDesktopQuest(value) {
   const eventName = typeof value === 'string' ? value : value?.eventName;
-  return DESKTOP_EVENTS.has(eventName) || /^PLAY_ON_DESKTOP(?:_V\d+)?$/.test(String(eventName ?? ''));
+  return DESKTOP_EVENTS.has(eventName);
 }
 
 function requireRuntime(context, name) {
