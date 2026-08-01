@@ -1,16 +1,17 @@
 name: Apply static analysis refactor
 
 on:
-  push:
-    branches: [aa.1]
-    paths:
-      - .github/workflows/apply-static-analysis-refactor.yml
+  pull_request:
+    branches: [aa]
+    types: [synchronize]
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
   apply:
+    if: github.head_ref == 'aa.1'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
