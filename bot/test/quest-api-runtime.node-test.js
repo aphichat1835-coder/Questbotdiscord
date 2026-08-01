@@ -175,6 +175,7 @@ test('an earlier blocked bucket replaces a later queue wakeup timer', async () =
   const order = [];
 
   coordinator.routeBuckets.set('GET:/long', 'bucket-long');
+  coordinator.routeLastSeenAt.set('GET:/long', startedAt);
   coordinator.bucketResetAt.set('bucket-long', startedAt + 10_000);
   const long = coordinator.schedule('https://discord.com/api/v10/long', {
     headers: { Authorization: 'account-long' },
@@ -184,6 +185,7 @@ test('an earlier blocked bucket replaces a later queue wakeup timer', async () =
   });
 
   coordinator.routeBuckets.set('GET:/short', 'bucket-short');
+  coordinator.routeLastSeenAt.set('GET:/short', startedAt);
   coordinator.bucketResetAt.set('bucket-short', startedAt + 20);
   const short = coordinator.schedule('https://discord.com/api/v10/short', {
     headers: { Authorization: 'account-short' },
