@@ -8,10 +8,14 @@ Implementation commit ที่มีการเปลี่ยน Source ล�
 
 `ed4d9e9beb1e5ed2b3dadb8ed05b695ab627d81e`
 
-GitHub Actions บน Source commit นี้:
+Documentation-validation commit ที่ยืนยัน Source เดียวกัน:
 
-- CI #2197 — Success
-- CI #2198 — Success
+`8369941a404ae89ef14e912c6d0b43e9d325ecf5`
+
+GitHub Actions บน Documentation-validation commit:
+
+- CI #2200 — Success
+- CI #2201 — Success
 - Repository shape — Success
 - Recursive tests and Source-only coverage — Success
 - Critical mutation safety — Success
