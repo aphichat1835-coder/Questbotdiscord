@@ -11,6 +11,7 @@ import {
 import {
   beginRunnerState,
   getRunnerState,
+  markRunnerMutationAccepted,
   prepareRunnerMutation,
   RUNNER_MUTATION_KIND,
   RUNNER_MUTATION_STATUS,
@@ -105,6 +106,63 @@ test('heartbeat verification reads only the task selected by the runner event', 
   quest.user_status.progress.play_task.value = 1;
   assert.equal(questServerProgressSeconds(quest, heartbeatState), 1);
   assert.equal(isRunnerMutationVerifiedByQuest(heartbeatState, quest), true);
+});
+
+test('accepted non-terminal heartbeat can continue after fresh evidence shows no progress', () => {
+  const jobKey = 'scheduled:verifier-heartbeat-repeat';
+  checkpoint(
+    jobKey,
+    RUNNER_MUTATION_KIND.HEARTBEAT,
+    'quest-heartbeat-repeat',
+    { terminal: false },
+    'PLAY_ON_DESKTOP',
+  );
+  markRunnerMutationAccepted(jobKey, new Date('2030-01-01T00:00:00.000Z'));
+
+  const result = verifyRunnerMutationFromQuests(jobKey, [{
+    id: 'quest-heartbeat-repeat',
+    progressSecs: 0,
+    progress: 0,
+    completed: false,
+    eventName: 'PLAY_ON_DESKTOP',
+  }]);
+
+  assert.equal(result.checked, true);
+  assert.equal(result.verified, false);
+  assert.equal(result.retryAllowed, true);
+  assert.equal(result.outcome, RUNNER_MUTATION_EVIDENCE.NOT_APPLIED);
+  const state = getRunnerState(jobKey);
+  assert.equal(state.state, RUNNER_STATE.RUNNING);
+  assert.equal(state.mutation_status, RUNNER_MUTATION_STATUS.NONE);
+  assert.equal(state.mutation_kind, null);
+});
+
+test('accepted terminal heartbeat remains blocked until Discord confirms progress', () => {
+  const jobKey = 'scheduled:verifier-heartbeat-terminal';
+  checkpoint(
+    jobKey,
+    RUNNER_MUTATION_KIND.HEARTBEAT,
+    'quest-heartbeat-terminal',
+    { terminal: true },
+    'PLAY_ON_DESKTOP',
+  );
+  markRunnerMutationAccepted(jobKey, new Date('2030-01-01T00:00:00.000Z'));
+
+  const result = verifyRunnerMutationFromQuests(jobKey, [{
+    id: 'quest-heartbeat-terminal',
+    progressSecs: 0,
+    progress: 0,
+    completed: false,
+    eventName: 'PLAY_ON_DESKTOP',
+  }]);
+
+  assert.equal(result.checked, true);
+  assert.equal(result.verified, false);
+  assert.equal(result.retryAllowed, false);
+  assert.equal(result.preserved, true);
+  const state = getRunnerState(jobKey);
+  assert.equal(state.mutation_status, RUNNER_MUTATION_STATUS.ACCEPTED);
+  assert.equal(state.mutation_kind, RUNNER_MUTATION_KIND.HEARTBEAT);
 });
 
 test('passive Quest-list observation preserves an absent checkpoint', () => {
