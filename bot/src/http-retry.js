@@ -13,6 +13,12 @@ export class RequestTimeoutError extends Error {
   }
 }
 
+function abortedError() {
+  const error = new Error('aborted');
+  error.name = 'AbortError';
+  return error;
+}
+
 export function wait(ms, signal) {
   return abortableDelay(ms, signal);
 }

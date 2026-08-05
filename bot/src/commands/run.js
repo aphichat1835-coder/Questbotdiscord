@@ -11,7 +11,7 @@ import {
   findAnyJobByAccount,
   getUserJobs,
   startRunner,
-} from '../discord-runner.js';
+} from '../quest/runner-service.js';
 import { isAccountStopping } from '../runner-control.js';
 import {
   withAccountAdmissionLock,
@@ -149,7 +149,10 @@ function createSchedule(context, token, account) {
   });
 }
 
-function runnerSuccessLine(isScheduled, username) {
+function runnerSuccessLine(isScheduled, username, queued = false) {
+  if (isScheduled && queued) {
+    return `🤖 ส่งเข้าคิว Scheduled Worker: **${username}**\n   Worker จะตรวจทันทีและทำงานตามรอบ **00:00 / 08:00 / 16:00 น.**`;
+  }
   if (isScheduled) {
     return `🤖 เริ่มระบบอัตโนมัติรายวัน: **${username}**\n   ตรวจทันที และตรวจประจำเวลา **00:00 / 08:00 / 16:00 น.**`;
   }
@@ -163,7 +166,7 @@ async function startAccountRunner(context, token, account) {
     const jobKey = context.isScheduled
       ? `scheduled:${schedule.id}`
       : `${context.ownerId}:oneshot:${context.nextStartIndex()}`;
-    await startRunner({
+    const startResult = await startRunner({
       jobKey,
       ownerId: context.ownerId,
       userToken: token,
@@ -174,7 +177,10 @@ async function startAccountRunner(context, token, account) {
       accountId: account.id,
       username: account.username,
     });
-    return { started: true, line: runnerSuccessLine(context.isScheduled, account.username) };
+    return {
+      started: true,
+      line: runnerSuccessLine(context.isScheduled, account.username, startResult?.queued === true),
+    };
   } catch (error) {
     if (schedule) deleteScheduledRunner(schedule.id, context.ownerId);
     return { started: false, line: `❌ เริ่ม **${account.username}** ไม่สำเร็จ — ${error.message}` };

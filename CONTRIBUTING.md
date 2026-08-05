@@ -25,6 +25,7 @@ npm run check
 - `bot/src/db.js` — SQLite schema, Migration และ Backup Slot
 - `bot/src/worker.js` — Backup scheduler
 - `bot/src/dashboard.js` — HTTP health/status endpoint
+- `bot/src/error-reporter.js` — Render log, emergency classification, redaction และ Discord Webhook delivery
 - `bot/src/runner-status-header.js` — Persistent status header และ Message length guard
 - `bot/scripts/` — Fixture validation และ Read-only smoke
 - `bot/test/` — Unit/Regression tests
@@ -45,7 +46,11 @@ npm run check
 - ใช้ ES Modules และ Node.js ตาม `.node-version`
 - Interaction ส่วนตัวใช้ `flags: 64`
 - ตรวจ Permission ที่ Action boundary; `/api-status` ต้องเป็น Owner/Admin/Manager
-- ห้ามเก็บหรือพิมพ์ Token, Ciphertext, Username หรือ Account ID ลง Log ที่ไม่จำเป็น
+- ห้ามเก็บหรือพิมพ์ Token, Ciphertext, Username, Account ID หรือ Webhook URL ลง Log ที่ไม่จำเป็น
+- Render/Console logs เป็นแหล่งบันทึก Error ทุกระดับ ห้ามตัดออกเพราะมี Webhook
+- Webhook ใช้เฉพาะเหตุระบบฉุกเฉินจริง ไม่ใช้กับ Error ระดับบัญชีเดียวหรือเหตุชั่วคราว
+- Webhook payload ต้องปิด Mentions, ผ่าน Redaction และอยู่ภายใน Discord limits
+- การส่ง Webhook ล้มเหลวต้องไม่ทำให้ Bot ดับ
 - Auto Daily Token ต้องเข้ารหัสก่อนบันทึกและผูก AAD กับ Owner/Account
 - จำกัด Runner สูงสุด 10 ตัวต่อ Owner โดยใช้ `withOwnerAdmissionLock()` รอบ Slot count และ Start flow
 - Stop ต้องคง Account block จน Cleanup จบจริง
@@ -63,6 +68,8 @@ npm run check
 - ใช้ `node:test` และ `node:assert/strict`
 - Test ต้องมี Assertion ที่ตรวจผลลัพธ์จริง ไม่ใช้เพียงการรันแล้วไม่ Throw
 - Mock Network ที่ Boundary และตรวจ State หลัง Mutation
+- Test ทั่วไปห้ามส่ง External Webhook จริง; เปิดการจำลอง Delivery เฉพาะไฟล์ Test ของ Error reporter
+- ต้อง Test การจำแนก Emergency, Redaction, Mention safety, Retry, Dedupe และ Embed limits
 - เมื่อแก้ Race condition ให้ Test ลำดับ/Concurrency
 - เมื่อแก้ Permission ให้ Test Unauthorized path ก่อนอ่านข้อมูลระบบ
 - เมื่อแก้ข้อความ Discord ให้ Test Message limit และรูปแบบ Output
@@ -88,12 +95,14 @@ npm audit --omit=dev --audit-level=high
 - Repository shape
 - Approved database backup destinations
 - Unit/Regression tests
+- Environment contract tests
+- Emergency webhook tests
 - Syntax check
 - Production dependency audit
 
 ## เอกสารและ Production
 
-เมื่อเปลี่ยน Command, Environment, Permission, Backup, Schedule, Health endpoint หรือ Test boundary ต้องอัปเดตเอกสารที่เกี่ยวข้องใน Commit เดียวกัน
+เมื่อเปลี่ยน Command, Environment, Permission, Backup, Schedule, Health endpoint, Webhook หรือ Test boundary ต้องอัปเดตเอกสารที่เกี่ยวข้องใน Commit เดียวกัน
 
 Read-only Smoke ไม่ยืนยัน Enroll/Progress/Heartbeat/Claim จริง ก่อน Deploy ให้ทำตาม [`bot/PRODUCTION-CHECKLIST.md`](bot/PRODUCTION-CHECKLIST.md) และบันทึก Commit SHA/Backup สำหรับ Rollback
 
@@ -105,4 +114,4 @@ Read-only Smoke ไม่ยืนยัน Enroll/Progress/Heartbeat/Claim จ�
 git ls-files | grep -E '(^|/)(data|backups)/|\.(db|sqlite)(-(wal|shm|journal))?$'
 ```
 
-คำสั่งต้องไม่แสดงผล และ Test ใหม่ต้องอยู่ใต้ `bot/test/` เพื่อให้ `node --test` ค้นหาแบบ Recursive
+คำสั่งตรวจสอบอาจแสดงชื่อไฟล์หรือผล Validation ที่ไม่อ่อนไหวได้ แต่ห้ามแสดง Secret, Token, Ciphertext, Webhook URL หรือ Runtime path ที่เป็นข้อมูลภายใน และ Test ใหม่ต้องอยู่ใต้ `bot/test/` เพื่อให้ `node --test` ค้นหาแบบ Recursive

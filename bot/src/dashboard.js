@@ -6,32 +6,71 @@ import {
   listJobs,
   listQuestEngineStatuses,
 } from './discord-runner.js';
+import { listActiveProcessRoles } from './process-topology.js';
 import { listScheduledRunners } from './scheduled-runner-store.js';
-import { reportCriticalError } from './error-reporter.js';
+import {
+  getIncidentReporterStatus,
+  reportError,
+} from './error-reporter.js';
+import { getBackupHealthStatus } from './worker.js';
 
 const PORT = config.port;
 let botClient = null;
 let server = null;
+let startPromise = null;
 const startedAt = Date.now();
 
 export function startDashboard(client) {
   if (client) botClient = client;
-  if (server) return;
+  if (server?.listening) return Promise.resolve(server);
+  if (startPromise) return startPromise;
 
   server = createServer(handleRequest);
-  server.on('error', (error) => {
-    void reportCriticalError('Health server', error);
+  startPromise = new Promise((resolve, reject) => {
+    const startingServer = server;
+    const onStartupError = (error) => {
+      startingServer.off('listening', onListening);
+      if (server === startingServer) server = null;
+      startPromise = null;
+      reject(error);
+    };
+    const onListening = () => {
+      startingServer.off('error', onStartupError);
+      startingServer.on('error', (error) => reportError('Health server runtime', error, {
+        context: { port: PORT, errorCode: error?.code },
+      }));
+      console.log(`🌐 Health server ready → port ${PORT}`);
+      startPromise = null;
+      resolve(startingServer);
+    };
+
+    startingServer.once('error', onStartupError);
+    startingServer.once('listening', onListening);
+    startingServer.listen(PORT);
   });
-  server.listen(PORT, () => {
-    console.log(`🌐 Health server ready → port ${PORT}`);
-  });
+  return startPromise;
 }
 
 export async function stopDashboard() {
-  if (!server) return;
   const activeServer = server;
+  const pendingStart = startPromise;
   server = null;
-  await new Promise((resolve) => activeServer.close(resolve));
+  startPromise = null;
+  if (!activeServer) return;
+
+  if (!activeServer.listening && pendingStart) {
+    try {
+      await pendingStart;
+    } catch {
+      return;
+    }
+  }
+  if (!activeServer.listening) return;
+
+  await new Promise((resolve, reject) => activeServer.close((error) => {
+    if (error) reject(error);
+    else resolve();
+  }));
 }
 
 function statusSnapshot(status) {
@@ -59,6 +98,16 @@ function statusSnapshot(status) {
   };
 }
 
+function storageStatus() {
+  return {
+    mode: config.storageProfile.mode,
+    databasePathType: config.storageProfile.databasePathType,
+    durability: config.storageProfile.durability,
+    durabilityVerified: config.storageProfile.durabilityVerified,
+    warning: config.storageProfile.warning,
+  };
+}
+
 export function detailedStatusPayload() {
   const jobs = listJobs();
   const quest = getQuestEngineStatus();
@@ -67,6 +116,14 @@ export function detailedStatusPayload() {
     ok: botClient?.isReady() ?? false,
     uptimeSeconds: Math.floor((Date.now() - startedAt) / 1000),
     pingMs: botClient?.ws?.ping ?? -1,
+    runtime: {
+      role: config.processRole,
+      activeRoles: listActiveProcessRoles(),
+      workerPollIntervalMs: config.workerPollIntervalMs,
+    },
+    logging: getIncidentReporterStatus(),
+    storage: storageStatus(),
+    backup: getBackupHealthStatus(),
     runners: {
       active: jobs.length,
       oneShot: jobs.filter((job) => job.mode === 'oneshot').length,

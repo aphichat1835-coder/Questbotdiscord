@@ -1,13 +1,28 @@
+import { config } from './config.js';
 import {
   getJob,
   getUserJobs,
   stopJob as stopJobImmediately,
   stopScheduledJob as stopScheduledJobImmediately,
-} from './discord-runner.js';
+} from './quest/runner-service.js';
+import { getRunnerState, RUNNER_STATE } from './quest/runner-state-store.js';
 
-const DEFAULT_STOP_TIMEOUT_MS = 15_000;
+const LOCAL_STOP_TIMEOUT_MS = 15_000;
+const DURABLE_STOP_POLL_MS = 250;
+const TERMINAL_DURABLE_STATES = new Set([
+  RUNNER_STATE.STOPPED,
+  RUNNER_STATE.COMPLETED,
+  RUNNER_STATE.FAILED,
+]);
 const stoppingAccounts = new Set();
 const stoppingJobs = new Map();
+
+export function durableStopTimeoutMs(workerPollIntervalMs = config.workerPollIntervalMs) {
+  const cadence = Number.isFinite(workerPollIntervalMs) && workerPollIntervalMs > 0
+    ? workerPollIntervalMs
+    : config.workerPollIntervalMs;
+  return Math.max(LOCAL_STOP_TIMEOUT_MS, cadence * 2 + 5_000);
+}
 
 function accountKey(ownerId, accountId) {
   return accountId ? `${ownerId}:${accountId}` : null;
@@ -31,6 +46,21 @@ async function waitForCompletion(completion, timeoutMs) {
   } finally {
     clearTimeout(timeout);
   }
+}
+
+async function waitForDurableStop(jobKey, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const state = getRunnerState(jobKey);
+    if (!state || TERMINAL_DURABLE_STATES.has(state.state)) return true;
+    const remaining = deadline - Date.now();
+    await new Promise((resolve) => setTimeout(
+      resolve,
+      Math.max(1, Math.min(DURABLE_STOP_POLL_MS, remaining)),
+    ));
+  }
+  const state = getRunnerState(jobKey);
+  return !state || TERMINAL_DURABLE_STATES.has(state.state);
 }
 
 function trackStoppingJob(jobKey, key, done) {
@@ -68,7 +98,7 @@ export function listStoppingAccounts(ownerId) {
 
 export async function stopJobAndWait(ownerId, jobKey, {
   removeSchedule = true,
-  timeoutMs = DEFAULT_STOP_TIMEOUT_MS,
+  timeoutMs = LOCAL_STOP_TIMEOUT_MS,
 } = {}) {
   const existingCompletion = stoppingJobs.get(jobKey);
   if (existingCompletion) {
@@ -88,19 +118,18 @@ export async function stopJobAndWait(ownerId, jobKey, {
     return result(false, false);
   }
 
-  // The caller may stop waiting after the timeout, but the account stays blocked
-  // until job.done settles and the real cleanup finishes.
   return result(true, await waitForCompletion(completion, timeoutMs));
 }
 
 export async function stopScheduledJobAndWaitDetailed(ownerId, scheduleId, {
-  timeoutMs = DEFAULT_STOP_TIMEOUT_MS,
+  timeoutMs = durableStopTimeoutMs(),
 } = {}) {
   const jobKey = `scheduled:${scheduleId}`;
   const job = getJob(jobKey);
   if (!job) {
     const removed = stopScheduledJobImmediately(ownerId, scheduleId);
-    return result(removed, removed);
+    if (!removed) return result(false, false);
+    return result(true, await waitForDurableStop(jobKey, timeoutMs));
   }
   return stopJobAndWait(ownerId, jobKey, { removeSchedule: true, timeoutMs });
 }
@@ -112,7 +141,7 @@ export async function stopScheduledJobAndWait(ownerId, scheduleId, options = {})
 export async function stopAllForUserAndWaitDetailed(ownerId, {
   mode = null,
   removeSchedule = true,
-  timeoutMs = DEFAULT_STOP_TIMEOUT_MS,
+  timeoutMs = LOCAL_STOP_TIMEOUT_MS,
 } = {}) {
   const jobs = getUserJobs(ownerId, { mode, includeStopping: true });
   const results = await Promise.all(jobs.map((job) => stopJobAndWait(ownerId, job.key, {
