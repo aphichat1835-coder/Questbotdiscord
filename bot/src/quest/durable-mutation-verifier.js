@@ -5,6 +5,7 @@ import {
   markRunnerMutationFailed,
   markRunnerMutationVerified,
   RUNNER_MUTATION_KIND,
+  RUNNER_MUTATION_STATUS,
   RUNNER_STATE,
 } from './runner-state-store.js';
 
@@ -226,6 +227,12 @@ function verifiedStateFor(outcome, quest, fallback) {
   return fallback;
 }
 
+function canRetryAcceptedNonTerminalHeartbeat(state) {
+  return state?.mutation_kind === RUNNER_MUTATION_KIND.HEARTBEAT
+    && state?.mutation_status === RUNNER_MUTATION_STATUS.ACCEPTED
+    && state?.mutation_payload?.terminal === false;
+}
+
 export function verifyRunnerMutationFromQuests(jobKey, quests, {
   verifiedState = RUNNER_STATE.RUNNING,
   absentState = RUNNER_STATE.RUNNING,
@@ -262,7 +269,8 @@ export function verifyRunnerMutationFromQuests(jobKey, quests, {
     };
   }
 
-  if (!finalizeAbsent) {
+  const shouldFinalizeAbsent = finalizeAbsent || canRetryAcceptedNonTerminalHeartbeat(state);
+  if (!shouldFinalizeAbsent) {
     return {
       checked: true,
       verified: false,
